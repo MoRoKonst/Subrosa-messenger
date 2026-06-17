@@ -46,8 +46,8 @@ interface IStr2 {
     val chatsCreateContact: String; val chatsCreateGroup: String
     val chatsSubscribeChannel: String; val chatsCreateChannel: String
     val chatsChannelSubscribeTitle: String; val chatsChannelLinkLabel: String
-    val chatsChannelCreateTitle: String; val chatsChannelCreateHint: String
-    val chatsChannelCodeLabel: String; val chatsChannelNameLabel: String
+    val chatsChannelCreateTitle: String
+    val chatsChannelNameLabel: String
     val chatsChannelDescLabel: String; val chatsChannelFillFields: String
     val chatsChannelBadLink: String; val chatsChannelBadge: String
     val chatsSupportWrite: String
@@ -62,6 +62,7 @@ interface IStr3 {
     val profileQrHint: String; val profileCodeCopied: String
     val profileSendHint: String; val profileServers: String
     val profileSupport: String; val profileBackup: String
+    val profileSectionSecurity: String; val profileSectionGeneral: String
     val profileHideNotif: String; val profileHideNotifSub: String
     val profileAutoLock: String; val profileAutoLockAfter: (String) -> String
     val profileLockOff: String; val profileLock1min: String
@@ -122,6 +123,14 @@ interface IStr5 {
     val channelLinkCopied: String; val channelLoadImageError: String
     val channelWriteFirst: String; val channelSubscribeConfirm: String
     val channelSubscribeBtn: String
+    val channelMute: String; val channelUnmute: String
+    val channelSubscribers: (Int) -> String
+    val channelSearchPlaceholder: String
+    val channelPinPost: String; val channelUnpinPost: String; val channelPinned: String
+    val channelDeletePost: String
+    val channelForwardPost: String; val channelForwardTitle: String; val channelForwardSent: String
+    val channelDeleteChannelTitle: String; val channelDeleteChannelText: String
+    val channelEditTitle: String; val channelSaved: String
     val incomingGroupCall: String; val incomingVideoCall: String
     val incomingAudioCall: String; val incomingGroupCallHint: String
     val incomingCallHint: String; val incomingDecline: String
@@ -152,7 +161,7 @@ interface IStr6 {
     val chatDisappear1hShort: String; val chatDisappear24hShort: String
     val chatDisappear7dShort: String; val chatReplyPreview: String
     val chatEditing: String; val chatAttach: String
-    val chatAttachPhoto: String; val chatAttachFile: String
+    val chatAttachPhoto: String; val chatAttachMedia: String; val chatAttachFile: String
     val chatGeo: String; val chatGeoPermission: String
     val chatGeoFail: String; val chatGeoTap: String; val chatGeoDisabled: String
     val chatEditHint: String; val chatInputHint: String
@@ -197,6 +206,7 @@ interface IStr7 {
     val systemSender: String; val groupMemberLeft: (String) -> String
     val groupKeyUpdated: String; val groupMemberJoined: (String) -> String
     val channelCreatedToast: (String) -> String; val channelFallbackName: String
+    val channelNoConnection: String
     val recipientOffline: String; val notifChannelDesc: String
     val notifSessionTitle: String; val notifSessionText: String
     val notifNewMessage: String; val notifTapToRead: String
@@ -324,11 +334,9 @@ private val ru2 = object : IStr2 {
     override val chatsChannelSubscribeTitle = "Подписаться на канал"
     override val chatsChannelLinkLabel = "Ссылка beacon://channel?..."
     override val chatsChannelCreateTitle = "Создать канал"
-    override val chatsChannelCreateHint = "Для создания канала нужен инвайт-код от администратора.\nПолучить его можно через поддержку."
-    override val chatsChannelCodeLabel = "Инвайт-код канала"
     override val chatsChannelNameLabel = "Название канала"
     override val chatsChannelDescLabel = "Описание (необязательно)"
-    override val chatsChannelFillFields = "Заполните все поля"
+    override val chatsChannelFillFields = "Укажите название канала"
     override val chatsChannelBadLink = "Неверная ссылка"
     override val chatsChannelBadge = "канал"
     override val chatsSupportWrite = "Написать"
@@ -349,6 +357,8 @@ private val ru3 = object : IStr3 {
     override val profileServers = "🌐 Серверы"
     override val profileSupport = "❓ Поддержка"
     override val profileBackup = "📦 Резервное копирование"
+    override val profileSectionSecurity = "Безопасность"
+    override val profileSectionGeneral  = "Основное"
     override val profileHideNotif = "🔔 Скрывать текст в уведомлениях"
     override val profileHideNotifSub = "Показывать только «Новое сообщение»"
     override val profileAutoLock = "🔒 Автоблокировка"
@@ -454,6 +464,21 @@ private val ru5 = object : IStr5 {
     override val channelWriteFirst = "Напишите первую запись ниже"
     override val channelSubscribeConfirm = "Подписаться на этот канал?"
     override val channelSubscribeBtn = "Подписаться"
+    override val channelMute = "🔕 Выключить уведомления"
+    override val channelUnmute = "🔔 Включить уведомления"
+    override val channelSubscribers: (Int) -> String = { "$it подписчиков" }
+    override val channelSearchPlaceholder = "Поиск по постам..."
+    override val channelPinPost = "📌 Закрепить"
+    override val channelUnpinPost = "📌 Открепить"
+    override val channelPinned = "Закреплено"
+    override val channelDeletePost = "🗑 Удалить пост"
+    override val channelForwardPost = "↗ Переслать"
+    override val channelForwardTitle = "Переслать в чат..."
+    override val channelForwardSent = "Переслано"
+    override val channelDeleteChannelTitle = "Удалить канал?"
+    override val channelDeleteChannelText = "Все посты будут удалены, все подписчики отключены. Действие необратимо."
+    override val channelEditTitle = "Настройки канала"
+    override val channelSaved = "Сохранено"
     override val incomingGroupCall = "Групповой звонок"
     override val incomingVideoCall = "Входящий видеозвонок"
     override val incomingAudioCall = "Входящий аудиозвонок"
@@ -514,6 +539,7 @@ private val ru6 = object : IStr6 {
     override val chatEditing = "✏️ Редактирование"
     override val chatAttach = "Прикрепить"
     override val chatAttachPhoto = "📷 Фото"
+    override val chatAttachMedia = "📸 Медиа"
     override val chatAttachFile = "📄 Файл"
     override val chatGeo = "📍 Геопозиция"
     override val chatGeoPermission = "Разрешите доступ к геопозиции"
@@ -522,8 +548,8 @@ private val ru6 = object : IStr6 {
     override val chatGeoDisabled = "Включи геолокацию в настройках телефона"
     override val chatEditHint = "Изменить..."
     override val chatInputHint = "Сообщение..."
-    override val chatPhotoTooBig = "Фото слишком большое (макс 10MB)"
-    override val chatFileTooBig = "Файл слишком большой (макс 10MB)"
+    override val chatPhotoTooBig = "Медиафайл слишком большой (макс 20 МБ)"
+    override val chatFileTooBig = "Файл слишком большой (макс 20 МБ)"
     override val chatMediaOffline = "Нет соединения — медиафайл не отправлен"
     override val chatFileSending: (String, Int) -> String = { name, kb -> "Отправка: $name (${kb}KB)" }
     override val chatVerifyTitle = "🔐 Верификация контакта"
@@ -601,6 +627,7 @@ private val ru7 = object : IStr7 {
     override val groupMemberJoined: (String) -> String = { "$it присоединился(лась) к группе" }
     override val channelCreatedToast: (String) -> String = { "Канал «$it» создан!" }
     override val channelFallbackName = "Канал"
+    override val channelNoConnection = "Нет соединения с сервером"
     override val recipientOffline = "Получатель не в сети"
     override val notifChannelDesc = "Экстренное удаление данных"
     override val notifSessionTitle = "⚠️ Сессия завершена"
@@ -756,11 +783,9 @@ private val en2 = object : IStr2 {
     override val chatsChannelSubscribeTitle = "Subscribe to channel"
     override val chatsChannelLinkLabel = "Link beacon://channel?..."
     override val chatsChannelCreateTitle = "Create channel"
-    override val chatsChannelCreateHint = "Creating a channel requires an invite code from the administrator.\nYou can get it via support."
-    override val chatsChannelCodeLabel = "Channel invite code"
     override val chatsChannelNameLabel = "Channel name"
     override val chatsChannelDescLabel = "Description (optional)"
-    override val chatsChannelFillFields = "Please fill in all fields"
+    override val chatsChannelFillFields = "Enter a channel name"
     override val chatsChannelBadLink = "Invalid link"
     override val chatsChannelBadge = "channel"
     override val chatsSupportWrite = "Write"
@@ -781,6 +806,8 @@ private val en3 = object : IStr3 {
     override val profileServers = "🌐 Servers"
     override val profileSupport = "❓ Support"
     override val profileBackup = "📦 Backup"
+    override val profileSectionSecurity = "Security"
+    override val profileSectionGeneral  = "General"
     override val profileHideNotif = "🔔 Hide text in notifications"
     override val profileHideNotifSub = "Show only \"New message\""
     override val profileAutoLock = "🔒 Auto-lock"
@@ -886,6 +913,21 @@ private val en5 = object : IStr5 {
     override val channelWriteFirst = "Write the first post below"
     override val channelSubscribeConfirm = "Subscribe to this channel?"
     override val channelSubscribeBtn = "Subscribe"
+    override val channelMute = "🔕 Mute notifications"
+    override val channelUnmute = "🔔 Unmute notifications"
+    override val channelSubscribers: (Int) -> String = { "$it subscribers" }
+    override val channelSearchPlaceholder = "Search posts..."
+    override val channelPinPost = "📌 Pin"
+    override val channelUnpinPost = "📌 Unpin"
+    override val channelPinned = "Pinned"
+    override val channelDeletePost = "🗑 Delete post"
+    override val channelForwardPost = "↗ Forward"
+    override val channelForwardTitle = "Forward to chat..."
+    override val channelForwardSent = "Forwarded"
+    override val channelDeleteChannelTitle = "Delete channel?"
+    override val channelDeleteChannelText = "All posts will be deleted and all subscribers removed. This cannot be undone."
+    override val channelEditTitle = "Channel settings"
+    override val channelSaved = "Saved"
     override val incomingGroupCall = "Group call"
     override val incomingVideoCall = "Incoming video call"
     override val incomingAudioCall = "Incoming audio call"
@@ -946,6 +988,7 @@ private val en6 = object : IStr6 {
     override val chatEditing = "✏️ Editing"
     override val chatAttach = "Attach"
     override val chatAttachPhoto = "📷 Photo"
+    override val chatAttachMedia = "📸 Media"
     override val chatAttachFile = "📄 File"
     override val chatGeo = "📍 Location"
     override val chatGeoPermission = "Grant location access"
@@ -954,8 +997,8 @@ private val en6 = object : IStr6 {
     override val chatGeoDisabled = "Enable location in phone settings"
     override val chatEditHint = "Edit message..."
     override val chatInputHint = "Message..."
-    override val chatPhotoTooBig = "Photo too large (max 10MB)"
-    override val chatFileTooBig = "File too large (max 10MB)"
+    override val chatPhotoTooBig = "Media file too large (max 20MB)"
+    override val chatFileTooBig = "File too large (max 20MB)"
     override val chatMediaOffline = "No connection — media not sent"
     override val chatFileSending: (String, Int) -> String = { name, kb -> "Sending: $name (${kb}KB)" }
     override val chatVerifyTitle = "🔐 Contact verification"
@@ -1033,6 +1076,7 @@ private val en7 = object : IStr7 {
     override val groupMemberJoined: (String) -> String = { "$it joined the group" }
     override val channelCreatedToast: (String) -> String = { "Channel «$it» created!" }
     override val channelFallbackName = "Channel"
+    override val channelNoConnection = "No server connection"
     override val recipientOffline = "Recipient is offline"
     override val notifChannelDesc = "Emergency data deletion"
     override val notifSessionTitle = "⚠️ Session ended"

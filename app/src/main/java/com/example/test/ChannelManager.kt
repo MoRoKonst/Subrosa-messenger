@@ -2,6 +2,7 @@ package com.bcon.messenger
 
 import android.content.Context
 import android.util.Base64
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -13,7 +14,10 @@ data class Channel(
     val adminId: String,
     val adminName: String = "",
     val isAdmin: Boolean = false,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val isMuted: Boolean = false,
+    val subscriberCount: Int = -1,
+    val pinnedPostId: String? = null
 )
 
 data class ChannelPost(
@@ -31,6 +35,9 @@ object ChannelManager {
     private const val PREFS_CHANNELS = "subscribed_channels"
     private const val KEY_LIST = "channels_list"
 
+    /** Bumped on every saveChannel / removePost — ChannelFeedScreen collects this to refresh UI */
+    val channelUpdateEvents = MutableStateFlow(0L)
+
     // ─── Channels ────────────────────────────────────────────────────────────
 
     fun getChannels(context: Context): List<Channel> {
@@ -41,14 +48,17 @@ object ChannelManager {
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
                 Channel(
-                    id = o.getString("id"),
-                    name = o.getString("name"),
-                    description = o.optString("description", ""),
-                    avatar = o.optString("avatar", "📢"),
-                    adminId = o.optString("adminId", ""),
-                    adminName = o.optString("adminName", ""),
-                    isAdmin = o.optBoolean("isAdmin", false),
-                    createdAt = o.optLong("createdAt", 0L)
+                    id             = o.getString("id"),
+                    name           = o.getString("name"),
+                    description    = o.optString("description", ""),
+                    avatar         = o.optString("avatar", "📢"),
+                    adminId        = o.optString("adminId", ""),
+                    adminName      = o.optString("adminName", ""),
+                    isAdmin        = o.optBoolean("isAdmin", false),
+                    createdAt      = o.optLong("createdAt", 0L),
+                    isMuted        = o.optBoolean("isMuted", false),
+                    subscriberCount = o.optInt("subscriberCount", -1),
+                    pinnedPostId   = o.optString("pinnedPostId", "").takeIf { it.isNotEmpty() }
                 )
             }
         } catch (e: Exception) { emptyList() }
@@ -60,6 +70,7 @@ object ChannelManager {
         list.removeIf { it.id == channel.id }
         list.add(channel)
         prefs.edit().putString(KEY_LIST, serializeChannels(list)).apply()
+        channelUpdateEvents.value = System.currentTimeMillis()
     }
 
     fun removeChannel(context: Context, channelId: String) {
@@ -69,6 +80,7 @@ object ChannelManager {
         // Clear cached posts
         EncryptedStorage.getEncryptedPrefs(context, "ch_posts_$channelId")
             .edit().clear().apply()
+        channelUpdateEvents.value = System.currentTimeMillis()
     }
 
     fun getChannel(context: Context, channelId: String): Channel? =
@@ -86,6 +98,9 @@ object ChannelManager {
                 put("adminName", c.adminName)
                 put("isAdmin", c.isAdmin)
                 put("createdAt", c.createdAt)
+                put("isMuted", c.isMuted)
+                put("subscriberCount", c.subscriberCount)
+                if (c.pinnedPostId != null) put("pinnedPostId", c.pinnedPostId)
             })
         }
         return arr.toString()
@@ -101,6 +116,12 @@ object ChannelManager {
         savePosts(context, post.channelId, trimmed)
     }
 
+    fun removePost(context: Context, channelId: String, postId: String) {
+        val posts = loadPosts(context, channelId).filter { it.id != postId }
+        savePosts(context, channelId, posts)
+        channelUpdateEvents.value = System.currentTimeMillis()
+    }
+
     fun loadPosts(context: Context, channelId: String): List<ChannelPost> {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, "ch_posts_$channelId")
         val json = prefs.getString("posts", "[]") ?: "[]"
@@ -109,13 +130,13 @@ object ChannelManager {
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
                 ChannelPost(
-                    id = o.getString("id"),
-                    channelId = o.getString("channelId"),
-                    text = o.getString("text"),
-                    timestamp = o.getLong("timestamp"),
-                    authorId = o.optString("authorId", ""),
+                    id         = o.getString("id"),
+                    channelId  = o.getString("channelId"),
+                    text       = o.getString("text"),
+                    timestamp  = o.getLong("timestamp"),
+                    authorId   = o.optString("authorId", ""),
                     authorName = o.optString("authorName", ""),
-                    imageData = o.optString("imageData", "")
+                    imageData  = o.optString("imageData", "")
                 )
             }.sortedBy { it.timestamp }
         } catch (e: Exception) { emptyList() }

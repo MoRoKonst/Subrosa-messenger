@@ -116,6 +116,23 @@ fun WaveformMicButton(
 
     val currentAmplitude = if (isRecording) smoothAmplitude.value else idlePulse.value
 
+    val bgColor by animateColorAsState(
+        targetValue = if (isRecording) Color(0x55FF4444) else Color(0x20FFFFFF),
+        animationSpec = tween(300),
+        label = "mic_bg"
+    )
+    val ringScale = remember { Animatable(1f) }
+    LaunchedEffect(isRecording) {
+        if (isRecording) {
+            while (true) {
+                ringScale.animateTo(1.28f, tween(650))
+                ringScale.animateTo(1f, tween(650))
+            }
+        } else {
+            ringScale.snapTo(1f)
+        }
+    }
+
     Box(
         modifier = modifier
             .size(size.dp)
@@ -127,8 +144,23 @@ fun WaveformMicButton(
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = this.size.width
             val h = this.size.height
+            val center = Offset(w / 2f, h / 2f)
+            val radius = minOf(w, h) / 2f
+
+            // Пульсирующее кольцо при записи
+            if (isRecording) {
+                drawCircle(
+                    color = Color(0xFFFF4444).copy(alpha = (1f - (ringScale.value - 1f) / 0.28f) * 0.3f),
+                    radius = radius * ringScale.value,
+                    center = center
+                )
+            }
+
+            // Фоновый круг
+            drawCircle(color = bgColor, radius = radius * 0.88f, center = center)
+
             val centerY = h / 2f
-            val maxAmp = h * 0.38f * currentAmplitude
+            val maxAmp = h * 0.30f * currentAmplitude
             val freq = 2.5f
             val phaseRad = phase.value * 2f * PI.toFloat()
 
@@ -138,7 +170,6 @@ fun WaveformMicButton(
                 val y = centerY - maxAmp * sin(x * freq * 2f * PI.toFloat() / w + phaseRad)
                 if (x == 0) path1.moveTo(x.toFloat(), y) else path1.lineTo(x.toFloat(), y)
             }
-
             drawPath(path1, animatedWaveColor, style = Stroke(3.5.dp.toPx(), cap = StrokeCap.Round))
 
             // Вторая волна (тень)
@@ -147,14 +178,11 @@ fun WaveformMicButton(
                 val y = centerY - maxAmp * 0.5f * sin(x * freq * 2f * PI.toFloat() / w + phaseRad + PI.toFloat())
                 if (x == 0) path2.moveTo(x.toFloat(), y) else path2.lineTo(x.toFloat(), y)
             }
-            // После первой волны:
             drawPath(
                 path2,
-                animatedWaveColor.copy(alpha = 0.3f),  // полупрозрачная тень
-                style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round)  // чуть тоньше
+                animatedWaveColor.copy(alpha = 0.3f),
+                style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round)
             )
-
-
         }
     }
 }

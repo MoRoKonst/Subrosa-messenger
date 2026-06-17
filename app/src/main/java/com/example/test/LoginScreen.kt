@@ -18,6 +18,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -39,6 +42,21 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
     var showBiometric by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var showNotMeConfirm by remember { mutableStateOf(false) }
+
+    // Staggered entrance
+    var visibleEmoji by remember { mutableStateOf(false) }
+    var visibleTitle by remember { mutableStateOf(false) }
+    var visibleForm  by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        visibleEmoji = true
+        delay(180)
+        visibleTitle = true
+        delay(200)
+        visibleForm = true
+    }
+    val emojiAlpha  by animateFloatAsState(if (visibleEmoji) 1f else 0f, tween(500), label = "a0")
+    val titleAlpha  by animateFloatAsState(if (visibleTitle) 1f else 0f, tween(480), label = "a1")
+    val formAlpha   by animateFloatAsState(if (visibleForm)  1f else 0f, tween(450), label = "a2")
 
     LaunchedEffect(Unit) {
         if (showBiometric) {
@@ -75,7 +93,16 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("💬", fontSize = 64.sp, modifier = Modifier.padding(bottom = 16.dp))
+            Text(
+                "💬",
+                fontSize = 64.sp,
+                modifier = Modifier
+                    .padding(bottom = 16.dp)
+                    .graphicsLayer {
+                        alpha = emojiAlpha
+                        translationY = (1f - emojiAlpha) * -60f
+                    }
+            )
 
             Text(
                 "B-CON Messenger",
@@ -83,7 +110,12 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
                 fontWeight = FontWeight.Bold,
                 color = c.accent,
                 fontFamily = AppFont,
-                modifier = Modifier.padding(bottom = 8.dp)
+                modifier = Modifier
+                    .padding(bottom = 8.dp)
+                    .graphicsLayer {
+                        alpha = titleAlpha
+                        translationY = (1f - titleAlpha) * -40f
+                    }
             )
 
             Text(
@@ -91,9 +123,19 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
                 fontSize = 16.sp,
                 color = c.textPrimary.copy(alpha = 0.6f),
                 fontFamily = AppFont,
-                modifier = Modifier.padding(bottom = 48.dp)
+                modifier = Modifier
+                    .padding(bottom = 48.dp)
+                    .graphicsLayer {
+                        alpha = titleAlpha
+                        translationY = (1f - titleAlpha) * -30f
+                    }
             )
 
+            Box(modifier = Modifier.fillMaxWidth().graphicsLayer {
+                alpha = formAlpha
+                translationY = (1f - formAlpha) * 30f
+            }) {
+            Column(modifier = Modifier.fillMaxWidth()) {
             if (!showBiometric) {
                 OutlinedTextField(
                     value = password,
@@ -195,6 +237,8 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
                 CircularProgressIndicator(modifier = Modifier.padding(16.dp), color = c.accent)
                 Text(s.loginWaitingBiometric, fontSize = 14.sp, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
             }
+            } // end Column
+            } // end Box
         }
 
         TextButton(

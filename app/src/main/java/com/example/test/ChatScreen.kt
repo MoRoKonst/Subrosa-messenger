@@ -27,15 +27,31 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.StartOffsetType
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.ui.platform.LocalContext
@@ -129,6 +145,9 @@ fun ChatScreen(
 ) {
     var isRecording by remember { mutableStateOf(false) }
     var recordingFile by remember { mutableStateOf<File?>(null) }
+    var isVideoMode by remember { mutableStateOf(false) }
+    var recordingSeconds by remember { mutableStateOf(0) }
+    var showAttachMenu by remember { mutableStateOf(false) }
     var playingVoiceId by remember { mutableStateOf<String?>(null) }
     var playingVideoId by remember { mutableStateOf<String?>(null) }
     var showKeyWarning by remember { mutableStateOf(false) }
@@ -549,15 +568,21 @@ fun ChatScreen(
         }
     }
 
-    // Фото
+    // Фото / Медиа
     LaunchedEffect(Unit) {
         MainActivity.selectedPhotoUri.collect { uri: android.net.Uri? ->
             uri ?: return@collect
             MainActivity.selectedPhotoUri.value = null
+            // Если выбрано видео — перенаправляем в файловый pipeline
+            val pickedMime = context.contentResolver.getType(uri) ?: ""
+            if (pickedMime.startsWith("video/")) {
+                MainActivity.selectedFileUri.value = uri
+                return@collect
+            }
             try {
                 val bitmap = android.provider.MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
                 val chunks = bitmapToChunks(bitmap)
-                if (chunks.sumOf { it.length } > 10 * 1024 * 1024) {
+                if (chunks.sumOf { it.length } > 20 * 1024 * 1024) {
                     android.widget.Toast.makeText(context, s.chatPhotoTooBig, android.widget.Toast.LENGTH_SHORT).show()
                     return@collect
                 }
@@ -602,8 +627,8 @@ fun ChatScreen(
                 val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
 
                 if (bytes != null && bytes.isNotEmpty()) {
-                    // Проверка размера (макс 10MB)
-                    if (bytes.size > 10 * 1024 * 1024) {
+                    // Проверка размера (макс 20MB)
+                    if (bytes.size > 20 * 1024 * 1024) {
                         android.widget.Toast.makeText(
                             context,
                             s.chatFileTooBig,
@@ -615,6 +640,7 @@ fun ChatScreen(
                     // Определяем иконку по типу файла
                     val fileIcon = when {
                         mimeType.startsWith("image/") -> "🖼️"
+                        mimeType.startsWith("video/") -> "🎬"
                         mimeType == "application/pdf" -> "📕"
                         mimeType.contains("word") || mimeType.contains("document") -> "📘"
                         else -> "📄"
@@ -760,11 +786,39 @@ fun ChatScreen(
                             }
                             Text(recipientName, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = Color.White)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    if (isOnline) s.chatOnline else s.chatOffline,
-                                    fontSize = 16.sp,
-                                    color = if (isOnline) c.accent else c.textPrimary
-                                )
+                                val statusKey = when {
+                                    isTyping -> "typing"
+                                    isOnline -> "online"
+                                    else     -> "offline"
+                                }
+                                AnimatedContent(
+                                    targetState = statusKey,
+                                    transitionSpec = {
+                                        (fadeIn(tween(220)) + slideInVertically(tween(220)) { -it }) togetherWith
+                                        (fadeOut(tween(160)) + slideOutVertically(tween(160)) { it })
+                                    },
+                                    label = "status"
+                                ) { key ->
+                                    when (key) {
+                                        "typing" -> Row(
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                s.chatTyping.trimEnd('.', '…', ' '),
+                                                fontSize = 14.sp,
+                                                color = c.accent,
+                                                fontFamily = JetBrainsMono
+                                            )
+                                            Spacer(Modifier.width(5.dp))
+                                            TypingDotsIndicator(color = c.accent)
+                                        }
+                                        else -> Text(
+                                            text = if (key == "online") s.chatOnline else s.chatOffline,
+                                            fontSize = 13.sp,
+                                            color = if (key == "online") c.accent else c.textPrimary.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                }
                                 if (disappearTimerSecs > 0L) {
                                     val label = when (disappearTimerSecs) {
                                         3600L -> s.chatDisappear1hShort
@@ -1176,7 +1230,7 @@ fun ChatScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(c.gradientEnd)
+                    .background(c.topBar)
                     .padding(horizontal = 16.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1194,7 +1248,7 @@ fun ChatScreen(
         if (replyToMessage != null) {
             Row(
                 modifier = Modifier.fillMaxWidth()
-                    .background(c.gradientEnd)
+                    .background(c.topBar)
                     .padding(horizontal = 16.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1222,7 +1276,7 @@ fun ChatScreen(
 
         // Режим редактирования
         if (isEditMode) {
-            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(modifier = Modifier.fillMaxWidth().background(c.topBar).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(s.chatEditing, fontSize = 12.sp, color = c.primaryBlue, modifier = Modifier.weight(1f), fontFamily = JetBrainsMono)
                 TextButton(onClick = { isEditMode = false; editingMessageId = null; inputText = "" }) {
                     Text(s.cancel, color = Color.Gray, fontSize = 12.sp, fontFamily = JetBrainsMono)
@@ -1230,188 +1284,314 @@ fun ChatScreen(
             }
         }
 
-        // ─── Панель ввода ─────────────────────────────────────────────────────
-        Row(
-            modifier = Modifier.fillMaxWidth().background(c.topBar).padding(8.dp),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            var showAttachMenu by remember { mutableStateOf(false) }
-            IconButton(onClick = { showAttachMenu = true }) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_attach),
-                    contentDescription = null,
-                    tint = c.textPrimary,
-                    modifier = Modifier.size(26.dp)
-                )
-            }
-            // Кнопка видеокружка
-            IconButton(onClick = { showVideoCircleRecorder = true }) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_camera_circle),
-                    contentDescription = null,
-                    tint = c.textPrimary,
-                    modifier = Modifier.size(26.dp)
-                )
-            }
+        // ─── Attach dialog (вынесен из Row, чтобы работал при AnimatedContent) ─
+        if (showAttachMenu) {
+            AlertDialog(
+                onDismissRequest = { showAttachMenu = false },
+                title = { Text(s.chatAttach, color = Color.White, fontSize = 20.sp, fontFamily = JetBrainsMono) },
+                text = {
+                    Column {
+                        TextButton(onClick = {
+                            showAttachMenu = false
+                            try {
+                                (context as? MainActivity)?.startActivityForResult(
+                                    Intent(Intent.ACTION_GET_CONTENT).apply {
+                                        type = "*/*"
+                                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+                                        addCategory(Intent.CATEGORY_OPENABLE)
+                                    },
+                                    MainActivity.PICK_IMAGE_REQUEST
+                                )
+                            } catch (e: Exception) {}
+                        }) { Text(s.chatAttachMedia, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono) }
 
-            if (showAttachMenu) {
-                AlertDialog(
-                    onDismissRequest = { showAttachMenu = false },
-                    title = { Text(s.chatAttach, color = Color.White, fontSize = 20.sp, fontFamily = JetBrainsMono) },
-                    text = {
-                        Column {
-                            TextButton(onClick = {
-                                showAttachMenu = false
-                                try {
-                                    (context as? MainActivity)?.startActivityForResult(
-                                        Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE) },
-                                        MainActivity.PICK_IMAGE_REQUEST
-                                    )
-                                } catch (e: Exception) {}
-                            }) { Text(s.chatAttachPhoto, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono) }
+                        TextButton(onClick = {
+                            showAttachMenu = false
+                            try {
+                                (context as? MainActivity)?.startActivityForResult(
+                                    Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE) },
+                                    MainActivity.PICK_FILE_REQUEST
+                                )
+                            } catch (e: Exception) {}
+                        }) { Text(s.chatAttachFile, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono) }
 
-                            TextButton(onClick = {
-                                showAttachMenu = false
-                                try {
-                                    (context as? MainActivity)?.startActivityForResult(
-                                        Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE) },
-                                        MainActivity.PICK_FILE_REQUEST
-                                    )
-                                } catch (e: Exception) {}
-                            }) { Text(s.chatAttachFile, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono) }
-
-                            TextButton(onClick = {
-                                showAttachMenu = false
-                                val permGranted = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
-                                    android.content.pm.PackageManager.PERMISSION_GRANTED
-                                if (permGranted) sendGeo()
-                                else geoPermLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
-                            }) { Text(s.chatGeo, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono) }
-                        }
-                    },
-                    confirmButton = {},
-                    containerColor = c.dialog
-                )
-            }
-
-            // Поле ввода
-            Box(modifier = Modifier.weight(1f).padding(horizontal = 4.dp)) {
-                androidx.compose.foundation.Canvas(modifier = Modifier.matchParentSize()) {
-                    drawRoundRect(color = androidx.compose.ui.graphics.Color(0x22FFFFFF), cornerRadius = androidx.compose.ui.geometry.CornerRadius(32.dp.toPx()))
-                    drawRoundRect(color = androidx.compose.ui.graphics.Color(0x33B0C4DE), cornerRadius = androidx.compose.ui.geometry.CornerRadius(32.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx()))
-                }
-                BasicTextField(
-                    value = inputText,
-                    onValueChange = {
-                        inputText = it
-                        if (it.isNotEmpty() && !isEditMode) messengerService?.sendTyping(recipient)
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                    maxLines = 3,
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, color = androidx.compose.ui.graphics.Color.White),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(androidx.compose.ui.graphics.Color(0xFFFFD700)),
-                    decorationBox = { innerTextField ->
-                        if (inputText.isEmpty()) {
-                            Text(if (isEditMode) s.chatEditHint else s.chatInputHint, fontSize = 15.sp, color = androidx.compose.ui.graphics.Color(0x88FFFFFF), fontFamily = JetBrainsMono)
-                        }
-                        innerTextField()
-                    }
-                )
-            }
-
-            // Микрофон
-            WaveformMicButton(
-                isRecording = isRecording,
-                onClick = {
-                    if (isRecording) {
-                        recordingFile?.let { file ->
-                            AudioHelper.stopRecording()
-                            val duration = (file.length() / 1000).toInt()
-                            val voiceId = UUID.randomUUID().toString()
-                            val base64 = AudioHelper.encodeToBase64(file)  // читаем plain temp для отправки
-                            messengerService?.sendVoice(recipient, base64, voiceId, duration)
-                            // Шифруем в filesDir, удаляем незашифрованный temp
-                            val encFile = File(context.filesDir, "voice_$voiceId.3gp.enc")
-                            SecureFileStorage.write(context, encFile, file.readBytes())
-                            file.delete()
-                            messages.add(Message(id = voiceId, text = "🎤 Голосовое сообщение", isOwn = true, voiceFile = encFile, voiceDuration = duration))
-                            ChatStorage.saveOrUpdateMessage(context, userId, recipient,
-                                ChatStorage.StoredMessage(id = voiceId, text = "🎤 Голосовое сообщение", isOwn = true, voicePath = encFile.absolutePath, voiceDuration = duration))
-                            isRecording = false
-                            recordingFile = null
-                        }
-                    } else {
-                        when {
-                            context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED -> {
-                                recordingFile = AudioHelper.startRecording(context)
-                                isRecording = true
-                            }
-                            else -> audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                        }
+                        TextButton(onClick = {
+                            showAttachMenu = false
+                            val permGranted = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+                                android.content.pm.PackageManager.PERMISSION_GRANTED
+                            if (permGranted) sendGeo()
+                            else geoPermLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                        }) { Text(s.chatGeo, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono) }
                     }
                 },
-                size = 52
+                confirmButton = {},
+                containerColor = c.dialog
             )
+        }
 
-            // Отправка
-            PortholeSendButton(
-                enabled = inputText.isNotEmpty(),
-                onClick = {
-                    val text = inputText.trim()
-                    if (text.isNotEmpty()) {
-                        SoundManager.playMessageSent()
-                        inputText = ""
-                        if (isEditMode && editingMessageId != null) {
-                            val editId = editingMessageId!!
-                            val index = messages.indexOfFirst { it.id == editId }
-                            if (index != -1) {
-                                messages[index] = messages[index].copy(text = text, isEdited = true)
+        // ─── Таймер записи ────────────────────────────────────────────────────
+        LaunchedEffect(isRecording) {
+            if (isRecording) {
+                recordingSeconds = 0
+                while (isRecording) {
+                    delay(1000L)
+                    recordingSeconds++
+                }
+            } else {
+                recordingSeconds = 0
+            }
+        }
+
+        // ─── Панель ввода ─────────────────────────────────────────────────────
+        HorizontalDivider(color = Color.White.copy(alpha = 0.06f), thickness = 1.dp)
+        AnimatedContent(
+            targetState = isRecording,
+            transitionSpec = {
+                (fadeIn(tween(180)) + scaleIn(tween(180), initialScale = 0.96f)) togetherWith
+                (fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.96f))
+            },
+            label = "input_bar_mode"
+        ) { recording ->
+            if (recording) {
+                // ── Режим записи ─────────────────────────────────────────────
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(c.topBar)
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Кнопка отмены
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x28FF4444))
+                            .clickable {
+                                AudioHelper.stopRecording()
+                                recordingFile?.delete()
+                                recordingFile = null
+                                isRecording = false
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                            contentDescription = "Отменить",
+                            tint = Color(0xFFFF5555),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Индикатор записи: точка + таймер + mini-волна
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(28.dp))
+                            .background(Color(0x1AFFFFFF))
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        val recDotAlpha = remember { androidx.compose.animation.core.Animatable(1f) }
+                        LaunchedEffect(Unit) {
+                            while (true) {
+                                recDotAlpha.animateTo(0.2f, tween(550))
+                                recDotAlpha.animateTo(1f, tween(550))
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFFF4444).copy(alpha = recDotAlpha.value))
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = String.format("%d:%02d", recordingSeconds / 60, recordingSeconds % 60),
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontFamily = JetBrainsMono,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        WaveformMicButton(isRecording = true, onClick = {}, size = 38)
+                    }
+
+                    // Кнопка подтверждения (отправить голосовое)
+                    PortholeSendButton(
+                        enabled = true,
+                        onClick = {
+                            recordingFile?.let { file ->
+                                AudioHelper.stopRecording()
+                                val duration = (file.length() / 1000).toInt()
+                                val voiceId = UUID.randomUUID().toString()
+                                val base64 = AudioHelper.encodeToBase64(file)
+                                messengerService?.sendVoice(recipient, base64, voiceId, duration)
+                                val encFile = File(context.filesDir, "voice_$voiceId.3gp.enc")
+                                SecureFileStorage.write(context, encFile, file.readBytes())
+                                file.delete()
+                                messages.add(Message(id = voiceId, text = "🎤 Голосовое сообщение", isOwn = true, voiceFile = encFile, voiceDuration = duration))
                                 ChatStorage.saveOrUpdateMessage(context, userId, recipient,
-                                    ChatStorage.StoredMessage(id = editId, text = text, isOwn = true, reactions = messages[index].reactions, isEdited = true))
+                                    ChatStorage.StoredMessage(id = voiceId, text = "🎤 Голосовое сообщение", isOwn = true, voicePath = encFile.absolutePath, voiceDuration = duration))
+                                isRecording = false
+                                recordingFile = null
                             }
-                            messengerService?.sendEdit(recipient, editId, text)
-                            isEditMode = false
-                            editingMessageId = null
-                        } else {
-                            val replyId = replyToMessage?.id
-                            val replyMsg = replyToMessage
-                            replyToMessage = null
-                            val msgId = messengerService?.send(recipient, text, replyToId = replyId)
-                                ?: UUID.randomUUID().toString()
-                            val expiresAt = if (disappearTimerSecs > 0L)
-                                System.currentTimeMillis() + disappearTimerSecs * 1000L else 0L
-                            ChatStorage.saveOrUpdateMessage(context, userId, recipient,
-                                ChatStorage.StoredMessage(id = msgId, text = text, isOwn = true,
-                                    replyToId = replyId, expiresAt = expiresAt))
-                            messages.add(Message(id = msgId, text = text, isOwn = true, replyTo = replyMsg, isPending = true))
-                            scope.launch { listState.animateScrollToItem(messages.size - 1) }
-                            // Таймер 60 с: если нет подтверждения доставки от получателя — помечаем недоставленным
-                            val deliveryTimeoutJob = scope.launch {
-                                delay(60_000L)
-                                val idx = messages.indexOfFirst { it.id == msgId }
-                                if (idx != -1) messages[idx] = messages[idx].copy(isPending = false, isFailed = true)
-                                withContext(Dispatchers.IO) {
-                                    ChatStorage.markFailed(context, userId, recipient, msgId)
+                        },
+                        size = 44
+                    )
+                }
+            } else {
+                // ── Обычный режим ────────────────────────────────────────────
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(c.topBar)
+                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Кнопка вложений
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x18FFFFFF))
+                            .clickable { showAttachMenu = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_attach),
+                            contentDescription = null,
+                            tint = c.textPrimary.copy(alpha = 0.85f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    // Поле ввода
+                    val inputInteraction = remember { MutableInteractionSource() }
+                    val isInputFocused by inputInteraction.collectIsFocusedAsState()
+                    val inputBorderColor by animateColorAsState(
+                        targetValue = if (isInputFocused) c.accent.copy(alpha = 0.6f) else Color(0x28B0C4DE),
+                        animationSpec = tween(250),
+                        label = "inputBorder"
+                    )
+                    Box(modifier = Modifier.weight(1f)) {
+                        androidx.compose.foundation.Canvas(modifier = Modifier.matchParentSize()) {
+                            drawRoundRect(
+                                color = Color(0x22FFFFFF),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(32.dp.toPx())
+                            )
+                            drawRoundRect(
+                                color = inputBorderColor,
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(32.dp.toPx()),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
+                            )
+                        }
+                        BasicTextField(
+                            value = inputText,
+                            onValueChange = {
+                                inputText = it
+                                if (it.isNotEmpty() && !isEditMode) messengerService?.sendTyping(recipient)
+                            },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                            maxLines = 4,
+                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, color = Color.White),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(c.accent),
+                            interactionSource = inputInteraction,
+                            decorationBox = { innerTextField ->
+                                if (inputText.isEmpty()) {
+                                    Text(
+                                        if (isEditMode) s.chatEditHint else s.chatInputHint,
+                                        fontSize = 15.sp,
+                                        color = Color(0x66FFFFFF),
+                                        fontFamily = JetBrainsMono
+                                    )
                                 }
-                                pendingDeliveryJobs.remove(msgId)
+                                innerTextField()
                             }
-                            pendingDeliveryJobs[msgId] = deliveryTimeoutJob
-                            // Планируем авто-удаление если таймер активен
-                            if (expiresAt > 0L) {
-                                scope.launch {
-                                    delay(disappearTimerSecs * 1000L)
-                                    val idx = messages.indexOfFirst { it.id == msgId }
-                                    if (idx != -1) messages.removeAt(idx)
-                                    withContext(Dispatchers.IO) {
-                                        ChatStorage.deleteMessage(context, userId, recipient, msgId)
+                        )
+                    }
+
+                    // Правая кнопка: отправить (если есть текст) или медиа-кнопка
+                    if (inputText.isNotEmpty() || isEditMode) {
+                        PortholeSendButton(
+                            enabled = inputText.isNotEmpty(),
+                            onClick = {
+                                val text = inputText.trim()
+                                if (text.isNotEmpty()) {
+                                    SoundManager.playMessageSent()
+                                    inputText = ""
+                                    if (isEditMode && editingMessageId != null) {
+                                        val editId = editingMessageId!!
+                                        val index = messages.indexOfFirst { it.id == editId }
+                                        if (index != -1) {
+                                            messages[index] = messages[index].copy(text = text, isEdited = true)
+                                            ChatStorage.saveOrUpdateMessage(context, userId, recipient,
+                                                ChatStorage.StoredMessage(id = editId, text = text, isOwn = true, reactions = messages[index].reactions, isEdited = true))
+                                        }
+                                        messengerService?.sendEdit(recipient, editId, text)
+                                        isEditMode = false
+                                        editingMessageId = null
+                                    } else {
+                                        val replyId = replyToMessage?.id
+                                        val replyMsg = replyToMessage
+                                        replyToMessage = null
+                                        val msgId = messengerService?.send(recipient, text, replyToId = replyId)
+                                            ?: UUID.randomUUID().toString()
+                                        val expiresAt = if (disappearTimerSecs > 0L)
+                                            System.currentTimeMillis() + disappearTimerSecs * 1000L else 0L
+                                        ChatStorage.saveOrUpdateMessage(context, userId, recipient,
+                                            ChatStorage.StoredMessage(id = msgId, text = text, isOwn = true,
+                                                replyToId = replyId, expiresAt = expiresAt))
+                                        messages.add(Message(id = msgId, text = text, isOwn = true, replyTo = replyMsg, isPending = true))
+                                        scope.launch { listState.animateScrollToItem(messages.size - 1) }
+                                        val deliveryTimeoutJob = scope.launch {
+                                            delay(60_000L)
+                                            val idx = messages.indexOfFirst { it.id == msgId }
+                                            if (idx != -1) messages[idx] = messages[idx].copy(isPending = false, isFailed = true)
+                                            withContext(Dispatchers.IO) {
+                                                ChatStorage.markFailed(context, userId, recipient, msgId)
+                                            }
+                                            pendingDeliveryJobs.remove(msgId)
+                                        }
+                                        pendingDeliveryJobs[msgId] = deliveryTimeoutJob
+                                        if (expiresAt > 0L) {
+                                            scope.launch {
+                                                delay(disappearTimerSecs * 1000L)
+                                                val idx = messages.indexOfFirst { it.id == msgId }
+                                                if (idx != -1) messages.removeAt(idx)
+                                                withContext(Dispatchers.IO) {
+                                                    ChatStorage.deleteMessage(context, userId, recipient, msgId)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-                            }
-                        }
+                            },
+                            size = 44
+                        )
+                    } else {
+                        CombinedMediaButton(
+                            isVideoMode = isVideoMode,
+                            onToggleMode = { isVideoMode = !isVideoMode },
+                            onStartVoice = {
+                                when {
+                                    context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+                                        android.content.pm.PackageManager.PERMISSION_GRANTED -> {
+                                        recordingFile = AudioHelper.startRecording(context)
+                                        isRecording = true
+                                    }
+                                    else -> audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                                }
+                            },
+                            onStartVideo = { showVideoCircleRecorder = true },
+                            size = 44
+                        )
                     }
-                },
-                size = 52
-            )
+                }
+            }
         }
 
         // Верификация
@@ -1645,7 +1825,7 @@ fun MessageBubble(
                 bottomEnd = 18.dp
             ),
             color = if (msg.videoPath != null) Color.Transparent else bubbleColor,
-            shadowElevation = 0.dp
+            shadowElevation = 2.dp
         ) {
             Column {
                 // Изображения — край в край, без отступов
@@ -1670,14 +1850,23 @@ fun MessageBubble(
                 Column(modifier = Modifier.weight(1f, fill = false)) {
                     // Reply
                     if (msg.replyTo != null) {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color(0xFFE0E0E0)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 4.dp)
+                                .height(IntrinsicSize.Min)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0x22FFFFFF))
                         ) {
-                            Column(modifier = Modifier.padding(8.dp)) {
-                                Text(s.chatReplyLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = c.primaryBlue)
-                                Text(msg.replyTo.text, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = Color.Gray)
+                            Spacer(
+                                modifier = Modifier
+                                    .width(3.dp)
+                                    .fillMaxHeight()
+                                    .background(c.accent)
+                            )
+                            Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                Text(s.chatReplyLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = c.accent)
+                                Text(msg.replyTo.text, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = c.textPrimary.copy(alpha = 0.7f))
                             }
                         }
                     }
@@ -2013,6 +2202,48 @@ fun MessageBubble(
         )
     }
 }
+@Composable
+private fun TypingDotsIndicator(color: Color) {
+    val bouncePx = with(LocalDensity.current) { 4.dp.toPx() }
+    val tr = rememberInfiniteTransition(label = "typing_dots")
+
+    val dot1 by tr.animateFloat(
+        initialValue = 0f, targetValue = -bouncePx,
+        animationSpec = infiniteRepeatable(
+            tween(280, easing = FastOutSlowInEasing), RepeatMode.Reverse
+        ), label = "d1"
+    )
+    val dot2 by tr.animateFloat(
+        initialValue = 0f, targetValue = -bouncePx,
+        animationSpec = infiniteRepeatable(
+            tween(280, easing = FastOutSlowInEasing), RepeatMode.Reverse,
+            StartOffset(120, StartOffsetType.FastForward)
+        ), label = "d2"
+    )
+    val dot3 by tr.animateFloat(
+        initialValue = 0f, targetValue = -bouncePx,
+        animationSpec = infiniteRepeatable(
+            tween(280, easing = FastOutSlowInEasing), RepeatMode.Reverse,
+            StartOffset(240, StartOffsetType.FastForward)
+        ), label = "d3"
+    )
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        listOf(dot1, dot2, dot3).forEach { offsetY ->
+            Box(
+                modifier = Modifier
+                    .size(5.dp)
+                    .graphicsLayer { translationY = offsetY }
+                    .clip(CircleShape)
+                    .background(color)
+            )
+        }
+    }
+}
+
 @Composable
 fun FilePreview(fileName: String, filePath: String, context: Context) {
     val fileExtension = fileName.substringAfterLast('.', "").lowercase()

@@ -65,9 +65,28 @@ user_avatars = {}
 
 FEDERATION_SECRET = os.environ.get("FEDERATION_SECRET", "")
 FEDERATION_PEERS  = [p.strip() for p in os.environ.get("FEDERATION_PEERS", "").split(",") if p.strip()]
+# Own public WebSocket URL — sent to father via peer_announce so clients can discover this server.
+# Example: "wss://myserver.ru" or "wss://myserver.ru:4433"
+SERVER_URL        = os.environ.get("SERVER_URL", "")
 
-federation_ws     = {}   # url → websocket | None  (outgoing connections to peers)
-fed_pending       = {}   # req_id → asyncio.Future  (async prekey bundle requests)
+federation_ws        = {}   # url → websocket | None  (outgoing connections to peers)
+fed_pending          = {}   # req_id → asyncio.Future  (async prekey bundle requests)
+dynamic_peer_urls    = set() # URLs announced via peer_announce (discovered at runtime)
+dynamic_peer_strikes = {}    # url → consecutive failure count (too many → evict)
+_fed_ssl_ctx         = None  # SSL context for outgoing federation connections
+incoming_peer_ws     = set() # websocket objects of authenticated incoming federation peers
+
+DYNAMIC_PEER_MAX_STRIKES = 3   # evict dynamic peer after this many hourly misses
+
+# Дедупликация федеративных сообщений: msg_id → timestamp доставки (TTL 5 мин)
+delivered_msg_ids: dict = {}   # только для сообщений, доставленных онлайн-клиентам
+
+# ─── Rate limit для входящих федеративных пиров ───────────────────────────────
+FED_BUNDLE_LIMIT   = 60    # максимум запросов prekey bundle от одного пира за окно
+FED_BUNDLE_WINDOW  = 60    # секунд в окне
+FED_BUNDLE_BAN_SEC = 3600  # бан на 1 час при превышении
+fed_bundle_rate    = {}    # ip → {"count": int, "reset_time": float}
+fed_bundle_banned  = {}    # ip → ban_until timestamp
 
 # ─── Offline Message Queue (SQLite) ───────────────────────────────────────────
 # Messages for offline users are stored here and flushed on reconnect.
@@ -312,6 +331,30 @@ async def db_save_bundle(username, bundle_data):
     await loop.run_in_executor(None, _db_save_bundle_sync, username, bundle_data)
 
 
+def fed_bundle_rate_ok(ip: str) -> bool:
+    """
+    Проверяет rate limit запросов prekey bundle от федеративного пира.
+    Возвращает False и выставляет бан если лимит превышен.
+    """
+    now = time.time()
+    # Проверяем бан
+    ban_until = fed_bundle_banned.get(ip, 0)
+    if now < ban_until:
+        return False
+    # Инициализируем / сбрасываем окно
+    entry = fed_bundle_rate.get(ip)
+    if not entry or now > entry["reset_time"]:
+        fed_bundle_rate[ip] = {"count": 1, "reset_time": now + FED_BUNDLE_WINDOW}
+        return True
+    entry["count"] += 1
+    if entry["count"] > FED_BUNDLE_LIMIT:
+        fed_bundle_banned[ip] = now + FED_BUNDLE_BAN_SEC
+        fed_bundle_rate.pop(ip, None)
+        print(f"[FEDERATION] Rate limit: пир {ip} забанен на {FED_BUNDLE_BAN_SEC}с (спам prekey)")
+        return False
+    return True
+
+
 async def forward_to_peers(to: str, payload: dict) -> bool:
     """Forward a message payload to all connected federation peers.
     Returns True if at least one peer received the message."""
@@ -348,18 +391,55 @@ async def federated_get_bundle(target: str):
             fut.cancel()
 
 
+async def broadcast_roster_update(new_url: str, skip_ws=None):
+    """
+    Gossip: рассылаем новый URL пира всем остальным подключённым федеративным пирам
+    (как исходящим, так и входящим), кроме skip_ws (источника сообщения).
+    """
+    data = json.dumps({"type": "peer_roster", "peers": [new_url]})
+    for url, ws in list(federation_ws.items()):
+        if ws is not None and ws is not skip_ws:
+            asyncio.create_task(send_safe(ws, data))
+    for ws in list(incoming_peer_ws):
+        if ws is not skip_ws:
+            asyncio.create_task(send_safe(ws, data))
+
+
 async def handle_federation_response(msg: dict):
     """Handle a response message that arrives on an outgoing federation connection."""
-    if msg.get("type") == "federated_bundle_response":
+    msg_type = msg.get("type")
+
+    if msg_type == "federated_bundle_response":
         req_id = msg.get("req_id")
+        bundle = msg.get("bundle")
         fut    = fed_pending.get(req_id)
-        if fut and not fut.done():
-            fut.set_result(msg.get("bundle"))
+        # Резолвим только на реальный bundle: null-ответы от пиров, у которых нет данного пользователя,
+        # игнорируем — ждём до таймаута, чтобы ответ от "правильного" пира не был вытеснен.
+        if fut and not fut.done() and bundle is not None:
+            fut.set_result(bundle)
+
+    # Gossip: получили ростер от пира — подключаемся ко всем новым
+    elif msg_type == "peer_roster":
+        peers = msg.get("peers", [])
+        for url in peers:
+            url = url.strip()
+            if url and url != SERVER_URL and url not in dynamic_peer_urls and url not in FEDERATION_PEERS:
+                dynamic_peer_urls.add(url)
+                asyncio.create_task(federation_connect_to_peer(url, _fed_ssl_ctx))
+                print(f"[FEDERATION] Новый пир из ростера: {url}")
 
 
 async def handle_federation_peer_incoming(websocket, ip: str):
     """Handle messages from an authenticated incoming federation peer connection."""
     print(f"[FEDERATION] Входящий пир подключен: {ip}")
+    incoming_peer_ws.add(websocket)
+
+    # Gossip: отправляем новому пиру весь известный нам ростер
+    roster = list(dynamic_peer_urls)
+    if roster:
+        await send_safe(websocket, json.dumps({"type": "peer_roster", "peers": roster}))
+        print(f"[FEDERATION] Ростер ({len(roster)} пиров) отправлен → {ip}")
+
     try:
         async for raw_msg in websocket:
             if len(raw_msg) > MAX_PACKET_SIZE_BYTES * 2:
@@ -377,18 +457,43 @@ async def handle_federation_peer_incoming(websocket, ip: str):
                 payload = msg.get("payload", {})
                 if not to:
                     continue
+                msg_id = payload.get("id")
+
+                # Дедупликация: одно и то же сообщение может прийти по нескольким путям меша
+                if msg_id:
+                    now = time.time()
+                    if msg_id in delivered_msg_ids:
+                        continue  # уже доставлено — отбрасываем
+                    # Чистим просроченные записи (TTL 5 мин) при каждом новом сообщении
+                    expired = [k for k, v in list(delivered_msg_ids.items()) if now - v > 300]
+                    for k in expired:
+                        del delivered_msg_ids[k]
+                    delivered_msg_ids[msg_id] = now
+
                 async with lock:
                     recipient = clients.get(to)
                 if recipient:
                     await send_safe(recipient["ws"], json.dumps(payload))
                     print(f"[FEDERATION] Доставлено: → {to}")
                 else:
-                    msg_id = payload.get("id")
                     await db_store(to, payload, msg_id)
                     print(f"[FEDERATION] Очередь: → {to} (офлайн)")
 
+            # ── Son server announces itself to father ─────────────────────────
+            elif msg_type == "peer_announce":
+                url = msg.get("url", "").strip()
+                if url and url not in dynamic_peer_urls and url not in FEDERATION_PEERS:
+                    dynamic_peer_urls.add(url)
+                    print(f"[FEDERATION] Новый пир зарегистрирован: {url}")
+                    asyncio.create_task(federation_connect_to_peer(url, _fed_ssl_ctx))
+                    # Gossip: рассылаем новый URL всем остальным пирам
+                    asyncio.create_task(broadcast_roster_update(url, skip_ws=websocket))
+
             # ── Serve a prekey bundle to a requesting peer ────────────────────
             elif msg_type == "federated_get_bundle":
+                if not fed_bundle_rate_ok(ip):
+                    print(f"[FEDERATION] Запрос bundle от {ip} отклонён (rate limit)")
+                    continue
                 target = msg.get("target")
                 req_id = msg.get("req_id")
                 bundle_to_send = None
@@ -422,6 +527,7 @@ async def handle_federation_peer_incoming(websocket, ip: str):
     except Exception as e:
         print(f"[FEDERATION] Ошибка входящего пира {ip}: {e}")
     finally:
+        incoming_peer_ws.discard(websocket)
         print(f"[FEDERATION] Входящий пир отключился: {ip}")
 
 
@@ -459,6 +565,14 @@ async def federation_connect_to_peer(url: str, ssl_ctx=None):
 
                 backoff = 5
                 print(f"[FEDERATION] Подключен к {url}")
+
+                # ── Announce own URL to father so clients can discover us ─────
+                if SERVER_URL:
+                    await ws.send(json.dumps({
+                        "type": "peer_announce",
+                        "url":  SERVER_URL
+                    }))
+                    print(f"[FEDERATION] peer_announce отправлен → {url} (наш адрес: {SERVER_URL})")
 
                 # ── Handle responses (bundle lookups etc.) ────────────────────
                 async for raw_msg in ws:
@@ -806,6 +920,16 @@ async def handle_client(websocket):
                         "pass": turn_pass
                     }))
                     print(f"[TURN] Учётные данные доставлены: {username}")
+
+                # ── Send mesh peer list for client-side failover ──────────────
+                # Only include peers that are currently connected (avoids stale dynamic IPs)
+                active_peers = [u for u, ws in federation_ws.items() if ws is not None]
+                if active_peers:
+                    await send_safe(websocket, json.dumps({
+                        "type":  "server_peers",
+                        "peers": active_peers
+                    }))
+                    print(f"[FEDERATION] Список пиров отправлен → {username} ({len(active_peers)} пиров)")
                 continue
 
             # ─── Register Bundle ──────────────────────────────────────────────
@@ -1727,9 +1851,112 @@ async def handle_admin_http(reader, writer):
     finally:
         writer.close()
 
+# ─── UPnP: автопроброс порта на домашнем роутере ─────────────────────────────
+
+def setup_upnp(port: int = 9000) -> str:
+    """
+    Открывает порт на домашнем роутере через UPnP (как Minecraft, BitTorrent).
+    Возвращает 'ws://public_ip:port' при успехе или '' при ошибке.
+    Работает без регистраций и ручной настройки — достаточно включённого UPnP на роутере.
+    """
+    try:
+        import miniupnpc
+        upnp = miniupnpc.UPnP()
+        upnp.discoverdelay = 2000   # 2 сек на поиск шлюза
+        found = upnp.discover()
+        if not found:
+            print("[UPnP] Роутер с UPnP не найден — включи UPnP в настройках роутера")
+            return ""
+        upnp.selectigd()
+        public_ip = upnp.externalipaddress()
+        if not public_ip:
+            print("[UPnP] Не удалось получить внешний IP от роутера")
+            return ""
+        # Удаляем старый маппинг если был, затем создаём новый
+        try:
+            upnp.deleteportmapping(port, "TCP")
+        except Exception:
+            pass
+        upnp.addportmapping(port, "TCP", upnp.lanaddr, port, "Beacon Messenger", "")
+        url = f"ws://{public_ip}:{port}"
+        print(f"[UPnP] Порт {port} открыт автоматически. Адрес этого сервера: {url}")
+        return url
+    except ImportError:
+        print("[UPnP] miniupnpc не установлен — запусти: pip install miniupnpc")
+        return _upnp_http_fallback()
+    except Exception as e:
+        print(f"[UPnP] Ошибка: {e}")
+        return _upnp_http_fallback()
+
+
+def _upnp_http_fallback() -> str:
+    """
+    Если UPnP недоступен — пытаемся узнать внешний IP через публичный API.
+    Порт пробрасывать мы не можем, поэтому только сообщаем пользователю,
+    что нужно сделать вручную в настройках роутера.
+    """
+    try:
+        import urllib.request
+        external_ip = urllib.request.urlopen(
+            "https://api.ipify.org", timeout=5
+        ).read().decode().strip()
+        if external_ip:
+            print(f"[UPnP] Внешний IP определён: {external_ip}")
+            print(f"[UPnP] UPnP недоступен — пробрось порт 9000 вручную в настройках роутера.")
+            print(f"[UPnP] После этого задай в .env:  SERVER_URL=ws://{external_ip}:9000")
+    except Exception:
+        print("[UPnP] Не удалось определить внешний IP. Задай SERVER_URL в .env вручную.")
+    return ""
+
+
+# ─── Watchdog: очистка мёртвых пиров (раз в час) ─────────────────────────────
+
+async def federation_watchdog():
+    """
+    Every hour: check each dynamic peer.
+    Peers with no active connection get a strike.
+    After DYNAMIC_PEER_MAX_STRIKES strikes the URL is evicted so clients
+    stop receiving it in server_peers lists.
+    Static FEDERATION_PEERS are never evicted — they reconnect indefinitely.
+    """
+    while True:
+        await asyncio.sleep(3600)
+        if not dynamic_peer_urls:
+            continue
+
+        evict = []
+        for url in list(dynamic_peer_urls):
+            ws = federation_ws.get(url)
+            alive = False
+            if ws is not None:
+                try:
+                    # Реальный ping: обнаруживает half-open соединения,
+                    # которые websocket-объект считает живыми
+                    await asyncio.wait_for(ws.ping(), timeout=10)
+                    alive = True
+                except Exception:
+                    alive = False
+            if alive:
+                dynamic_peer_strikes[url] = 0   # reset on success
+                print(f"[WATCHDOG] Пир живой: {url}")
+            else:
+                strikes = dynamic_peer_strikes.get(url, 0) + 1
+                dynamic_peer_strikes[url] = strikes
+                print(f"[WATCHDOG] Пир не отвечает ({strikes}/{DYNAMIC_PEER_MAX_STRIKES}): {url}")
+                if strikes >= DYNAMIC_PEER_MAX_STRIKES:
+                    evict.append(url)
+
+        for url in evict:
+            dynamic_peer_urls.discard(url)
+            dynamic_peer_strikes.pop(url, None)
+            federation_ws.pop(url, None)
+            print(f"[WATCHDOG] Пир удалён из реестра: {url}")
+
+
 # ─── Запуск ───────────────────────────────────────────────────────────────────
 
 async def main(ssl_context=None):
+    global _fed_ssl_ctx
     # Start outgoing federation connections
     if FEDERATION_SECRET and FEDERATION_PEERS:
         # For peer connections: skip certificate verification (peers may use self-signed certs)
@@ -1738,11 +1965,23 @@ async def main(ssl_context=None):
             fed_ssl = ssl.create_default_context()
             fed_ssl.check_hostname = False
             fed_ssl.verify_mode    = ssl.CERT_NONE
+        _fed_ssl_ctx = fed_ssl
         for peer_url in FEDERATION_PEERS:
             asyncio.create_task(federation_connect_to_peer(peer_url, fed_ssl))
+    elif FEDERATION_SECRET:
+        fed_ssl = None
+        if ssl_context:
+            fed_ssl = ssl.create_default_context()
+            fed_ssl.check_hostname = False
+            fed_ssl.verify_mode    = ssl.CERT_NONE
+        _fed_ssl_ctx = fed_ssl
         print(f"[FEDERATION] Инициализация: {len(FEDERATION_PEERS)} пиров → {FEDERATION_PEERS}")
     elif FEDERATION_SECRET:
         print("[FEDERATION] FEDERATION_SECRET задан, но FEDERATION_PEERS пуст — сервер принимает входящих пиров")
+
+    if FEDERATION_SECRET:
+        asyncio.create_task(federation_watchdog())
+        print("[WATCHDOG] Запущен (проверка пиров каждые 3600с)")
 
     # Admin HTTP API (только localhost, без TLS)
     if CHANNEL_ADMIN_SECRET:
@@ -1767,6 +2006,15 @@ async def main(ssl_context=None):
 
 
 def start_server():
+    global SERVER_URL
+    # UPnP: автопроброс порта если сервер — сын федерации и адрес не задан вручную
+    if FEDERATION_SECRET and FEDERATION_PEERS and not SERVER_URL:
+        detected = setup_upnp(9000)
+        if detected:
+            SERVER_URL = detected
+        else:
+            print("[UPnP] Автонастройка не удалась. Задай SERVER_URL в .env вручную.")
+
     _db_setup_sync()
     _db_load_channels_sync()
     loaded_bundles = _db_load_bundles_sync()

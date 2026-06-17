@@ -18,8 +18,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -130,7 +136,12 @@ private fun PDivider() {
 @Composable
 private fun PChevron() {
     val c = LocalBeaconColors.current
-    Text("›", fontSize = 20.sp, color = c.textPrimary.copy(alpha = 0.35f))
+    Icon(
+        imageVector = Icons.Default.KeyboardArrowRight,
+        contentDescription = null,
+        tint = c.textPrimary.copy(alpha = 0.30f),
+        modifier = Modifier.size(20.dp)
+    )
 }
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
@@ -214,7 +225,7 @@ fun ProfileScreen(
     }
     val fingerprint      = remember { extractFingerprint(inviteCode) }
     val emojiFingerprint = remember { fingerprint?.let { fingerprintToEmoji(it) } }
-    val qrBitmap         = remember(showQr) { if (showQr) generateQRCode(inviteCode, 512) else null }
+    val qrBitmap         = remember { generateQRCode(inviteCode, 512) }
 
     // ── Avatar ─────────────────────────────────────────────────────────────
     var myAvatarBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -303,8 +314,6 @@ fun ProfileScreen(
         )[displayName.hashCode().absoluteValue % 6]
     }
 
-    val secSecurity = if (s.langCode == "ru") "Безопасность" else "Security"
-    val secGeneral  = if (s.langCode == "ru") "Основное"     else "General"
 
     // ══════════════════════════════════════════════════════════════════════
     Scaffold(containerColor = Color.Transparent) { padding ->
@@ -343,40 +352,64 @@ fun ProfileScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Avatar + camera badge
+                    // Avatar + glow ring + camera badge
                     Box(
                         modifier = Modifier
-                            .size(96.dp)
+                            .size(108.dp)
                             .clickable { galleryLauncher.launch("image/*") },
-                        contentAlignment = Alignment.BottomEnd
+                        contentAlignment = Alignment.Center
                     ) {
-                        if (myAvatarBitmap != null) {
-                            Image(
-                                bitmap = myAvatarBitmap!!.asImageBitmap(),
-                                contentDescription = displayName,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize().clip(CircleShape)
-                            )
-                        } else {
-                            Surface(
-                                shape = CircleShape,
-                                color = avatarColor,
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = displayName.first().uppercaseChar().toString(),
-                                        fontSize = 40.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
-                                        fontFamily = AppFont
+                        // Кольцо-свечение
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.radialGradient(
+                                        listOf(
+                                            c.accent.copy(alpha = 0.30f),
+                                            c.accent.copy(alpha = 0.06f)
+                                        )
                                     )
+                                )
+                        )
+                        // Аватар
+                        Box(
+                            modifier = Modifier
+                                .size(96.dp)
+                                .clip(CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (myAvatarBitmap != null) {
+                                Image(
+                                    bitmap = myAvatarBitmap!!.asImageBitmap(),
+                                    contentDescription = displayName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = avatarColor,
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = displayName.first().uppercaseChar().toString(),
+                                            fontSize = 40.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            fontFamily = AppFont
+                                        )
+                                    }
                                 }
                             }
                         }
+                        // Camera badge
                         Box(
                             modifier = Modifier
                                 .size(30.dp)
+                                .align(Alignment.BottomEnd)
                                 .clip(CircleShape)
                                 .background(c.primaryBlue),
                             contentAlignment = Alignment.Center
@@ -405,7 +438,7 @@ fun ProfileScreen(
                         Spacer(modifier = Modifier.height(10.dp))
                         Surface(
                             shape = RoundedCornerShape(20.dp),
-                            color = Color.White.copy(alpha = 0.12f)
+                            color = c.textPrimary.copy(alpha = 0.10f)
                         ) {
                             Text(
                                 text = emojiFingerprint,
@@ -417,7 +450,7 @@ fun ProfileScreen(
                         Text(
                             text = s.profileFingerprintHint,
                             fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.45f),
+                            color = c.textPrimary.copy(alpha = 0.55f),
                             fontFamily = AppFont,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.padding(horizontal = 40.dp)
@@ -483,7 +516,11 @@ fun ProfileScreen(
                                 )
                             }
                         )
-                        if (showQr && qrBitmap != null) {
+                        AnimatedVisibility(
+                            visible = showQr && qrBitmap != null,
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut()
+                        ) {
                             Column(
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
@@ -494,7 +531,7 @@ fun ProfileScreen(
                                     modifier = Modifier.size(200.dp)
                                 ) {
                                     Image(
-                                        bitmap = qrBitmap.asImageBitmap(),
+                                        bitmap = qrBitmap!!.asImageBitmap(),
                                         contentDescription = "QR",
                                         modifier = Modifier.fillMaxSize().padding(10.dp)
                                     )
@@ -608,7 +645,7 @@ fun ProfileScreen(
                 }
 
                 // ── Security ──────────────────────────────────────────────
-                PSection(secSecurity)
+                PSection(s.profileSectionSecurity)
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     shape = RoundedCornerShape(16.dp),
@@ -696,7 +733,7 @@ fun ProfileScreen(
                 }
 
                 // ── General ───────────────────────────────────────────────
-                PSection(secGeneral)
+                PSection(s.profileSectionGeneral)
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     shape = RoundedCornerShape(16.dp),
@@ -717,19 +754,30 @@ fun ProfileScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // ── Danger ────────────────────────────────────────────────
-                TextButton(
-                    onClick = { showNotMeConfirm = true },
+                // ── Danger zone ───────────────────────────────────────────
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
+                        .padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0x18EF5350))
                 ) {
-                    Text(
-                        s.profileNotMe,
-                        fontSize = 15.sp,
-                        fontFamily = AppFont,
-                        color = Color(0xFFEF5350)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showNotMeConfirm = true }
+                            .padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("⚠️", fontSize = 18.sp, modifier = Modifier.padding(end = 12.dp))
+                        Text(
+                            s.profileNotMe,
+                            fontSize = 15.sp,
+                            fontFamily = AppFont,
+                            color = Color(0xFFEF5350),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(40.dp))

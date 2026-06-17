@@ -7,6 +7,7 @@ object ServerManager {
     private const val PREFS_NAME = "server_prefs"
     private const val KEY_SERVERS = "server_list"
     private const val KEY_CURRENT = "current_server"
+    private const val KEY_DISCOVERED_PEERS = "discovered_peers"
 
     data class Server(
         val host: String,
@@ -92,13 +93,13 @@ object ServerManager {
     fun getCurrentServer(context: Context): Server? {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val index = prefs.getInt(KEY_CURRENT, 0)
-        val servers = getServers(context).filter { it.enabled }
+        val servers = getAllKnownServers(context).filter { it.enabled }
         return servers.getOrNull(index)
     }
 
     fun switchToNext(context: Context): Server? {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
-        val servers = getServers(context).filter { it.enabled }
+        val servers = getAllKnownServers(context).filter { it.enabled }
         if (servers.isEmpty()) return null
         val current = prefs.getInt(KEY_CURRENT, 0)
         val next = (current + 1) % servers.size
@@ -122,5 +123,76 @@ object ServerManager {
             servers.removeAt(index)
             saveServers(context, servers)
         }
+    }
+
+    // ─── Меш-пиры (динамически полученные от серверов) ────────────────────────
+
+    /** Серверы, присланные через server_peers (кешируются между сессиями). */
+    fun getDiscoveredPeers(context: Context): List<Server> {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val json = prefs.getString(KEY_DISCOVERED_PEERS, null) ?: return emptyList()
+        return try {
+            val array = org.json.JSONArray(json)
+            (0 until array.length()).map { i ->
+                val obj = array.getJSONObject(i)
+                Server(
+                    host    = obj.getString("host"),
+                    port    = obj.optInt("port", 443),
+                    name    = obj.optString("name", ""),
+                    enabled = obj.optBoolean("enabled", true),
+                    path    = obj.optString("path", "")
+                )
+            }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    private fun saveDiscoveredPeers(context: Context, peers: List<Server>) {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val array = org.json.JSONArray()
+        peers.forEach { s ->
+            array.put(org.json.JSONObject().apply {
+                put("host", s.host)
+                put("port", s.port)
+                put("name", s.name)
+                put("enabled", s.enabled)
+                put("path", s.path)
+            })
+        }
+        prefs.edit().putString(KEY_DISCOVERED_PEERS, array.toString()).apply()
+    }
+
+    /** Добавляет пир из полного URL (wss://host:port/path). Дубликаты игнорируются. */
+    fun addDiscoveredPeer(context: Context, url: String) {
+        val server = serverFromUrl(url) ?: return
+        val peers = getDiscoveredPeers(context).toMutableList()
+        val key = "${server.host}:${server.port}/${server.path}"
+        if (peers.none { "${it.host}:${it.port}/${it.path}" == key }) {
+            peers.add(server)
+            saveDiscoveredPeers(context, peers)
+        }
+    }
+
+    /**
+     * Все известные серверы: ручные (getServers) + меш-пиры (getDiscoveredPeers).
+     * Пиры уже присутствующие в ручном списке не дублируются.
+     */
+    fun getAllKnownServers(context: Context): List<Server> {
+        val manual = getServers(context)
+        val discovered = getDiscoveredPeers(context)
+        val manualKeys = manual.map { "${it.host}:${it.port}/${it.path}" }.toSet()
+        val newPeers = discovered.filter { "${it.host}:${it.port}/${it.path}" !in manualKeys }
+        return manual + newPeers
+    }
+
+    private fun serverFromUrl(url: String): Server? {
+        return try {
+            val uri = android.net.Uri.parse(url)
+            val host = uri.host?.takeIf { it.isNotEmpty() } ?: return null
+            val port = if (uri.port != -1) uri.port else 443
+            val path = uri.path?.trim('/') ?: ""
+            // Сохраняем полный URL как host — toWssUrl() увидит "://" и правильно
+            // сохранит схему (ws:// для домашних серверов без TLS).
+            Server(host = url, port = port, name = "$host (peer)", enabled = true, path = path)
+        } catch (e: Exception) { null }
     }
 }

@@ -32,6 +32,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.absoluteValue
 import android.util.Log
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import com.bcon.messenger.ui.theme.LocalBeaconColors
 
 sealed class ChatItem {
@@ -80,7 +87,7 @@ private fun OptionRow(
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatsScreen(
     onOpenChat: (String) -> Unit,
@@ -109,7 +116,6 @@ fun ChatsScreen(
     var channelLinkInput           by remember { mutableStateOf("") }
     var pendingSubscribeData       by remember { mutableStateOf<ChannelManager.ChannelLinkData?>(null) }
     var showCreateChannelDialog    by remember { mutableStateOf(false) }
-    var channelCreationCode        by remember { mutableStateOf("") }
     var newChannelName             by remember { mutableStateOf("") }
     var newChannelDesc             by remember { mutableStateOf("") }
     var newChannelAvatar           by remember { mutableStateOf("📢") }
@@ -235,6 +241,16 @@ fun ChatsScreen(
             TopAppBar(
                 title = {
                     val isConnected by MessengerService.connectionState.collectAsState()
+                    val dotTransition = rememberInfiniteTransition(label = "dot")
+                    val dotPulse by dotTransition.animateFloat(
+                        initialValue = 1f,
+                        targetValue = if (isConnected) 1.55f else 1f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(900, easing = FastOutSlowInEasing),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "dot_pulse"
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "B-CON",
@@ -247,6 +263,7 @@ fun ChatsScreen(
                         Box(
                             modifier = Modifier
                                 .size(8.dp)
+                                .graphicsLayer { scaleX = dotPulse; scaleY = dotPulse }
                                 .clip(CircleShape)
                                 .background(if (isConnected) Color(0xFF4CAF50) else Color(0xFF9E9E9E))
                         )
@@ -329,35 +346,51 @@ fun ChatsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(top = 8.dp, bottom = 80.dp)
                 ) {
-                    items(chatItems) { item ->
-                        when (item) {
-                            is ChatItem.Contact -> ContactCard(
-                                userId = item.userId,
-                                name = item.name,
-                                lastMessage = item.lastMessage,
-                                unreadCount = item.unreadCount,
-                                lastTimestamp = item.lastTimestamp,
-                                onClick = { onOpenChat(item.userId) },
-                                onLongClick = { deleteTarget = item }
+                    items(
+                        chatItems,
+                        key = { item ->
+                            when (item) {
+                                is ChatItem.Contact     -> "c_${item.userId}"
+                                is ChatItem.GroupChat   -> "g_${item.group.id}"
+                                is ChatItem.ChannelItem -> "ch_${item.channel.id}"
+                            }
+                        }
+                    ) { item ->
+                        Column(
+                            modifier = Modifier.animateItem(
+                                fadeInSpec  = tween(250),
+                                fadeOutSpec = tween(180)
                             )
-                            is ChatItem.GroupChat -> GroupChatCard(
-                                group = item.group,
-                                lastMessage = item.lastMessage,
-                                lastTimestamp = item.lastTimestamp,
-                                onClick = { onOpenGroupChat(item.group.id) }
-                            )
-                            is ChatItem.ChannelItem -> ChannelCard(
-                                channel = item.channel,
-                                lastPost = item.lastPost,
-                                onClick = { onOpenChannel(item.channel.id) }
+                        ) {
+                            when (item) {
+                                is ChatItem.Contact -> ContactCard(
+                                    userId = item.userId,
+                                    name = item.name,
+                                    lastMessage = item.lastMessage,
+                                    unreadCount = item.unreadCount,
+                                    lastTimestamp = item.lastTimestamp,
+                                    onClick = { onOpenChat(item.userId) },
+                                    onLongClick = { deleteTarget = item }
+                                )
+                                is ChatItem.GroupChat -> GroupChatCard(
+                                    group = item.group,
+                                    lastMessage = item.lastMessage,
+                                    lastTimestamp = item.lastTimestamp,
+                                    onClick = { onOpenGroupChat(item.group.id) }
+                                )
+                                is ChatItem.ChannelItem -> ChannelCard(
+                                    channel = item.channel,
+                                    lastPost = item.lastPost,
+                                    onClick = { onOpenChannel(item.channel.id) }
+                                )
+                            }
+                            // Indented divider (starts after avatar area)
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 82.dp),
+                                color = c.textPrimary.copy(alpha = 0.07f),
+                                thickness = 0.5.dp
                             )
                         }
-                        // Indented divider (starts after avatar area)
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = 82.dp),
-                            color = c.textPrimary.copy(alpha = 0.07f),
-                            thickness = 0.5.dp
-                        )
                     }
                 }
             }
@@ -613,25 +646,22 @@ fun ChatsScreen(
         AlertDialog(
             onDismissRequest = {
                 showCreateChannelDialog = false
-                channelCreationCode = ""; newChannelName = ""; newChannelDesc = ""
+                newChannelName = ""; newChannelDesc = ""; newChannelAvatar = "📢"
             },
             containerColor = c.dialog,
             title = { Text(s.chatsChannelCreateTitle, color = Color.White, fontFamily = JetBrainsMono) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(s.chatsChannelCreateHint, color = c.textPrimary.copy(alpha = 0.7f), fontFamily = JetBrainsMono, fontSize = 12.sp)
                     listOf(
-                        channelCreationCode to s.chatsChannelCodeLabel,
-                        newChannelName      to s.chatsChannelNameLabel,
-                        newChannelDesc      to s.chatsChannelDescLabel
+                        newChannelName to s.chatsChannelNameLabel,
+                        newChannelDesc to s.chatsChannelDescLabel
                     ).forEachIndexed { idx, (value, label) ->
                         OutlinedTextField(
                             value = value,
                             onValueChange = {
                                 when (idx) {
-                                    0 -> channelCreationCode = it
-                                    1 -> newChannelName = it
-                                    2 -> newChannelDesc = it
+                                    0 -> newChannelName = it
+                                    1 -> newChannelDesc = it
                                 }
                             },
                             label = { Text(label, fontFamily = JetBrainsMono, fontSize = 12.sp) },
@@ -651,26 +681,25 @@ fun ChatsScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (channelCreationCode.isBlank() || newChannelName.isBlank()) {
+                    if (newChannelName.isBlank()) {
                         android.widget.Toast.makeText(context, s.chatsChannelFillFields, android.widget.Toast.LENGTH_SHORT).show()
                         return@TextButton
                     }
                     context.startService(
                         Intent(context, MessengerService::class.java).apply {
-                            putExtra("channel_create_code",   channelCreationCode.trim())
                             putExtra("channel_create_name",   newChannelName.trim())
                             putExtra("channel_create_desc",   newChannelDesc.trim())
                             putExtra("channel_create_avatar", newChannelAvatar)
                         }
                     )
                     showCreateChannelDialog = false
-                    channelCreationCode = ""; newChannelName = ""; newChannelDesc = ""
+                    newChannelName = ""; newChannelDesc = ""; newChannelAvatar = "📢"
                 }) { Text(s.create, color = c.accent, fontFamily = JetBrainsMono) }
             },
             dismissButton = {
                 TextButton(onClick = {
                     showCreateChannelDialog = false
-                    channelCreationCode = ""; newChannelName = ""; newChannelDesc = ""
+                    newChannelName = ""; newChannelDesc = ""; newChannelAvatar = "📢"
                 }) { Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono) }
             }
         )

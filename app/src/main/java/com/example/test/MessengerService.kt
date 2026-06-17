@@ -77,13 +77,26 @@ class MessengerService : Service() {
             .connectTimeout(15, TimeUnit.SECONDS)  // Tor медленнее — чуть больше таймаут
             .readTimeout(0, TimeUnit.SECONDS)
         if (useTor) {
-            builder.proxy(
-                java.net.Proxy(
-                    java.net.Proxy.Type.SOCKS,
-                    java.net.InetSocketAddress(TorManager.SOCKS_HOST, TorManager.SOCKS_PORT)
-                )
+            // Кастомный SocketFactory: передаёт имя хоста в Orbot без локального DNS-резолва.
+            // Стандартный .proxy() резолвит хост через системный DNS до SOCKS5 — DNS-утечка.
+            // createUnresolved() отправляет строку напрямую в Orbot (SOCKS5 DOMAIN-тип),
+            // что также позволяет подключаться к .onion-адресам.
+            val torProxy = java.net.Proxy(
+                java.net.Proxy.Type.SOCKS,
+                java.net.InetSocketAddress(TorManager.SOCKS_HOST, TorManager.SOCKS_PORT)
             )
-            Log.d(TAG, "OkHttpClient: маршрут через Tor SOCKS5")
+            builder.socketFactory(object : javax.net.SocketFactory() {
+                private fun torSocket(host: String, port: Int): java.net.Socket =
+                    java.net.Socket(torProxy).apply {
+                        connect(java.net.InetSocketAddress.createUnresolved(host, port), 30_000)
+                    }
+                override fun createSocket(): java.net.Socket = java.net.Socket(torProxy)
+                override fun createSocket(host: String, port: Int) = torSocket(host, port)
+                override fun createSocket(host: java.net.InetAddress, port: Int) = torSocket(host.hostName, port)
+                override fun createSocket(host: String, port: Int, localAddr: java.net.InetAddress, localPort: Int) = torSocket(host, port)
+                override fun createSocket(host: java.net.InetAddress, port: Int, localAddr: java.net.InetAddress, localPort: Int) = torSocket(host.hostName, port)
+            })
+            Log.d(TAG, "OkHttpClient: маршрут через Tor SOCKS5 (без DNS-утечки)")
         }
         if (NetworkConfig.CERT_PIN.isNotEmpty() && NetworkConfig.SERVER_HOSTNAME.isNotEmpty()) {
             builder.certificatePinner(
@@ -112,6 +125,8 @@ class MessengerService : Service() {
 
     private val publicKeys = mutableMapOf<String, String>()
     private val pendingMessages = mutableMapOf<String, MutableList<Pair<String, String>>>()
+    // Дедупликация групповых сообщений: защита от replay-атаки через сервер
+    private val processedGroupMessageIds = mutableSetOf<String>()
     private val pendingSessionMessages = mutableMapOf<String, MutableList<Pair<String, String>>>()
     private val pendingReactions = mutableListOf<Triple<String, String, String>>()
     // Очередь видеокружков для отправки при офлайн / нет ключа
@@ -146,6 +161,9 @@ class MessengerService : Service() {
     var onGroupInviteReceived: ((Group, String) -> Unit)? = null
     var onChannelPostReceived: ((String, ChannelPost) -> Unit)? = null  // channelId, post
     var onChannelCreated: ((Channel) -> Unit)? = null
+    var onChannelPostDeleted: ((String, String) -> Unit)? = null        // channelId, postId
+    var onChannelInfoUpdated: ((String) -> Unit)? = null                // channelId
+    var onChannelDeleted: ((String) -> Unit)? = null                    // channelId
     var onMessageDeleted: ((fromId: String, messageId: String) -> Unit)? = null  // удалено у всех
     var onDisappearTimerChanged: ((fromId: String, seconds: Long) -> Unit)? = null
     var onGroupMessageDeleted: ((groupId: String, messageId: String) -> Unit)? = null
@@ -564,6 +582,8 @@ class MessengerService : Service() {
                         put("from", username)
                     }.toString())
                 }
+            } else {
+                android.widget.Toast.makeText(this, s.channelNoConnection, android.widget.Toast.LENGTH_SHORT).show()
             }
             return START_STICKY
         }
@@ -607,15 +627,65 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
-        intent?.getStringExtra("channel_create_code")?.let { code ->
-            val name = intent.getStringExtra("channel_create_name") ?: return@let
+        intent?.getStringExtra("channel_create_name")?.let { name ->
             val desc = intent.getStringExtra("channel_create_desc") ?: ""
             val avatar = intent.getStringExtra("channel_create_avatar") ?: "📢"
             if (isConnected) {
                 scope.launch(Dispatchers.IO) {
                     sendWs(JSONObject().apply {
                         put("type", "channel_create")
-                        put("invite_code", code)
+                        put("channel_name", name)
+                        put("channel_description", desc)
+                        put("channel_avatar", avatar)
+                        put("from", username)
+                    }.toString())
+                }
+            } else {
+                android.widget.Toast.makeText(this, s.channelNoConnection, android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return START_STICKY
+        }
+
+        // ── Get channel info (subscriber count, pinned post) ──────────────────
+        intent?.getStringExtra("channel_get_info_id")?.let { channelId ->
+            if (isConnected) {
+                scope.launch(Dispatchers.IO) {
+                    sendWs(JSONObject().apply {
+                        put("type", "channel_get_info")
+                        put("channel_id", channelId)
+                        put("from", username)
+                    }.toString())
+                }
+            }
+            return START_STICKY
+        }
+
+        // ── Delete post ───────────────────────────────────────────────────────
+        intent?.getStringExtra("channel_delete_post_channel_id")?.let { channelId ->
+            val postId = intent.getStringExtra("channel_delete_post_id") ?: return@let
+            if (isConnected) {
+                scope.launch(Dispatchers.IO) {
+                    sendWs(JSONObject().apply {
+                        put("type", "channel_delete_post")
+                        put("channel_id", channelId)
+                        put("post_id", postId)
+                        put("from", username)
+                    }.toString())
+                }
+            }
+            return START_STICKY
+        }
+
+        // ── Update channel info (name / description / avatar) ─────────────────
+        intent?.getStringExtra("channel_update_info_id")?.let { channelId ->
+            val name   = intent.getStringExtra("channel_update_info_name") ?: return@let
+            val desc   = intent.getStringExtra("channel_update_info_desc") ?: ""
+            val avatar = intent.getStringExtra("channel_update_info_avatar") ?: "📢"
+            if (isConnected) {
+                scope.launch(Dispatchers.IO) {
+                    sendWs(JSONObject().apply {
+                        put("type", "channel_update_info")
+                        put("channel_id", channelId)
                         put("channel_name", name)
                         put("channel_description", desc)
                         put("channel_avatar", avatar)
@@ -623,6 +693,45 @@ class MessengerService : Service() {
                     }.toString())
                 }
             }
+            return START_STICKY
+        }
+
+        // ── Delete channel ────────────────────────────────────────────────────
+        intent?.getStringExtra("channel_delete_id")?.let { channelId ->
+            if (isConnected) {
+                scope.launch(Dispatchers.IO) {
+                    sendWs(JSONObject().apply {
+                        put("type", "channel_delete")
+                        put("channel_id", channelId)
+                        put("from", username)
+                    }.toString())
+                }
+            }
+            return START_STICKY
+        }
+
+        // ── Pin / unpin post ──────────────────────────────────────────────────
+        intent?.getStringExtra("channel_pin_post_channel_id")?.let { channelId ->
+            val postId = intent.getStringExtra("channel_pin_post_id") ?: return@let
+            val unpin  = intent.getBooleanExtra("channel_pin_post_unpin", false)
+            if (isConnected) {
+                scope.launch(Dispatchers.IO) {
+                    sendWs(JSONObject().apply {
+                        put("type", "channel_pin_post")
+                        put("channel_id", channelId)
+                        put("post_id", postId)
+                        put("unpin", unpin)
+                        put("from", username)
+                    }.toString())
+                }
+            }
+            return START_STICKY
+        }
+
+        // ── Forward post text to contact ──────────────────────────────────────
+        intent?.getStringExtra("forward_to")?.let { contactId ->
+            val text = intent.getStringExtra("forward_text") ?: return@let
+            scope.launch(Dispatchers.IO) { send(contactId, text) }
             return START_STICKY
         }
 
@@ -926,6 +1035,20 @@ class MessengerService : Service() {
                     Log.d(TAG, "TURN-credentials получены от сервера")
                 } else {
                     Log.w(TAG, "turn_config: пустые учётные данные — TURN недоступен")
+                }
+            }
+
+            // Список меш-пиров от сервера (резервные адреса для фейловера)
+            "server_peers" -> {
+                val peersArray = json.optJSONArray("peers")
+                if (peersArray != null && peersArray.length() > 0) {
+                    for (i in 0 until peersArray.length()) {
+                        val peerUrl = peersArray.optString(i)
+                        if (peerUrl.isNotBlank()) {
+                            ServerManager.addDiscoveredPeer(this@MessengerService, peerUrl)
+                        }
+                    }
+                    Log.d(TAG, "server_peers: сохранено ${peersArray.length()} меш-пиров")
                 }
             }
 
@@ -1388,6 +1511,10 @@ class MessengerService : Service() {
 
                         publicKeys[from] = bundle.identityKey
                         ChatStorage.saveContactPublicKey(this@MessengerService, from, bundle.identityKey)
+                        if (KeyHistoryManager.checkKeyChange(this@MessengerService, from, bundle.identityKey)) {
+                            Log.w(TAG, "⚠️ TOFU: ключ контакта $from изменился при получении bundle!")
+                            withContext(Dispatchers.Main) { onKeyChanged?.invoke(from) }
+                        }
                         Log.d(TAG, "Публичный ключ из bundle сохранён: $from")
 
                         val (_, x3dhHeader) = SessionKeyManager.initiateSession(from, bundle)
@@ -1595,6 +1722,7 @@ class MessengerService : Service() {
                     GroupManager.saveGroup(this@MessengerService, group)
 
                     // Отправляем уведомление создателю что приняли приглашение
+                    val inviteSignature = CryptoManager.sign("$groupId:$username")
                     sendWs(JSONObject().apply {
                         put("type", "group_invite_accepted")
                         put("from", username)
@@ -1602,6 +1730,7 @@ class MessengerService : Service() {
                         put("group_id", groupId)
                         put("new_member", username)
                         put("new_member_name", UserStorage.getUsername(this@MessengerService))
+                        put("signature", inviteSignature)
                     }.toString())
 
                     Log.d(TAG, "Приглашение в группу $groupName принято")
@@ -1624,6 +1753,13 @@ class MessengerService : Service() {
                 val signature = json.optString("signature", null)
 
                 try {
+                    // Replay protection: отбрасываем уже обработанные message_id
+                    if (!processedGroupMessageIds.add(messageId)) {
+                        Log.w(TAG, "group_message replay отклонён: $messageId")
+                        return
+                    }
+                    if (processedGroupMessageIds.size > 2000) processedGroupMessageIds.clear()
+
                     val group = GroupManager.getGroup(this@MessengerService, groupId)
                     if (group == null) {
                         android.util.Log.w(TAG, "Получено сообщение для неизвестной группы $groupId")
@@ -1686,10 +1822,25 @@ class MessengerService : Service() {
             "group_member_removed" -> {
                 val groupId = json.getString("group_id")
                 val removedMember = json.getString("removed_member")
+                val from = json.optString("from", null)
+                val removeSignature = json.optString("signature", null)
 
                 try {
                     val group = GroupManager.getGroup(this@MessengerService, groupId)
                     if (group != null) {
+                        // Проверяем, что отправитель — администратор группы
+                        if (from == null || !GroupManager.isAdmin(this@MessengerService, groupId, from)) {
+                            Log.e(TAG, "group_member_removed от не-администратора $from — отклонено")
+                            return
+                        }
+                        // Проверяем подпись администратора
+                        val adminKey = publicKeys[from]
+                            ?: ChatStorage.getContactPublicKey(this@MessengerService, from)
+                        if (removeSignature == null || adminKey == null ||
+                            !CryptoManager.verify("$groupId:$removedMember", removeSignature, adminKey)) {
+                            Log.e(TAG, "group_member_removed: неверная подпись от $from — отклонено")
+                            return
+                        }
                         GroupManager.removeMember(this@MessengerService, groupId, removedMember)
 
                         // Системное сообщение о удалении
@@ -1771,8 +1922,18 @@ class MessengerService : Service() {
                 val groupId = json.getString("group_id")
                 val newMember = json.getString("new_member")
                 val newMemberName = json.getString("new_member_name")
+                val inviteSignature = json.optString("signature", null)
 
                 try {
+                    // Проверяем подпись нового участника: предотвращает добавление шпиона сервером
+                    val memberPublicKey = publicKeys[newMember]
+                        ?: ChatStorage.getContactPublicKey(this@MessengerService, newMember)
+                    if (inviteSignature == null || memberPublicKey == null ||
+                        !CryptoManager.verify("$groupId:$newMember", inviteSignature, memberPublicKey)) {
+                        Log.e(TAG, "group_invite_accepted: неверная подпись от $newMember — отклонено")
+                        return
+                    }
+
                     // Добавляем участника локально
                     GroupManager.addMember(this@MessengerService, groupId, newMember)
 
@@ -1831,6 +1992,10 @@ class MessengerService : Service() {
             "channel_update" -> {
                 try {
                     val channelId = json.getString("channel_id")
+                    if (ChannelManager.getChannel(this@MessengerService, channelId) == null) {
+                        Log.w(TAG, "channel_update: unknown channel $channelId, ignored")
+                        return
+                    }
                     val postId = json.getString("post_id")
                     val text = json.getString("text")
                     val timestamp = json.getLong("timestamp")
@@ -1871,6 +2036,8 @@ class MessengerService : Service() {
                     val channelAvatar = json.optString("channel_avatar", "📢")
                     val channelDesc = json.optString("channel_description", "")
                     val isAdmin = json.optBoolean("is_admin", false)
+                    val subscriberCount = json.optInt("subscriber_count", -1)
+                    val pinnedPostId = json.optString("pinned_post_id", "").takeIf { it.isNotEmpty() }
                     val existing = ChannelManager.getChannel(this@MessengerService, channelId)
                     if (existing != null) {
                         ChannelManager.saveChannel(
@@ -1879,12 +2046,80 @@ class MessengerService : Service() {
                                 name = channelName,
                                 description = channelDesc,
                                 avatar = channelAvatar,
-                                isAdmin = isAdmin
+                                isAdmin = isAdmin,
+                                subscriberCount = if (subscriberCount >= 0) subscriberCount else existing.subscriberCount,
+                                pinnedPostId = pinnedPostId ?: existing.pinnedPostId
                             )
                         )
+                        withContext(Dispatchers.Main) { onChannelInfoUpdated?.invoke(channelId) }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "channel_info error: ${e.message}")
+                }
+            }
+
+            // ─── Channel Post Deleted ─────────────────────────────────────────
+            "channel_post_deleted" -> {
+                try {
+                    val channelId = json.getString("channel_id")
+                    val postId = json.getString("post_id")
+                    ChannelManager.removePost(this@MessengerService, channelId, postId)
+                    withContext(Dispatchers.Main) { onChannelPostDeleted?.invoke(channelId, postId) }
+                } catch (e: Exception) {
+                    Log.e(TAG, "channel_post_deleted error: ${e.message}")
+                }
+            }
+
+            // ─── Channel Info Updated (response to channel_update_info) ───────
+            "channel_info_updated" -> {
+                try {
+                    val channelId = json.getString("channel_id")
+                    val existing = ChannelManager.getChannel(this@MessengerService, channelId)
+                    if (existing != null) {
+                        ChannelManager.saveChannel(
+                            this@MessengerService,
+                            existing.copy(
+                                name = json.getString("channel_name"),
+                                description = json.optString("channel_description", ""),
+                                avatar = json.optString("channel_avatar", "📢")
+                            )
+                        )
+                        withContext(Dispatchers.Main) { onChannelInfoUpdated?.invoke(channelId) }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "channel_info_updated error: ${e.message}")
+                }
+            }
+
+            // ─── Channel Deleted ──────────────────────────────────────────────
+            "channel_deleted" -> {
+                try {
+                    val channelId = json.getString("channel_id")
+                    ChannelManager.removeChannel(this@MessengerService, channelId)
+                    withContext(Dispatchers.Main) {
+                        onChannelDeleted?.invoke(channelId)
+                        MainActivity.chatListVersion.value = System.currentTimeMillis()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "channel_deleted error: ${e.message}")
+                }
+            }
+
+            // ─── Channel Post Pinned ──────────────────────────────────────────
+            "channel_pinned" -> {
+                try {
+                    val channelId = json.getString("channel_id")
+                    val postId = json.optString("post_id", "").takeIf { it.isNotEmpty() }
+                    val existing = ChannelManager.getChannel(this@MessengerService, channelId)
+                    if (existing != null) {
+                        ChannelManager.saveChannel(
+                            this@MessengerService,
+                            existing.copy(pinnedPostId = postId)
+                        )
+                        withContext(Dispatchers.Main) { onChannelInfoUpdated?.invoke(channelId) }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "channel_pinned error: ${e.message}")
                 }
             }
 
@@ -2731,6 +2966,7 @@ class MessengerService : Service() {
     }
 
     private fun showChannelPostNotification(channelId: String, channelName: String, text: String) {
+        if (ChannelManager.getChannel(this, channelId)?.isMuted == true) return
         val intent = Intent(this, MainActivity::class.java).apply {
             putExtra("open_channel", channelId)
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -3020,6 +3256,7 @@ class MessengerService : Service() {
 
         scope.launch(Dispatchers.IO) {
             try {
+                val removeSignature = CryptoManager.sign("$groupId:$removedMemberId")
                 members.filter { it != username && it != removedMemberId }.forEach { memberId ->
                     sendWs(JSONObject().apply {
                         put("type", "group_member_removed")
@@ -3027,6 +3264,7 @@ class MessengerService : Service() {
                         put("to", memberId)
                         put("group_id", groupId)
                         put("removed_member", removedMemberId)
+                        put("signature", removeSignature)
                     }.toString())
                 }
             } catch (e: Exception) {
