@@ -86,7 +86,7 @@ object AnonTokenManager {
 
     private const val PREF_MY_MBOX_TAGS   = "mbox_my_tags"
     private const val PREF_CT_MBOX_PREFIX = "mbox_ct_"
-    private const val MBOX_FAKE_COUNT = 4   // фейковых тегов в каждом запросе
+    private const val MBOX_TOTAL = 20  // всегда ровно 20 тегов в запросе (реальные + фейки)
 
     fun addMyMailboxTag(ctx: Context, tag: String) {
         val tags = getMyMailboxTags(ctx).toMutableList()
@@ -119,10 +119,13 @@ object AnonTokenManager {
         prefs(ctx).edit().remove("$PREF_CT_MBOX_PREFIX$fingerprint").apply()
     }
 
-    /** Составляет список тегов для mailbox_fetch: реальные + MBOX_FAKE_COUNT фейковых. */
+    /** Составляет список тегов для mailbox_fetch: всегда ровно MBOX_TOTAL тегов.
+     *  Реальные теги дополняются фейками до фиксированного размера —
+     *  сервер не может по количеству запросов определить сколько у клиента реальных тегов. */
     fun buildFetchTagList(ctx: Context): List<String> {
         val real = getMyMailboxTags(ctx)
-        val fakes = (1..MBOX_FAKE_COUNT).map { generateToken() }
+        val fakeCount = maxOf(MBOX_TOTAL - real.size, 0)
+        val fakes = (1..fakeCount).map { generateToken() }
         return (real + fakes).shuffled()
     }
 
