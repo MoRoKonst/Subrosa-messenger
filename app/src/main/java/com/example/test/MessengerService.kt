@@ -2442,10 +2442,7 @@ class MessengerService : Service() {
         val id = msgId ?: UUID.randomUUID().toString()
         scope.launch(Dispatchers.IO) {
             try {
-                val hasSession = SessionKeyManager.hasSession(to)
-                val hasToken = AnonTokenManager.getContactTokens(this@MessengerService, to).isNotEmpty()
-                Log.d(TAG, "send→ to=$to hasSession=$hasSession hasToken=$hasToken isFirst=$isFirst isConnected=$isConnected")
-                if (!hasSession && !isFirst) {
+                if (!SessionKeyManager.hasSession(to) && !isFirst) {
                     pendingSessionMessages.getOrPut(to) { mutableListOf() }.add(Pair(text, id))
                     requestPrekeyBundle(to)
                     return@launch
