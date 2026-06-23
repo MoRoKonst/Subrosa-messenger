@@ -45,11 +45,13 @@ fun ServersScreen(onBack: () -> Unit) {
     var newName by remember { mutableStateOf("") }
     // Реальное состояние WebSocket-подключения, обновляется каждые 500 мс
     var isReallyConnected by remember { mutableStateOf(MessengerService.connected) }
+    var currentServer by remember { mutableStateOf(ServerManager.getCurrentServer(context)) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(500)
             isReallyConnected = MessengerService.connected
             servers = ServerManager.getServers(context)
+            currentServer = ServerManager.getCurrentServer(context)
         }
     }
 
@@ -178,12 +180,11 @@ fun ServersScreen(onBack: () -> Unit) {
                     onClick = {
                         ServerManager.switchToNext(context)
                         servers = ServerManager.getServers(context)
+                        currentServer = ServerManager.getCurrentServer(context)
 
-                        // Перезапускаем сервис для переподключения
                         context.stopService(android.content.Intent(context, MessengerService::class.java))
                         context.startForegroundService(android.content.Intent(context, MessengerService::class.java))
 
-                        // Принудительно обновить список чатов при возврате
                         MainActivity.chatListVersion.value = System.currentTimeMillis()
 
                         android.widget.Toast.makeText(
@@ -206,8 +207,7 @@ fun ServersScreen(onBack: () -> Unit) {
                         .padding(horizontal = 16.dp)
                 ) {
                     itemsIndexed(servers) { index, server ->
-                        val currentServer = ServerManager.getCurrentServer(context)
-                        val isActive = currentServer?.host == server.host && currentServer.port == server.port
+                        val isActive = currentServer?.host == server.host && currentServer?.port == server.port
 
                         Card(
                             modifier = Modifier
@@ -223,14 +223,13 @@ fun ServersScreen(onBack: () -> Unit) {
                                     if (targetIndex != -1) {
                                         prefs.edit().putInt("current_server", targetIndex).apply()
 
-                                        // Перезапуск сервиса
                                         context.stopService(android.content.Intent(context, MessengerService::class.java))
                                         context.startForegroundService(android.content.Intent(context, MessengerService::class.java))
 
-                                        // Принудительно обновить список чатов при возврате
                                         MainActivity.chatListVersion.value = System.currentTimeMillis()
 
                                         servers = ServerManager.getServers(context)
+                                        currentServer = ServerManager.getCurrentServer(context)
                                     }
                                 },
                             colors = CardDefaults.cardColors(
