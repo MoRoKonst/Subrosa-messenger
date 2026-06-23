@@ -1099,8 +1099,14 @@ class MessengerService : Service() {
 
                 // Флашим видеокружки, накопившиеся пока были офлайн
                 flushPendingVideoCircles()
-                // Опрашиваем анонимный mailbox (мои теги + фейковые)
+                // Опрашиваем mailbox сразу и потом каждые 30 секунд
                 pollMailbox()
+                scope.launch(Dispatchers.IO) {
+                    while (isConnected && scope.isActive) {
+                        delay(30_000)
+                        if (isConnected) pollMailbox()
+                    }
+                }
             }
 
             "mailbox_result" -> handleMailboxResult(json)
@@ -3087,6 +3093,8 @@ class MessengerService : Service() {
     private fun pollMailbox() {
         val tags = AnonTokenManager.buildFetchTagList(this)
         if (tags.isEmpty()) return
+        val realCount = AnonTokenManager.getMyMailboxTags(this).size
+        Log.d(TAG, "pollMailbox: ${tags.size} тегов ($realCount реальных)")
         scope.launch(Dispatchers.IO) {
             sendWs(JSONObject().apply {
                 put("type", "mailbox_fetch")
