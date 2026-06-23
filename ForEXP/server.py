@@ -1822,10 +1822,21 @@ async def handle_client(websocket):
                         async with lock:
                             token_pending.setdefault(token, []).append({"type": "anon_delivery", "payload": payload})
                 else:
-                    # Офлайн — ставим в очередь; доставим когда клиент переподпишется
-                    async with lock:
-                        token_pending.setdefault(token, []).append({"type": "anon_delivery", "payload": payload})
-                    print(f"[ANON] Токен …{token[-6:]} офлайн, сообщение в очереди")
+                    # Токен не зарегистрирован локально — пробуем федерацию по fingerprint из payload
+                    fed_to = payload.get("to") if isinstance(payload, dict) else None
+                    if fed_to and FEDERATION_SECRET:
+                        forwarded = await forward_to_peers(fed_to, payload)
+                        if forwarded:
+                            print(f"[ANON→FED] Токен …{token[-6:]} не найден локально, переслано по fingerprint → {fed_to}")
+                        else:
+                            # Ни локально ни по федерации — ставим в очередь по токену
+                            async with lock:
+                                token_pending.setdefault(token, []).append({"type": "anon_delivery", "payload": payload})
+                            print(f"[ANON] Токен …{token[-6:]} офлайн, сообщение в очереди")
+                    else:
+                        async with lock:
+                            token_pending.setdefault(token, []).append({"type": "anon_delivery", "payload": payload})
+                        print(f"[ANON] Токен …{token[-6:]} офлайн, сообщение в очереди")
                 if msg_id:
                     await send_safe(websocket, json.dumps({"type": "ack", "id": msg_id}))
                 continue
