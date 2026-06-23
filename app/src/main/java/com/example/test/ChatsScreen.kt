@@ -466,16 +466,11 @@ fun ChatsScreen(
                 TextButton(onClick = {
                     if (inviteCode.isNotBlank()) {
                         try {
-                            val uri = android.net.Uri.parse(inviteCode.trim())
-                            val publicKey  = uri.getQueryParameter("key")
-                            val fingerprint = uri.getQueryParameter("fp")
-                            val name       = uri.getQueryParameter("name")
-                            if (publicKey != null && fingerprint != null) {
-                                val fixedKey = publicKey.replace('-', '+').replace('_', '/')
-                                val decodedName = if (!name.isNullOrBlank()) {
-                                    try { String(android.util.Base64.decode(name, android.util.Base64.NO_WRAP)) }
-                                    catch (e: Exception) { fingerprint }
-                                } else fingerprint
+                            val inviteData = InviteCodeManager.parseInviteCode(inviteCode.trim())
+                            if (inviteData != null && InviteCodeManager.verifyInviteCode(inviteData)) {
+                                val fingerprint = inviteData.fingerprint
+                                val fixedKey = inviteData.publicKey.replace('-', '+').replace('_', '/')
+                                val decodedName = inviteData.displayName.ifBlank { fingerprint }
                                 ChatStorage.addContact(context, fingerprint)
                                 ChatStorage.saveContactPublicKey(context, fingerprint, fixedKey)
                                 ChatStorage.saveContactName(context, fingerprint, decodedName)
@@ -488,6 +483,10 @@ fun ChatsScreen(
                                 loadChats()
                                 android.widget.Toast.makeText(
                                     context, s.chatsContactAdded(decodedName), android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                android.widget.Toast.makeText(
+                                    context, "Неверный или истёкший инвайт-код", android.widget.Toast.LENGTH_SHORT
                                 ).show()
                             }
                         } catch (e: Exception) {

@@ -32,7 +32,7 @@ android {
         applicationId = "com.bcon.messenger"
         minSdk = 26
         versionCode = 2
-        versionName = "1.038"
+        versionName = "1.039"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures {

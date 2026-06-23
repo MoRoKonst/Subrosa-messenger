@@ -74,7 +74,7 @@ class MessengerService : Service() {
     private fun buildOkHttpClient(useTor: Boolean): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .pingInterval(0, TimeUnit.SECONDS)
-            .connectTimeout(15, TimeUnit.SECONDS)  // Tor медленнее — чуть больше таймаут
+            .connectTimeout(if (useTor) 60 else 15, TimeUnit.SECONDS)  // Tor медленнее — больше таймаут
             .readTimeout(0, TimeUnit.SECONDS)
         if (useTor) {
             // Кастомный SocketFactory: передаёт имя хоста в Orbot без локального DNS-резолва.
@@ -110,8 +110,23 @@ class MessengerService : Service() {
     }
 
     // Возвращает нужный клиент в зависимости от состояния Tor
-    private fun activeWsClient(): OkHttpClient =
-        if (TorManager.isConnected) wsTorClient else wsClient
+    private fun activeWsClient(): OkHttpClient {
+        if (!TorManager.isConnected) return wsClient
+        // Проверяем что SOCKS доступен
+        val socksAvailable = try {
+            val s = java.net.Socket()
+            s.connect(java.net.InetSocketAddress(TorManager.SOCKS_HOST, TorManager.SOCKS_PORT), 1000)
+            s.close(); true
+        } catch (e: Exception) { false }
+        return if (socksAvailable) {
+            // SOCKS режим — явный прокси без DNS-утечки
+            wsTorClient
+        } else {
+            // VPN режим Orbot — трафик перехватывается системой, используем обычный клиент
+            Log.d(TAG, "Orbot VPN режим — используем прямой клиент")
+            wsClient
+        }
+    }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isConnected: Boolean = false
@@ -124,6 +139,7 @@ class MessengerService : Service() {
     private var username = ""
 
     private val publicKeys = mutableMapOf<String, String>()
+    private val tokensSentThisSession = mutableSetOf<String>()
     private val pendingMessages = mutableMapOf<String, MutableList<Pair<String, String>>>()
     // Дедупликация групповых сообщений: защита от replay-атаки через сервер
     private val processedGroupMessageIds = mutableSetOf<String>()
@@ -421,11 +437,16 @@ class MessengerService : Service() {
         SessionKeyManager.initialize(this)
         Log.d(TAG, "SessionKeyManager инициализирован")
         createNotificationChannel()
-        TorManager.start(this, scope)
         TorManager.onTorReady = {
             if (!isConnected && !isConnecting) {
                 scope.launch { connect() }
             }
+        }
+        if (TorManager.isConnected) {
+            // Tor уже готов (запущен MainActivity ранее) — подключаемся сразу
+            scope.launch { connect() }
+        } else {
+            TorManager.start(this, scope)
         }
         registerNetworkCallback()
         startSilentAudio()
@@ -794,6 +815,14 @@ class MessengerService : Service() {
                 }
 
                 val wsUrl = server.toWssUrl()
+
+                // Onion-адрес требует Tor — если SOCKS недоступен, ждём
+                if (wsUrl.contains(".onion") && !TorManager.isConnected) {
+                    Log.w(TAG, "Onion-сервер выбран, но Tor недоступен — ждём Orbot")
+                    delay(5000)
+                    continue
+                }
+
                 Log.d(TAG, "Подключаемся к $wsUrl")
 
 
@@ -838,7 +867,9 @@ class MessengerService : Service() {
 
                 handshakeDone = false  // Сброс
 
-                webSocket = activeWsClient().newWebSocket(request, listener)
+                // Onion через Orbot VPN — не используем явный SOCKS прокси
+                val client = if (wsUrl.contains(".onion")) wsClient else activeWsClient()
+                webSocket = client.newWebSocket(request, listener)
 
                 val success = withTimeoutOrNull(15_000) {
                     while (!handshakeDone && scope.isActive) {
@@ -888,6 +919,40 @@ class MessengerService : Service() {
                 SessionKeyManager.deleteAllSessions()
                 SessionKeyManager.initialize(this@MessengerService)
                 publishPrekeyBundle()
+
+                // Подписываемся на наши анонимные токены доставки
+                val myTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
+                if (myTokens.isNotEmpty()) {
+                    sendWs(JSONObject().apply {
+                        put("type", "subscribe_tokens")
+                        put("tokens", org.json.JSONArray(myTokens))
+                    }.toString())
+                }
+
+                // Cover traffic: случайные фейковые сообщения для скрытия timing-корреляции
+                scope.launch(Dispatchers.IO) {
+                    val coverRng = java.security.SecureRandom()
+                    while (isConnected) {
+                        val delayMs = (30_000L + (coverRng.nextInt(90_000))).toLong()
+                        kotlinx.coroutines.delay(delayMs)
+                        if (!isConnected) break
+                        try {
+                            val fakeToken = AnonTokenManager.generateDummyToken()
+                            val fakePayload = JSONObject().apply {
+                                put("type", "anon_message")
+                                put("token", fakeToken)
+                                put("payload", JSONObject().apply {
+                                    put("v", 2)
+                                    put("d", android.util.Base64.encodeToString(
+                                        ByteArray(coverRng.nextInt(180) + 76).also { coverRng.nextBytes(it) },
+                                        android.util.Base64.NO_WRAP
+                                    ))
+                                })
+                            }
+                            sendWs(addPadding(fakePayload).toString())
+                        } catch (_: Exception) {}
+                    }
+                }
 
                 withContext(Dispatchers.Main) {
                     onStatusChanged?.invoke(true)
@@ -1592,6 +1657,11 @@ class MessengerService : Service() {
                     val sessionHeader = json.getJSONObject("session_header")
                     val decryptedText = CryptoManager.decryptWithForwardSecrecy(from, encryptedText, sessionHeader)
                     handleIncomingDecryptedMessage(from, decryptedText, messageId, json)
+                    // Первое сообщение от нового контакта — отправляем им наши токены
+                    if (AnonTokenManager.getContactTokens(this@MessengerService, from).isEmpty() &&
+                        AnonTokenManager.getMyTokens(this@MessengerService).isNotEmpty()) {
+                        scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "session_init error: ${e.message}")
                     // Не смогли установить сессию — просим отправителя начать заново.
@@ -1651,6 +1721,10 @@ class MessengerService : Service() {
                         CryptoManager.decrypt(encryptedText)
                     }
                     handleIncomingDecryptedMessage(from, decryptedText, messageId, json)
+                    // Отправляем токены только если их совсем нет (первый контакт)
+                    if (AnonTokenManager.getContactTokens(this@MessengerService, from).isEmpty()) {
+                        scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Ошибка расшифровки от $from: ${e.message}")
                     SessionKeyManager.deleteSession(from)
@@ -2266,6 +2340,21 @@ class MessengerService : Service() {
                 val id = json.getString("id")
                 MessageQueue.remove(this@MessengerService, id)
             }
+
+            // ── Анонимная доставка по токену ──────────────────────────────────
+            "anon_delivery" -> {
+                try {
+                    val payload = json.getJSONObject("payload")
+                    // Потребляем токен — он одноразовый
+                    payload.optString("_anon_token").takeIf { it.isNotBlank() }?.let {
+                        AnonTokenManager.consumeMyToken(this@MessengerService, it)
+                    }
+                    // Переиспользуем существующий диспетчер
+                    handleMessage(payload)
+                } catch (e: Exception) {
+                    Log.e(TAG, "anon_delivery error: ${e.message}")
+                }
+            }
         }
     }
 
@@ -2284,7 +2373,7 @@ class MessengerService : Service() {
     fun sendWithForwardSecrecy(
         to: String, text: String, msgId: String? = null,
         x3dhHeaderOverride: JSONObject? = null, isFirst: Boolean = false,
-        replyToId: String? = null
+        replyToId: String? = null, useAnonRouting: Boolean = true
     ): String {
         val id = msgId ?: UUID.randomUUID().toString()
         scope.launch(Dispatchers.IO) {
@@ -2314,7 +2403,25 @@ class MessengerService : Service() {
                             put("type", "message")
                         }
                     }
-                    sendWs(addPadding(packet).toString())
+                    // Анонимная доставка: используем одноразовый токен если есть
+                    val anonToken = if (!isFirst)
+                        AnonTokenManager.consumeNextContactToken(this@MessengerService, to)
+                    else null
+
+                    if (anonToken != null) {
+                        val anonPacket = JSONObject().apply {
+                            put("type", "anon_message")
+                            put("token", anonToken)
+                            put("payload", packet)
+                        }
+                        sendWs(addPadding(anonPacket).toString())
+                        // Запрашиваем пополнение пула токенов если кончаются
+                        if (AnonTokenManager.needsRefill(this@MessengerService, to)) {
+                            scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
+                        }
+                    } else {
+                        sendWs(addPadding(packet).toString())
+                    }
                 } catch (e: SessionKeyManager.SessionRotationRequired) {
                     SessionKeyManager.deleteSession(to)
                     pendingSessionMessages.getOrPut(to) { mutableListOf() }.add(Pair(text, id))
@@ -2808,7 +2915,43 @@ class MessengerService : Service() {
         }
     }
 
+    private suspend fun sendAnonTokensTo(contact: String) {
+        val tokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
+        if (tokens.isEmpty()) return
+        val systemText = "__beacon_tokens__:${org.json.JSONArray(tokens)}"
+        // Для токенов используем простое ECDH — не зависит от состояния Double Ratchet сессии
+        val recipientKey = publicKeys[contact]
+            ?: ChatStorage.getContactPublicKey(this@MessengerService, contact)?.also { publicKeys[contact] = it }
+        if (recipientKey == null) {
+            Log.w(TAG, "sendAnonTokensTo: нет ключа для $contact, откладываем")
+            return
+        }
+        sendEncrypted(contact, systemText, recipientKey)
+        // Обновляем подписку на сервере с актуальным пулом токенов
+        val allMyTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
+        sendWs(JSONObject().apply {
+            put("type", "subscribe_tokens")
+            put("tokens", org.json.JSONArray(allMyTokens))
+        }.toString())
+        Log.d(TAG, "Отправлены анонимные токены → $contact (${tokens.size} шт.)")
+    }
+
     private suspend fun handleIncomingDecryptedMessage(from: String, decryptedText: String, messageId: String?, json: JSONObject) {
+        if (decryptedText.startsWith("__beacon_tokens__:")) {
+            try {
+                val arr = org.json.JSONArray(decryptedText.removePrefix("__beacon_tokens__:"))
+                val tokens = (0 until arr.length()).map { arr.getString(it) }
+                AnonTokenManager.addContactTokens(this@MessengerService, from, tokens)
+                Log.d(TAG, "Получены анонимные токены от $from: ${tokens.size} шт.")
+                if (tokensSentThisSession.add(from)) {
+                    scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Ошибка обработки beacon_tokens: ${e.message}")
+            }
+            return
+        }
+
         val senderName = ChatStorage.getContactName(this@MessengerService, from)
             .takeIf { it.isNotBlank() }
             ?: json.optString("name", "").takeIf { it.isNotBlank() }

@@ -28,6 +28,17 @@ lock                = asyncio.Lock()
 prekey_bundles      = {}   # username → bundle (dict)
 active_calls        = {}   # username → {"peer": str, "call_id": str} — для auto call_end при дисконнекте
 
+# ─── Anonymous Token Routing ──────────────────────────────────────────────────
+# Каждый клиент подписывается на набор случайных токенов (subscribe_tokens).
+# Отправитель адресует сообщение по токену (anon_message), а не по fingerprint.
+# Сервер не знает кому принадлежит токен — только какой WebSocket его слушает.
+token_to_ws:  dict = {}   # token (str) → websocket
+token_pending: dict = {}  # token (str) → list[dict]  (очередь для офлайн-клиентов)
+ws_to_tokens: dict = {}   # websocket → set[str]       (для очистки при дисконнекте)
+known_tokens: set  = set() # токены, которые хоть раз были зарегистрированы (фейки дропаем)
+MAX_TOKEN_LEN = 32
+MAX_TOKENS_PER_SUBSCRIBE = 100
+
 MAX_BUNDLE_SIZE_BYTES  = 64  * 1024
 MAX_PACKET_SIZE_BYTES  = 6 * 1024 * 1024
 OPK_LOW_WATERMARK      = 5
@@ -803,7 +814,9 @@ async def handle_client(websocket):
                 # ── Profile ──
                 "profile_update",
                 # ── Session management ──
-                "session_reset"
+                "session_reset",
+                # ── Anonymous token routing ──
+                "subscribe_tokens", "anon_message"
             ]
             if msg_type not in ALLOWED_TYPES:
                 print(f"[SECURITY] Неизвестный тип '{msg_type}' от {ip}")
@@ -1747,6 +1760,63 @@ async def handle_client(websocket):
                     asyncio.create_task(send_fcm_wakeup(target))
                 continue
 
+            # ─── Anonymous Token Routing ──────────────────────────────────────
+            if msg_type == "subscribe_tokens":
+                raw_tokens = message.get("tokens", [])
+                if isinstance(raw_tokens, list):
+                    valid = [t for t in raw_tokens
+                             if isinstance(t, str) and len(t) == MAX_TOKEN_LEN][:MAX_TOKENS_PER_SUBSCRIBE]
+                    async with lock:
+                        existing = ws_to_tokens.get(websocket, set())
+                        for t in valid:
+                            token_to_ws[t] = websocket
+                            known_tokens.add(t)
+                            existing.add(t)
+                            # Флашим отложенные сообщения для этого токена
+                            pending = token_pending.pop(t, [])
+                            for p in pending:
+                                asyncio.create_task(send_safe(websocket, json.dumps(p)))
+                        ws_to_tokens[websocket] = existing
+                    print(f"[ANON] {username} подписан на {len(valid)} токенов")
+                continue
+
+            if msg_type == "anon_message":
+                token   = message.get("token", "")
+                payload = message.get("payload", {})
+                msg_id  = payload.get("id", "") if isinstance(payload, dict) else ""
+                if not token or not isinstance(payload, dict) or len(token) != MAX_TOKEN_LEN:
+                    continue
+                async with lock:
+                    is_known = token in known_tokens
+                if not is_known:
+                    # Фейковый/cover-traffic токен — дропаем без очереди и без лога
+                    if msg_id:
+                        await send_safe(websocket, json.dumps({"type": "ack", "id": msg_id}))
+                    continue
+                delivery = json.dumps({"type": "anon_delivery", "payload": payload})
+                async with lock:
+                    target_ws = token_to_ws.get(token)
+                if target_ws:
+                    ok = await send_safe(target_ws, delivery)
+                    if ok:
+                        # Токен одноразовый — удаляем после доставки
+                        async with lock:
+                            token_to_ws.pop(token, None)
+                            ws_to_tokens.get(target_ws, set()).discard(token)
+                        print(f"[ANON] Доставлено по токену …{token[-6:]}")
+                    else:
+                        # Получатель закрыл сокет между проверкой и отправкой — ставим в очередь
+                        async with lock:
+                            token_pending.setdefault(token, []).append({"type": "anon_delivery", "payload": payload})
+                else:
+                    # Офлайн — ставим в очередь; доставим когда клиент переподпишется
+                    async with lock:
+                        token_pending.setdefault(token, []).append({"type": "anon_delivery", "payload": payload})
+                    print(f"[ANON] Токен …{token[-6:]} офлайн, сообщение в очереди")
+                if msg_id:
+                    await send_safe(websocket, json.dumps({"type": "ack", "id": msg_id}))
+                continue
+
             # register_fcm — сохраняем FCM-токен пользователя
             if msg_type == "register_fcm":
                 token = message.get("fcm_token", "")
@@ -1766,6 +1836,12 @@ async def handle_client(websocket):
         print(f"[ERROR] {e}")
     finally:
         if username:
+            # Очищаем анонимные токены этого клиента
+            async with lock:
+                tokens = ws_to_tokens.pop(websocket, set())
+                for t in tokens:
+                    token_to_ws.pop(t, None)
+
             # Auto call_end: если пользователь отвалился во время звонка — уведомляем собеседника
             call_info = None
             async with lock:
@@ -1994,7 +2070,7 @@ async def main(ssl_context=None):
         "0.0.0.0",
         9000,
         ssl=ssl_context,
-        ping_interval=30,
+        ping_interval=15,
         ping_timeout=30,
         max_size=MAX_PACKET_SIZE_BYTES,
         compression=None,        # отключаем permessage-deflate: трафик уже зашифрован, сжатие бесполезно и добавляет ~5-15мс
@@ -2025,6 +2101,14 @@ def start_server():
     print(f"[DB] Каналов загружено из БД: {len(channels)}")
     print(f"[DB] Prekey bundles загружено: {len(loaded_bundles)}")
     print(f"[DB] Аватаров загружено: {len(loaded_avatars)}")
+
+    # Печатаем строку подключения для пользователей
+    if SERVER_URL:
+        print("")
+        print("=" * 50)
+        print(f"  Адрес для подключения: {SERVER_URL}")
+        print("=" * 50)
+        print("")
 
     # DEV режим — без TLS
     if "--dev" in sys.argv:

@@ -52,3 +52,6 @@ ForEXP/.key
 *.part
 ForEXP/gradle-*/
 ForEXP/android-studio*/
+
+# Папка биля
+папка биля/

@@ -32,9 +32,16 @@ if not exist ".env" (
     echo.
     set /p FED_SECRET="Секрет федерации: "
 
+    echo.
+    echo Введи публичный адрес этого сервера — по нему пользователи будут подключаться.
+    echo Пример: wss://myserver.ru  или  wss://1.2.3.4:9000
+    echo Если адрес неизвестен — оставь пустым (UPnP попробует определить автоматически).
+    echo.
+    set /p SRV_URL="Адрес сервера (wss://...): "
+
     echo FEDERATION_SECRET=%FED_SECRET%> .env
     echo FEDERATION_PEERS=wss://api.beacon-app.org>> .env
-    echo SERVER_URL=>> .env
+    echo SERVER_URL=%SRV_URL%>> .env
     echo CHANNEL_ADMIN_SECRET=>> .env
     echo.
     echo [OK] Настройки сохранены в .env

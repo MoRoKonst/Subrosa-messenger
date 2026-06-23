@@ -23,9 +23,20 @@ object TorManager {
     var bootstrapProgress = 0
         private set
 
+    private val progressListeners = mutableListOf<(Int, String) -> Unit>()
+    private val readyListeners = mutableListOf<() -> Unit>()
+    private val errorListeners = mutableListOf<(String) -> Unit>()
+
     var onBootstrapProgress: ((Int, String) -> Unit)? = null
+        set(value) { field = value; if (value != null) progressListeners.add(value) }
     var onTorReady: (() -> Unit)? = null
+        set(value) { field = value; if (value != null) readyListeners.add(value) }
     var onTorError: ((String) -> Unit)? = null
+        set(value) { field = value; if (value != null) errorListeners.add(value) }
+
+    private fun notifyReady() = readyListeners.forEach { it() }
+    private fun notifyError(msg: String) = errorListeners.forEach { it(msg) }
+    private fun notifyProgress(p: Int, s: String) = progressListeners.forEach { it(p, s) }
 
     // ─── Запуск ───────────────────────────────────────────────────────────────
     //
@@ -41,8 +52,8 @@ object TorManager {
                     bootstrapProgress = 100
                     Log.d(TAG, "Orbot уже запущен — Tor готов")
                     withContext(Dispatchers.Main) {
-                        onBootstrapProgress?.invoke(100, strings.torConnected)
-                        onTorReady?.invoke()
+                        notifyProgress(100, strings.torConnected)
+                        notifyReady()
                     }
                     return@launch
                 }
@@ -50,14 +61,14 @@ object TorManager {
                 if (!isOrbotInstalled(context)) {
                     Log.d(TAG, "Orbot не установлен — прямое подключение")
                     withContext(Dispatchers.Main) {
-                        onTorError?.invoke("Orbot не установлен — прямое подключение")
+                        notifyError("Orbot не установлен — прямое подключение")
                     }
                     return@launch
                 }
 
                 Log.d(TAG, "Запрашиваем старт Orbot...")
                 withContext(Dispatchers.Main) {
-                    onBootstrapProgress?.invoke(5, strings.torStartingOrbot)
+                    notifyProgress(5, strings.torStartingOrbot)
                 }
 
                 requestOrbotStart(context)
@@ -74,8 +85,8 @@ object TorManager {
                         bootstrapProgress = 100
                         Log.d(TAG, "Orbot SOCKS доступен — Tor готов")
                         withContext(Dispatchers.Main) {
-                            onBootstrapProgress?.invoke(100, strings.torConnected)
-                            onTorReady?.invoke()
+                            notifyProgress(100, strings.torConnected)
+                            notifyReady()
                         }
                         return@launch
                     }
@@ -88,19 +99,19 @@ object TorManager {
                         else -> strings.torAlmostReady
                     }
                     withContext(Dispatchers.Main) {
-                        onBootstrapProgress?.invoke(progress, status)
+                        notifyProgress(progress, status)
                     }
                 }
 
                 Log.w(TAG, "Orbot не ответил — прямое подключение")
                 withContext(Dispatchers.Main) {
-                    onTorError?.invoke("Orbot не ответил — прямое подключение")
+                    notifyError("Orbot не ответил — прямое подключение")
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка TorManager: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    onTorError?.invoke("Ошибка Tor: ${e.message}")
+                    notifyError("Ошибка Tor: ${e.message}")
                 }
             }
         }
@@ -149,6 +160,9 @@ object TorManager {
     fun stop() {
         isConnected = false
         bootstrapProgress = 0
+        progressListeners.clear()
+        readyListeners.clear()
+        errorListeners.clear()
         Log.d(TAG, "TorManager остановлен")
     }
 

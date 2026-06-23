@@ -8,6 +8,7 @@ object ServerManager {
     private const val KEY_SERVERS = "server_list"
     private const val KEY_CURRENT = "current_server"
     private const val KEY_DISCOVERED_PEERS = "discovered_peers"
+    private const val KEY_FIXED_MODE = "fixed_server_mode"
 
     data class Server(
         val host: String,
@@ -65,8 +66,13 @@ object ServerManager {
             }
             // Миграция: заменяем устаревший адрес сервера на актуальный
             val defaults = getDefaultServers()
-            val migrated = servers.map { s ->
+            var migrated = servers.map { s ->
                 if (s.host == "beacon-app.org") defaults.first() else s
+            }.toMutableList()
+            // Добавляем onion-сервер если его ещё нет
+            val onionServer = defaults[1]
+            if (migrated.none { it.host == onionServer.host }) {
+                migrated.add(onionServer)
             }
             if (migrated != servers) saveServers(context, migrated)
             migrated
@@ -90,14 +96,29 @@ object ServerManager {
         prefs.edit().putString(KEY_SERVERS, array.toString()).apply()
     }
 
+    fun isFixedMode(context: Context): Boolean =
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME).getBoolean(KEY_FIXED_MODE, false)
+
+    fun setFixedMode(context: Context, fixed: Boolean) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME).edit()
+            .putBoolean(KEY_FIXED_MODE, fixed)
+            .putInt(KEY_CURRENT, 0)
+            .apply()
+    }
+
     fun getCurrentServer(context: Context): Server? {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val servers = if (isFixedMode(context)) {
+            getServers(context).filter { it.enabled }
+        } else {
+            getAllKnownServers(context).filter { it.enabled }
+        }
         val index = prefs.getInt(KEY_CURRENT, 0)
-        val servers = getAllKnownServers(context).filter { it.enabled }
         return servers.getOrNull(index)
     }
 
     fun switchToNext(context: Context): Server? {
+        if (isFixedMode(context)) return getCurrentServer(context)
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val servers = getAllKnownServers(context).filter { it.enabled }
         if (servers.isEmpty()) return null
@@ -108,7 +129,8 @@ object ServerManager {
     }
 
     private fun getDefaultServers() = listOf(
-        Server("api.beacon-app.org", 443, "Основной сервер", true, "ws")
+        Server("api.beacon-app.org", 443, "Основной сервер", true, "ws"),
+        Server("ws://amqvpheooju3fg7tafxkmf73c3vg4xg7nycelepiie6jdjzbsqrvrcqd.onion", 80, "Onion (Tor)", true, "")
     )
 
     fun addServer(context: Context, server: Server) {

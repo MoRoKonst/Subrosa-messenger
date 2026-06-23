@@ -35,6 +35,7 @@ fun ServersScreen(onBack: () -> Unit) {
     val c = LocalBeaconColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     var servers by remember { mutableStateOf(ServerManager.getServers(context)) }
+    var fixedMode by remember { mutableStateOf(ServerManager.isFixedMode(context)) }
     var showAddDialog by remember { mutableStateOf(false) }
     var newHost by remember { mutableStateOf("") }
     var newPort by remember { mutableStateOf("9000") }
@@ -75,6 +76,41 @@ fun ServersScreen(onBack: () -> Unit) {
                 .padding(padding)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                // Режим сервера
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            if (fixedMode) "Фиксированный сервер" else "Авто (федерация)",
+                            color = c.textPrimary,
+                            fontFamily = AppFont,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            if (fixedMode) "Только первый сервер в списке" else "Автопереключение между пирами",
+                            color = c.textPrimary.copy(alpha = 0.6f),
+                            fontFamily = AppFont,
+                            fontSize = 12.sp
+                        )
+                    }
+                    Switch(
+                        checked = fixedMode,
+                        onCheckedChange = { value ->
+                            fixedMode = value
+                            ServerManager.setFixedMode(context, value)
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = c.accent, checkedTrackColor = c.accent.copy(alpha = 0.4f))
+                    )
+                }
+
+                HorizontalDivider(color = c.textPrimary.copy(alpha = 0.1f), modifier = Modifier.padding(horizontal = 16.dp))
+                Spacer(modifier = Modifier.height(4.dp))
+
                 // Кнопка переключения сервера
                 Button(
                     onClick = {
