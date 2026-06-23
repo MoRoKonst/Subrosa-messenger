@@ -2996,6 +2996,7 @@ class MessengerService : Service() {
                 val arr = org.json.JSONArray(decryptedText.removePrefix("__beacon_tokens__:"))
                 val tokens = (0 until arr.length()).map { arr.getString(it) }
                 AnonTokenManager.addContactTokens(this@MessengerService, from, tokens)
+                ChatStorage.addContact(this@MessengerService, from)
                 Log.d(TAG, "Получены анонимные токены от $from: ${tokens.size} шт.")
                 if (tokensSentThisSession.add(from)) {
                     scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
