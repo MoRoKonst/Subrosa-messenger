@@ -2405,6 +2405,8 @@ class MessengerService : Service() {
                     sendViaMailbox(to, text, publicKey, mailboxTag, id)
                     return id
                 }
+                // Ключ не найден — очищаем mailboxTag и идём обычным путём
+                AnonTokenManager.clearContactMailboxTag(this, to)
             }
             return sendWithForwardSecrecy(to, text, replyToId = replyToId)
         } else {
@@ -2422,7 +2424,10 @@ class MessengerService : Service() {
         val id = msgId ?: UUID.randomUUID().toString()
         scope.launch(Dispatchers.IO) {
             try {
-                if (!SessionKeyManager.hasSession(to) && !isFirst) {
+                val hasSession = SessionKeyManager.hasSession(to)
+                val hasToken = AnonTokenManager.getContactTokens(this@MessengerService, to).isNotEmpty()
+                Log.d(TAG, "send→ to=$to hasSession=$hasSession hasToken=$hasToken isFirst=$isFirst isConnected=$isConnected")
+                if (!hasSession && !isFirst) {
                     pendingSessionMessages.getOrPut(to) { mutableListOf() }.add(Pair(text, id))
                     requestPrekeyBundle(to)
                     return@launch
