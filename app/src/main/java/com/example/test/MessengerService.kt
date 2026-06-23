@@ -1099,12 +1099,13 @@ class MessengerService : Service() {
 
                 // Флашим видеокружки, накопившиеся пока были офлайн
                 flushPendingVideoCircles()
-                // Опрашиваем mailbox сразу и потом каждые 30 секунд
+                // Опрашиваем mailbox только если есть активные инвайт-теги
                 pollMailbox()
                 scope.launch(Dispatchers.IO) {
                     while (isConnected && scope.isActive) {
                         delay(30_000)
-                        if (isConnected) pollMailbox()
+                        if (isConnected && AnonTokenManager.getMyMailboxTags(this@MessengerService).isNotEmpty())
+                            pollMailbox()
                     }
                 }
             }
