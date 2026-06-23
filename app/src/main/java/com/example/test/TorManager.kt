@@ -15,7 +15,7 @@ object TorManager {
     private const val TAG = "TorManager"
     const val SOCKS_HOST = "127.0.0.1"
     const val SOCKS_PORT = 9050
-    private const val TOR_TIMEOUT_MS = 90_000L
+    private const val TOR_TIMEOUT_MS = 12_000L
     private const val CONNECT_TIMEOUT_MS = 30_000
 
     var isConnected = false

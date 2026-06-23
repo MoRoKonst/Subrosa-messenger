@@ -442,6 +442,12 @@ class MessengerService : Service() {
                 scope.launch { connect() }
             }
         }
+        // Orbot не запустился — подключаемся напрямую без Tor
+        TorManager.onTorError = { _ ->
+            if (!isConnected && !isConnecting) {
+                scope.launch { connect() }
+            }
+        }
         if (TorManager.isConnected) {
             // Tor уже готов (запущен MainActivity ранее) — подключаемся сразу
             scope.launch { connect() }
@@ -2972,22 +2978,44 @@ class MessengerService : Service() {
     private suspend fun sendAnonTokensTo(contact: String) {
         val tokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
         if (tokens.isEmpty()) return
+        // Токены отправляем ТОЛЬКО через анонимный маршрут (одноразовый токен контакта).
+        // Прямая fingerprint-отправка раскрывает граф связей — не делаем это никогда.
+        val anonToken = AnonTokenManager.consumeNextContactToken(this@MessengerService, contact)
+        if (anonToken == null) {
+            Log.d(TAG, "sendAnonTokensTo: нет токенов для $contact, ждём mailbox-обмена")
+            return
+        }
         val systemText = "__beacon_tokens__:${org.json.JSONArray(tokens)}"
-        // Для токенов используем простое ECDH — не зависит от состояния Double Ratchet сессии
         val recipientKey = publicKeys[contact]
             ?: ChatStorage.getContactPublicKey(this@MessengerService, contact)?.also { publicKeys[contact] = it }
         if (recipientKey == null) {
-            Log.w(TAG, "sendAnonTokensTo: нет ключа для $contact, откладываем")
+            Log.w(TAG, "sendAnonTokensTo: нет ключа для $contact")
             return
         }
-        sendEncrypted(contact, systemText, recipientKey)
+        val encrypted = CryptoManager.encrypt(systemText, recipientKey)
+        val signature = CryptoManager.sign(encrypted)
+        val payload = JSONObject().apply {
+            put("type", "message")
+            put("from", username)
+            put("to", contact)
+            put("text", encrypted)
+            put("signature", signature)
+            put("id", UUID.randomUUID().toString())
+            put("protocol_version", 1)
+        }
+        val anonPacket = JSONObject().apply {
+            put("type", "anon_message")
+            put("token", anonToken)
+            put("payload", payload)
+        }
+        sendWs(addPadding(anonPacket).toString())
         // Обновляем подписку на сервере с актуальным пулом токенов
         val allMyTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
         sendWs(JSONObject().apply {
             put("type", "subscribe_tokens")
             put("tokens", org.json.JSONArray(allMyTokens))
         }.toString())
-        Log.d(TAG, "Отправлены анонимные токены → $contact (${tokens.size} шт.)")
+        Log.d(TAG, "Отправлены анонимные токены → $contact через anon_message")
     }
 
     private suspend fun handleIncomingDecryptedMessage(from: String, decryptedText: String, messageId: String?, json: JSONObject) {
