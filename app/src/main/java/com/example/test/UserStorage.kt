@@ -427,6 +427,21 @@ object UserStorage {
             .edit().putString("app_theme", theme.name).apply()
     }
 
+    // ─── Constant-Rate Cover Traffic ────────────────────────────────────────
+
+    enum class CoverTrafficMode { OFF, MODERATE, AGGRESSIVE }
+
+    fun getCoverTrafficMode(context: Context): CoverTrafficMode {
+        val v = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+            .getString("cover_traffic_mode", CoverTrafficMode.OFF.name) ?: CoverTrafficMode.OFF.name
+        return try { CoverTrafficMode.valueOf(v) } catch (e: Exception) { CoverTrafficMode.OFF }
+    }
+
+    fun setCoverTrafficMode(context: Context, mode: CoverTrafficMode) {
+        context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+            .edit().putString("cover_traffic_mode", mode.name).apply()
+    }
+
     // ─── Post-Wipe Decoy Mode ────────────────────────────────────────────────
 
     /**

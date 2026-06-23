@@ -790,8 +790,59 @@ class MessengerService : Service() {
 
     // ─── WebSocket отправка ───────────────────────────────────────────────────
 
+    // ─── Constant-rate cover traffic ─────────────────────────────────────────
+    // В режиме MODERATE/AGGRESSIVE реальные сообщения ставятся в очередь и
+    // отправляются по таймеру вместо очередного шумового пакета.
+    // Наблюдатель видит равномерный поток — невозможно выделить реальные сообщения по времени.
+
+    private val outboundQueue = java.util.concurrent.LinkedBlockingQueue<String>()
+    private var coverTrafficJob: kotlinx.coroutines.Job? = null
+
+    private fun startCoverTraffic() {
+        coverTrafficJob?.cancel()
+        val mode = UserStorage.getCoverTrafficMode(this)
+        if (mode == UserStorage.CoverTrafficMode.OFF) return
+        val intervalMs = if (mode == UserStorage.CoverTrafficMode.AGGRESSIVE) 1_000L else 5_000L
+        coverTrafficJob = scope.launch(Dispatchers.IO) {
+            val rng = java.security.SecureRandom()
+            while (isActive) {
+                kotlinx.coroutines.delay(intervalMs)
+                if (!isConnected) continue
+                val packet = outboundQueue.poll()
+                if (packet != null) {
+                    webSocket?.send(packet)
+                } else {
+                    // Шумовой пакет — неотличим от реального по размеру
+                    val fakeToken = AnonTokenManager.generateDummyToken()
+                    val noise = addPadding(JSONObject().apply {
+                        put("type", "anon_message")
+                        put("token", fakeToken)
+                        put("payload", JSONObject().apply {
+                            put("v", 2)
+                            put("d", android.util.Base64.encodeToString(
+                                ByteArray(rng.nextInt(180) + 76).also { rng.nextBytes(it) },
+                                android.util.Base64.NO_WRAP
+                            ))
+                        })
+                    }).toString()
+                    webSocket?.send(noise)
+                }
+            }
+        }
+    }
+
+    private fun stopCoverTraffic() {
+        coverTrafficJob?.cancel()
+        coverTrafficJob = null
+    }
+
     private fun sendWs(json: String) {
-        webSocket?.send(json)
+        val mode = UserStorage.getCoverTrafficMode(this)
+        if (mode != UserStorage.CoverTrafficMode.OFF && isConnected) {
+            outboundQueue.offer(json)
+        } else {
+            webSocket?.send(json)
+        }
     }
 
     // ─── Connect ──────────────────────────────────────────────────────────────
@@ -853,6 +904,7 @@ class MessengerService : Service() {
                     override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                         Log.e(TAG, "WebSocket ошибка: ${t.message}")
                         isConnected = false
+                        stopCoverTraffic()
                         if (!handshakeDone) handshakeDone = true
                         NetworkConfig.TurnCredentials.clear()
                     }
@@ -860,6 +912,7 @@ class MessengerService : Service() {
                     override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                         Log.d(TAG, "WebSocket закрыт: $code $reason")
                         isConnected = false
+                        stopCoverTraffic()
                         if (!handshakeDone) handshakeDone = true
                         NetworkConfig.TurnCredentials.clear()
                     }
@@ -929,31 +982,7 @@ class MessengerService : Service() {
                     }.toString())
                 }
 
-                // Cover traffic: случайные фейковые сообщения для скрытия timing-корреляции
-                scope.launch(Dispatchers.IO) {
-                    val coverRng = java.security.SecureRandom()
-                    while (isConnected) {
-                        val delayMs = (30_000L + (coverRng.nextInt(90_000))).toLong()
-                        kotlinx.coroutines.delay(delayMs)
-                        if (!isConnected) break
-                        try {
-                            val fakeToken = AnonTokenManager.generateDummyToken()
-                            val fakePayload = JSONObject().apply {
-                                put("type", "anon_message")
-                                put("token", fakeToken)
-                                put("payload", JSONObject().apply {
-                                    put("v", 2)
-                                    put("d", android.util.Base64.encodeToString(
-                                        ByteArray(coverRng.nextInt(180) + 76).also { coverRng.nextBytes(it) },
-                                        android.util.Base64.NO_WRAP
-                                    ))
-                                })
-                            }
-                            sendWs(addPadding(fakePayload).toString())
-                        } catch (_: Exception) {}
-                    }
-                }
-
+                startCoverTraffic()
                 withContext(Dispatchers.Main) {
                     onStatusChanged?.invoke(true)
                     reconnectAttempts = 0
@@ -1057,6 +1086,7 @@ class MessengerService : Service() {
                     Log.e(TAG, "Ошибка регистрации bundle: ${e.message}")
                 }
 
+                startCoverTraffic()
                 withContext(Dispatchers.Main) {
                     onStatusChanged?.invoke(true)
                 }

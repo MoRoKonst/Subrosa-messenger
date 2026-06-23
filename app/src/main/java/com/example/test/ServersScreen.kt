@@ -36,6 +36,7 @@ fun ServersScreen(onBack: () -> Unit) {
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     var servers by remember { mutableStateOf(ServerManager.getServers(context)) }
     var fixedMode by remember { mutableStateOf(ServerManager.isFixedMode(context)) }
+    var coverMode by remember { mutableStateOf(UserStorage.getCoverTrafficMode(context)) }
     var showAddDialog by remember { mutableStateOf(false) }
     var newHost by remember { mutableStateOf("") }
     var newPort by remember { mutableStateOf("9000") }
@@ -106,6 +107,60 @@ fun ServersScreen(onBack: () -> Unit) {
                         },
                         colors = SwitchDefaults.colors(checkedThumbColor = c.accent, checkedTrackColor = c.accent.copy(alpha = 0.4f))
                     )
+                }
+
+                HorizontalDivider(color = c.textPrimary.copy(alpha = 0.1f), modifier = Modifier.padding(horizontal = 16.dp))
+
+                // Постоянный поток трафика
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Постоянный трафик",
+                            color = c.textPrimary,
+                            fontFamily = AppFont,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            when (coverMode) {
+                                UserStorage.CoverTrafficMode.OFF -> "Выключен"
+                                UserStorage.CoverTrafficMode.MODERATE -> "Умеренный (пакет каждые 5 сек)"
+                                UserStorage.CoverTrafficMode.AGGRESSIVE -> "Агрессивный (пакет каждую сек)"
+                            },
+                            color = c.textPrimary.copy(alpha = 0.6f),
+                            fontFamily = AppFont,
+                            fontSize = 12.sp
+                        )
+                    }
+                    // Три состояния: OFF → MODERATE → AGGRESSIVE → OFF
+                    TextButton(onClick = {
+                        val next = when (coverMode) {
+                            UserStorage.CoverTrafficMode.OFF -> UserStorage.CoverTrafficMode.MODERATE
+                            UserStorage.CoverTrafficMode.MODERATE -> UserStorage.CoverTrafficMode.AGGRESSIVE
+                            UserStorage.CoverTrafficMode.AGGRESSIVE -> UserStorage.CoverTrafficMode.OFF
+                        }
+                        coverMode = next
+                        UserStorage.setCoverTrafficMode(context, next)
+                        // Перезапускаем сервис чтобы применить новый режим
+                        context.stopService(android.content.Intent(context, MessengerService::class.java))
+                        context.startForegroundService(android.content.Intent(context, MessengerService::class.java))
+                    }) {
+                        Text(
+                            when (coverMode) {
+                                UserStorage.CoverTrafficMode.OFF -> "Вкл"
+                                UserStorage.CoverTrafficMode.MODERATE -> "Агресс."
+                                UserStorage.CoverTrafficMode.AGGRESSIVE -> "Выкл"
+                            },
+                            color = c.accent,
+                            fontFamily = AppFont,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
 
                 HorizontalDivider(color = c.textPrimary.copy(alpha = 0.1f), modifier = Modifier.padding(horizontal = 16.dp))
