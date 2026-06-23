@@ -2569,20 +2569,36 @@ class MessengerService : Service() {
 
     fun sendTyping(to: String) {
         if (!isConnected) return
-        sendWs(JSONObject().apply {
+        val packet = JSONObject().apply {
             put("type", "typing")
             put("from", username)
             put("to", to)
-        }.toString())
+        }
+        sendAnonOrDirect(to, packet)
     }
 
     fun sendRead(to: String, messageId: String) {
-        sendWs(JSONObject().apply {
+        val packet = JSONObject().apply {
             put("type", "read")
             put("from", username)
             put("to", to)
             put("id", messageId)
-        }.toString())
+        }
+        sendAnonOrDirect(to, packet)
+    }
+
+    private fun sendAnonOrDirect(to: String, packet: JSONObject) {
+        val token = AnonTokenManager.consumeNextContactToken(this, to)
+        if (token != null) {
+            val anonPacket = JSONObject().apply {
+                put("type", "anon_message")
+                put("token", token)
+                put("payload", packet)
+            }
+            sendWs(anonPacket.toString())
+        } else {
+            sendWs(packet.toString())
+        }
     }
 
     fun sendReaction(to: String, messageId: String, emoji: String) {
