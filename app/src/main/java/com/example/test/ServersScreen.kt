@@ -37,6 +37,8 @@ fun ServersScreen(onBack: () -> Unit) {
     var servers by remember { mutableStateOf(ServerManager.getServers(context)) }
     var fixedMode by remember { mutableStateOf(ServerManager.isFixedMode(context)) }
     var coverMode by remember { mutableStateOf(UserStorage.getCoverTrafficMode(context)) }
+    var pendingCoverMode by remember { mutableStateOf<UserStorage.CoverTrafficMode?>(null) }
+    var showCoverWarning by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
     var newHost by remember { mutableStateOf("") }
     var newPort by remember { mutableStateOf("9000") }
@@ -144,11 +146,16 @@ fun ServersScreen(onBack: () -> Unit) {
                             UserStorage.CoverTrafficMode.MODERATE -> UserStorage.CoverTrafficMode.AGGRESSIVE
                             UserStorage.CoverTrafficMode.AGGRESSIVE -> UserStorage.CoverTrafficMode.OFF
                         }
-                        coverMode = next
-                        UserStorage.setCoverTrafficMode(context, next)
-                        // Перезапускаем сервис чтобы применить новый режим
-                        context.stopService(android.content.Intent(context, MessengerService::class.java))
-                        context.startForegroundService(android.content.Intent(context, MessengerService::class.java))
+                        if (coverMode == UserStorage.CoverTrafficMode.OFF) {
+                            // Показываем предупреждение перед включением
+                            pendingCoverMode = next
+                            showCoverWarning = true
+                        } else {
+                            coverMode = next
+                            UserStorage.setCoverTrafficMode(context, next)
+                            context.stopService(android.content.Intent(context, MessengerService::class.java))
+                            context.startForegroundService(android.content.Intent(context, MessengerService::class.java))
+                        }
                     }) {
                         Text(
                             when (coverMode) {
@@ -277,7 +284,41 @@ fun ServersScreen(onBack: () -> Unit) {
         }
     }
 
-    // Диалог остаётся без изменений...
+    if (showCoverWarning) {
+        val mode = pendingCoverMode ?: UserStorage.CoverTrafficMode.MODERATE
+        AlertDialog(
+            onDismissRequest = { showCoverWarning = false },
+            containerColor = c.dialog,
+            title = { Text("⚠️ Постоянный трафик", color = c.textPrimary, fontFamily = AppFont) },
+            text = {
+                Text(
+                    "Режим \"${if (mode == UserStorage.CoverTrafficMode.MODERATE) "Умеренный" else "Агрессивный"}\" создаёт непрерывный поток пакетов.\n\n" +
+                    "• Умеренный: ~1 пакет / 5 сек ≈ 2–3 МБ/час\n" +
+                    "• Агрессивный: ~1 пакет / сек ≈ 20–30 МБ/час\n\n" +
+                    "Это повысит расход трафика и батареи даже когда вы не отправляете сообщений. Включать рекомендуется только при высоком уровне угрозы.",
+                    color = c.textPrimary.copy(alpha = 0.85f),
+                    fontFamily = AppFont,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val next = pendingCoverMode ?: return@TextButton
+                    coverMode = next
+                    UserStorage.setCoverTrafficMode(context, next)
+                    context.stopService(android.content.Intent(context, MessengerService::class.java))
+                    context.startForegroundService(android.content.Intent(context, MessengerService::class.java))
+                    showCoverWarning = false
+                }) { Text("Включить", color = c.accent, fontFamily = AppFont, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCoverWarning = false }) {
+                    Text("Отмена", color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
+                }
+            }
+        )
+    }
+
     if (showAddDialog) {
         AlertDialog(
             onDismissRequest = { showAddDialog = false },
