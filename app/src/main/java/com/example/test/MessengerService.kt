@@ -1200,9 +1200,10 @@ class MessengerService : Service() {
 
             "session_reset" -> {
                 val from = json.getString("from")
-                Log.w(TAG, "session_reset от $from — сбрасываем сессию")
+                Log.w(TAG, "session_reset от $from — сбрасываем сессию, ждём их session_init")
                 SessionKeyManager.deleteSession(from)
-                requestPrekeyBundle(from)
+                // НЕ запрашиваем bundle сами — иначе оба инициируют X3DH одновременно и сессии
+                // расходятся. Отправитель session_reset сам переинициирует и пришлёт session_init.
             }
 
             "read" -> {
@@ -1695,6 +1696,10 @@ class MessengerService : Service() {
                     if (AnonTokenManager.getContactTokens(this@MessengerService, from).isEmpty() &&
                         AnonTokenManager.getMyTokens(this@MessengerService).isNotEmpty()) {
                         scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
+                    }
+                    // Если были pending сообщения к from (например, после session_reset) — отправляем
+                    pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
+                        scope.launch(Dispatchers.IO) { sendWithForwardSecrecy(from, text, msgId) }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "session_init error: ${e.message}")
