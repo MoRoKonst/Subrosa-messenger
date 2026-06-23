@@ -2470,10 +2470,8 @@ class MessengerService : Service() {
                             put("type", "message")
                         }
                     }
-                    // Анонимная доставка: используем одноразовый токен если есть
-                    val anonToken = if (!isFirst)
-                        AnonTokenManager.consumeNextContactToken(this@MessengerService, to)
-                    else null
+                    // Анонимная доставка: используем токен если есть (даже для session_init)
+                    val anonToken = AnonTokenManager.consumeNextContactToken(this@MessengerService, to)
 
                     if (anonToken != null) {
                         val anonPacket = JSONObject().apply {
