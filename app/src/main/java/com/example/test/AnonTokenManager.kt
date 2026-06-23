@@ -80,6 +80,52 @@ object AnonTokenManager {
         return token
     }
 
+    // ── Mailbox теги ─────────────────────────────────────────────────────────
+    // "Мои" теги — из инвайтов которые я создал; сервер хранит блобы для меня по этим тегам.
+    // "Контакта" теги — куда слать первое сообщение, когда приняли чужой инвайт.
+
+    private const val PREF_MY_MBOX_TAGS   = "mbox_my_tags"
+    private const val PREF_CT_MBOX_PREFIX = "mbox_ct_"
+    private const val MBOX_FAKE_COUNT = 4   // фейковых тегов в каждом запросе
+
+    fun addMyMailboxTag(ctx: Context, tag: String) {
+        val tags = getMyMailboxTags(ctx).toMutableList()
+        if (tag !in tags) {
+            tags.add(tag)
+            prefs(ctx).edit().putString(PREF_MY_MBOX_TAGS, JSONArray(tags).toString()).apply()
+        }
+    }
+
+    fun getMyMailboxTags(ctx: Context): List<String> {
+        val json = prefs(ctx).getString(PREF_MY_MBOX_TAGS, "[]") ?: "[]"
+        return try { val a = JSONArray(json); (0 until a.length()).map { a.getString(it) } }
+        catch (e: Exception) { emptyList() }
+    }
+
+    fun removeMyMailboxTag(ctx: Context, tag: String) {
+        val tags = getMyMailboxTags(ctx).toMutableList()
+        if (tags.remove(tag))
+            prefs(ctx).edit().putString(PREF_MY_MBOX_TAGS, JSONArray(tags).toString()).apply()
+    }
+
+    fun setContactMailboxTag(ctx: Context, fingerprint: String, tag: String) {
+        prefs(ctx).edit().putString("$PREF_CT_MBOX_PREFIX$fingerprint", tag).apply()
+    }
+
+    fun getContactMailboxTag(ctx: Context, fingerprint: String): String? =
+        prefs(ctx).getString("$PREF_CT_MBOX_PREFIX$fingerprint", null)
+
+    fun clearContactMailboxTag(ctx: Context, fingerprint: String) {
+        prefs(ctx).edit().remove("$PREF_CT_MBOX_PREFIX$fingerprint").apply()
+    }
+
+    /** Составляет список тегов для mailbox_fetch: реальные + MBOX_FAKE_COUNT фейковых. */
+    fun buildFetchTagList(ctx: Context): List<String> {
+        val real = getMyMailboxTags(ctx)
+        val fakes = (1..MBOX_FAKE_COUNT).map { generateToken() }
+        return (real + fakes).shuffled()
+    }
+
     // ── Служебное ─────────────────────────────────────────────────────────────
 
     fun generateDummyToken(): String = generateToken()

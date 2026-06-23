@@ -218,6 +218,10 @@ fun ProfileScreen(
                 displayName.ifBlank { userId }
             )
             UserStorage.saveInviteCode(context, fresh)
+            // Сохраняем mailboxTag из нового инвайта — будем опрашивать сервер по нему
+            InviteCodeManager.parseInviteCode(fresh)?.mailboxTag?.let { tag ->
+                AnonTokenManager.addMyMailboxTag(context, tag)
+            }
             fresh
         } catch (e: Exception) {
             UserStorage.getInviteCode(context) ?: userId

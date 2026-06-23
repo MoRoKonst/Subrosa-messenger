@@ -36,6 +36,17 @@ token_to_ws:  dict = {}   # token (str) → websocket
 token_pending: dict = {}  # token (str) → list[dict]  (очередь для офлайн-клиентов)
 ws_to_tokens: dict = {}   # websocket → set[str]       (для очистки при дисконнекте)
 known_tokens: set  = set() # токены, которые хоть раз были зарегистрированы (фейки дропаем)
+
+# ─── Anonymous Mailbox ────────────────────────────────────────────────────────
+# Слепое хранилище для первого контакта: сервер не знает кто кому пишет.
+# Клиент A кладёт зашифрованный блоб по тегу из инвайта (mailbox_put).
+# Клиент B спрашивает сервер со списком тегов — своим настоящим + фейковыми (mailbox_fetch).
+# Сервер отдаёт блобы по совпавшим тегам. Клиент пробует расшифровать каждый.
+MAILBOX_TTL        = 48 * 3600       # блобы живут 48 часов
+MAILBOX_TAG_LEN    = 32              # hex-символов (16 байт)
+MAILBOX_MAX_BLOB   = 8 * 1024        # 8 КБ на блоб
+MAILBOX_MAX_FETCH  = 20              # максимум тегов в одном запросе
+mailbox: dict      = {}              # tag (str) → list[{blob: str, ts: float}]
 MAX_TOKEN_LEN = 32
 MAX_TOKENS_PER_SUBSCRIBE = 100
 
@@ -816,7 +827,9 @@ async def handle_client(websocket):
                 # ── Session management ──
                 "session_reset",
                 # ── Anonymous token routing ──
-                "subscribe_tokens", "anon_message"
+                "subscribe_tokens", "anon_message",
+                # ── Anonymous Mailbox ──
+                "mailbox_put", "mailbox_fetch"
             ]
             if msg_type not in ALLOWED_TYPES:
                 print(f"[SECURITY] Неизвестный тип '{msg_type}' от {ip}")
@@ -1815,6 +1828,45 @@ async def handle_client(websocket):
                     print(f"[ANON] Токен …{token[-6:]} офлайн, сообщение в очереди")
                 if msg_id:
                     await send_safe(websocket, json.dumps({"type": "ack", "id": msg_id}))
+                continue
+
+            # ─── Anonymous Mailbox ────────────────────────────────────────────
+            if msg_type == "mailbox_put":
+                tag  = message.get("tag", "")
+                blob = message.get("blob", "")
+                if (not tag or not blob
+                        or len(tag) != MAILBOX_TAG_LEN
+                        or not all(c in "0123456789abcdef" for c in tag)
+                        or not isinstance(blob, str)
+                        or len(blob) > MAILBOX_MAX_BLOB):
+                    continue
+                now = time.time()
+                async with lock:
+                    # Чистим устаревшие блобы в этом слоте
+                    existing = [e for e in mailbox.get(tag, []) if now - e["ts"] < MAILBOX_TTL]
+                    existing.append({"blob": blob, "ts": now})
+                    mailbox[tag] = existing
+                continue
+
+            if msg_type == "mailbox_fetch":
+                raw_tags = message.get("tags", [])
+                if not isinstance(raw_tags, list):
+                    continue
+                tags = [t for t in raw_tags
+                        if isinstance(t, str)
+                        and len(t) == MAILBOX_TAG_LEN
+                        and all(c in "0123456789abcdef" for c in t)][:MAILBOX_MAX_FETCH]
+                now = time.time()
+                result = {}
+                async with lock:
+                    for tag in tags:
+                        blobs = [e for e in mailbox.get(tag, []) if now - e["ts"] < MAILBOX_TTL]
+                        if blobs:
+                            result[tag] = [e["blob"] for e in blobs]
+                            # Удаляем доставленные
+                            del mailbox[tag]
+                if result:
+                    await send_safe(websocket, json.dumps({"type": "mailbox_result", "blobs": result}))
                 continue
 
             # register_fcm — сохраняем FCM-токен пользователя

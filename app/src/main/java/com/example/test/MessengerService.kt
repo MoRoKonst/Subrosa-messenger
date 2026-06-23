@@ -1093,7 +1093,11 @@ class MessengerService : Service() {
 
                 // Флашим видеокружки, накопившиеся пока были офлайн
                 flushPendingVideoCircles()
+                // Опрашиваем анонимный mailbox (мои теги + фейковые)
+                pollMailbox()
             }
+
+            "mailbox_result" -> handleMailboxResult(json)
 
             "session_conflict" -> {
                 Log.w(TAG, "⚠️ session_conflict: аккаунт подключён с другого устройства")
@@ -2391,12 +2395,22 @@ class MessengerService : Service() {
     // ─── Отправка ─────────────────────────────────────────────────────────────
 
     fun send(to: String, text: String, replyToId: String? = null): String {
-        return if (isConnected) {
-            sendWithForwardSecrecy(to, text, replyToId = replyToId)
+        if (isConnected) {
+            // Если у контакта есть mailboxTag (v3 инвайт) и нет ещё сессии — используем mailbox
+            val mailboxTag = AnonTokenManager.getContactMailboxTag(this, to)
+            if (mailboxTag != null && !SessionKeyManager.hasSession(to)) {
+                val publicKey = publicKeys[to] ?: ChatStorage.getContactPublicKey(this, to)?.also { publicKeys[to] = it }
+                if (publicKey != null) {
+                    val id = UUID.randomUUID().toString()
+                    sendViaMailbox(to, text, publicKey, mailboxTag, id)
+                    return id
+                }
+            }
+            return sendWithForwardSecrecy(to, text, replyToId = replyToId)
         } else {
             val id = UUID.randomUUID().toString()
             MessageQueue.add(this, MessageQueue.QueuedMessage(id = id, to = to, text = text))
-            id
+            return id
         }
     }
 
@@ -3024,6 +3038,92 @@ class MessengerService : Service() {
             else {
                 pendingMessages.getOrPut(queued.to) { mutableListOf() }.add(Pair(queued.to, queued.text))
                 sendWs(JSONObject().apply { put("type", "get_key"); put("target", queued.to) }.toString())
+            }
+        }
+    }
+
+    // ─── Anonymous Mailbox ────────────────────────────────────────────────────
+
+    /** Опрашивает сервер: мои настоящие теги + MBOX_FAKE_COUNT фейковых (сервер не знает какой настоящий). */
+    private fun pollMailbox() {
+        val tags = AnonTokenManager.buildFetchTagList(this)
+        if (tags.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            sendWs(JSONObject().apply {
+                put("type", "mailbox_fetch")
+                put("tags", org.json.JSONArray(tags))
+            }.toString())
+        }
+    }
+
+    /**
+     * Отправляет первое сообщение контакту через mailbox вместо fingerprint-маршрутизации.
+     * Шифруем {from, text, tokens} публичным ключом получателя, кладём по его mailboxTag.
+     * Сервер не знает кто отправитель и кто получатель.
+     */
+    fun sendViaMailbox(to: String, text: String, publicKey: String, mailboxTag: String, messageId: String? = null) {
+        val id = messageId ?: java.util.UUID.randomUUID().toString()
+        MessageQueue.remove(this, id)
+        scope.launch(Dispatchers.IO) {
+            try {
+                // Внутри блоба: from (fingerprint), text, наши токены — всё шифруется ключом получателя
+                val myTokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
+                val inner = JSONObject().apply {
+                    put("from", username)
+                    put("text", text)
+                    put("tokens", org.json.JSONArray(myTokens))
+                    put("id", id)
+                }.toString()
+                val blob = CryptoManager.encrypt(inner, publicKey)
+                sendWs(addPadding(JSONObject().apply {
+                    put("type", "mailbox_put")
+                    put("tag", mailboxTag)
+                    put("blob", blob)
+                }).toString())
+            } catch (e: Exception) {
+                Log.e(TAG, "sendViaMailbox error: ${e.message}")
+            }
+        }
+    }
+
+    /** Обрабатывает ответ сервера на mailbox_fetch. */
+    private suspend fun handleMailboxResult(json: org.json.JSONObject) {
+        val blobsMap = json.optJSONObject("blobs") ?: return
+        blobsMap.keys().forEach { tag ->
+            val arr = blobsMap.optJSONArray(tag) ?: return@forEach
+            for (i in 0 until arr.length()) {
+                val blob = arr.optString(i) ?: continue
+                try {
+                    val inner = CryptoManager.decrypt(blob)
+                    val innerJson = org.json.JSONObject(inner)
+                    val from = innerJson.getString("from")
+                    val text = innerJson.getString("text")
+                    val msgId = innerJson.optString("id")
+                    val tokensArr = innerJson.optJSONArray("tokens")
+                    if (tokensArr != null) {
+                        val tokens = (0 until tokensArr.length()).map { tokensArr.getString(it) }
+                        AnonTokenManager.addContactTokens(this@MessengerService, from, tokens)
+                        if (tokensSentThisSession.add(from)) {
+                            scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
+                        }
+                    }
+                    // Убираем этот тег из опроса — сообщение получено
+                    AnonTokenManager.removeMyMailboxTag(this@MessengerService, tag)
+                    // Сохраняем сообщение и добавляем контакт
+                    ChatStorage.addContact(this@MessengerService, from)
+                    if (!text.startsWith("__beacon_")) {
+                        val storedId = msgId.ifEmpty { java.util.UUID.randomUUID().toString() }
+                        ChatStorage.saveOrUpdateMessage(
+                            this@MessengerService,
+                            UserStorage.getUserId(this@MessengerService),
+                            from,
+                            ChatStorage.StoredMessage(id = storedId, text = text, isOwn = false)
+                        )
+                        withContext(Dispatchers.Main) { onMessageReceived?.invoke(from, text) }
+                    }
+                } catch (e: Exception) {
+                    // Блоб не для нас — тихо пропускаем
+                }
             }
         }
     }

@@ -474,11 +474,17 @@ fun ChatsScreen(
                                 ChatStorage.addContact(context, fingerprint)
                                 ChatStorage.saveContactPublicKey(context, fingerprint, fixedKey)
                                 ChatStorage.saveContactName(context, fingerprint, decodedName)
-                                context.startService(
-                                    Intent(context, MessengerService::class.java).apply {
-                                        putExtra("request_key", fingerprint)
-                                    }
-                                )
+                                // Если инвайт v3 — сохраняем mailboxTag; первое сообщение пойдёт через mailbox
+                                if (inviteData.mailboxTag != null) {
+                                    AnonTokenManager.setContactMailboxTag(context, fingerprint, inviteData.mailboxTag)
+                                } else {
+                                    // Старый инвайт без тега — запрашиваем ключ как раньше
+                                    context.startService(
+                                        Intent(context, MessengerService::class.java).apply {
+                                            putExtra("request_key", fingerprint)
+                                        }
+                                    )
+                                }
                                 showAddDialog = false; inviteCode = ""
                                 loadChats()
                                 android.widget.Toast.makeText(

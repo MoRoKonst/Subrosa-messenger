@@ -14,7 +14,8 @@ object InviteCodeManager {
 
     // Инвайт-код действителен 7 дней
     private const val INVITE_TTL_SECONDS = 7L * 24 * 3600
-    private const val FORMAT_VERSION: Byte = 0x02
+    private const val FORMAT_VERSION: Byte = 0x03
+    private const val FORMAT_VERSION_LEGACY: Byte = 0x02
     private const val PREFIX = "bc:"
 
     // X.509 / ASN.1 заголовок для P-256 EC публичного ключа (26 байт):
@@ -26,16 +27,17 @@ object InviteCodeManager {
             .map { it.toInt(16).toByte() }
             .toByteArray()
 
-    //  Формат payload (бинарный, Base64url без паддинга, префикс "bc:"):
-    //  [1]  version = 0x02
-    //  [4]  ts      — uint32 big-endian (секунды Unix)
-    //  [8]  nonce   — случайные байты
-    //  [8]  fp      — первые 8 байт SHA-256(X.509 ключа)
-    //  [65] ecPoint — несжатая точка EC: 04 || X(32) || Y(32)
-    //  [1]  nameLen — длина имени в байтах UTF-8
-    //  [N]  name    — имя в UTF-8 (0..255 байт)
-    //  [32] sig_r   — компонент r подписи ECDSA
-    //  [32] sig_s   — компонент s подписи ECDSA
+    //  Формат payload v3 (бинарный, Base64url без паддинга, префикс "bc:"):
+    //  [1]  version  = 0x03
+    //  [4]  ts       — uint32 big-endian (секунды Unix)
+    //  [8]  nonce    — случайные байты
+    //  [16] mbox_tag — случайный mailbox-тег (32 hex = 16 байт)
+    //  [8]  fp       — первые 8 байт SHA-256(X.509 ключа)
+    //  [65] ecPoint  — несжатая точка EC: 04 || X(32) || Y(32)
+    //  [1]  nameLen  — длина имени в байтах UTF-8
+    //  [N]  name     — имя в UTF-8 (0..255 байт)
+    //  [32] sig_r    — компонент r подписи ECDSA
+    //  [32] sig_s    — компонент s подписи ECDSA
 
     fun generateInviteCode(publicKey: PublicKey, privateKey: PrivateKey, displayName: String): String {
         val x509Bytes = publicKey.encoded  // 91 байт для P-256
@@ -46,8 +48,11 @@ object InviteCodeManager {
         // Fingerprint: первые 8 байт SHA-256 от X.509
         val fpBytes = MessageDigest.getInstance("SHA-256").digest(x509Bytes).copyOfRange(0, 8)
 
+        val rng = SecureRandom()
         // 8 случайных байт nonce
-        val nonce = ByteArray(8).also { SecureRandom().nextBytes(it) }
+        val nonce = ByteArray(8).also { rng.nextBytes(it) }
+        // 16 случайных байт mailbox-тега (32 hex)
+        val mailboxTagBytes = ByteArray(16).also { rng.nextBytes(it) }
 
         // Timestamp uint32
         val ts = (System.currentTimeMillis() / 1000).toInt()
@@ -58,10 +63,11 @@ object InviteCodeManager {
         }
 
         // Данные для подписи (всё без самой подписи)
-        val preSign = ByteBuffer.allocate(1 + 4 + 8 + 8 + 65 + 1 + nameBytes.size).apply {
+        val preSign = ByteBuffer.allocate(1 + 4 + 8 + 16 + 8 + 65 + 1 + nameBytes.size).apply {
             put(FORMAT_VERSION)
             putInt(ts)
             put(nonce)
+            put(mailboxTagBytes)
             put(fpBytes)
             put(ecPoint)
             put(nameBytes.size.toByte())
@@ -92,10 +98,15 @@ object InviteCodeManager {
             val buf = ByteBuffer.wrap(payload)
 
             val version = buf.get()
-            if (version != FORMAT_VERSION) return null
+            if (version != FORMAT_VERSION && version != FORMAT_VERSION_LEGACY) return null
 
             val ts = buf.int.toLong() and 0xFFFFFFFFL
             val nonce = ByteArray(8).also { buf.get(it) }
+            // v3: читаем mailbox_tag; v2: тега нет
+            val mailboxTagHex: String? = if (version == FORMAT_VERSION) {
+                val tagBytes = ByteArray(16).also { buf.get(it) }
+                tagBytes.joinToString("") { "%02x".format(it) }
+            } else null
             val fpBytes = ByteArray(8).also { buf.get(it) }
             val ecPoint = ByteArray(65).also { buf.get(it) }
             val nameLen = buf.get().toInt() and 0xFF
@@ -111,7 +122,7 @@ object InviteCodeManager {
             val sigB64 = Base64.encodeToString(rawSig, Base64.URL_SAFE or Base64.NO_WRAP)
             val displayName = String(nameBytes, Charsets.UTF_8)
 
-            InviteData(publicKeyB64, fingerprintHex, nonceHex, sigB64, displayName, ts)
+            InviteData(publicKeyB64, fingerprintHex, nonceHex, sigB64, displayName, ts, mailboxTagHex)
         } catch (e: Exception) {
             null
         }
@@ -144,10 +155,14 @@ object InviteCodeManager {
             val nameBytes = inviteData.displayName.toByteArray(Charsets.UTF_8)
             val ecPoint = x509Bytes.copyOfRange(x509Bytes.size - 65, x509Bytes.size)
 
-            val preSign = ByteBuffer.allocate(1 + 4 + 8 + 8 + 65 + 1 + nameBytes.size).apply {
-                put(FORMAT_VERSION)
+            val mailboxTagBytes = inviteData.mailboxTag?.chunked(2)
+                ?.map { it.toInt(16).toByte() }?.toByteArray()
+            val version = if (mailboxTagBytes != null) FORMAT_VERSION else FORMAT_VERSION_LEGACY
+            val preSign = ByteBuffer.allocate(1 + 4 + 8 + (mailboxTagBytes?.size ?: 0) + 8 + 65 + 1 + nameBytes.size).apply {
+                put(version)
                 putInt(timestamp.toInt())
                 put(nonceBytes)
+                if (mailboxTagBytes != null) put(mailboxTagBytes)
                 put(fpBytes)
                 put(ecPoint)
                 put(nameBytes.size.toByte())
@@ -212,6 +227,7 @@ object InviteCodeManager {
         val nonce: String,          // 16 hex-символов (8 байт)
         val signature: String,      // Base64url raw r||s (64 байта)
         val displayName: String,
-        val timestamp: Long? = null
+        val timestamp: Long? = null,
+        val mailboxTag: String? = null  // 32 hex (16 байт), только в v3
     )
 }
