@@ -73,8 +73,8 @@ class MessengerService : Service() {
 
     private fun buildOkHttpClient(useTor: Boolean): OkHttpClient {
         val builder = OkHttpClient.Builder()
-            .pingInterval(0, TimeUnit.SECONDS)
-            .connectTimeout(if (useTor) 60 else 15, TimeUnit.SECONDS)  // Tor медленнее — больше таймаут
+            .pingInterval(if (useTor) 25 else 0, TimeUnit.SECONDS)  // keepalive для Tor (Orbot рвёт idle)
+            .connectTimeout(if (useTor) 60 else 15, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.SECONDS)
         if (useTor) {
             // Кастомный SocketFactory: передаёт имя хоста в Orbot без локального DNS-резолва.
@@ -858,11 +858,21 @@ class MessengerService : Service() {
                 webSocket?.close(1000, "reconnect")
                 webSocket = null
 
-                val server = ServerManager.getCurrentServer(this@MessengerService)
+                var server = ServerManager.getCurrentServer(this@MessengerService)
                 if (server == null) {
                     Log.e(TAG, "Нет доступных серверов")
                     delay(5000)
                     continue
+                }
+
+                // Если Orbot активен и текущий сервер не onion — автоматически переключаемся на onion
+                if (TorManager.isConnected && !server.toWssUrl().contains(".onion")) {
+                    val onionServer = ServerManager.getServers(this@MessengerService)
+                        .firstOrNull { it.toWssUrl().contains(".onion") && it.enabled }
+                    if (onionServer != null) {
+                        Log.d(TAG, "Orbot активен — переключаемся на onion: ${onionServer.name}")
+                        server = onionServer
+                    }
                 }
 
                 val wsUrl = server.toWssUrl()
