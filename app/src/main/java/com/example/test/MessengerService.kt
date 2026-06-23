@@ -498,13 +498,13 @@ class MessengerService : Service() {
                     val cid   = CallManager.callId
                     peers.forEach { peerId ->
                         try {
-                            sendWs(JSONObject().apply {
+                            sendAnonOrDirect(peerId, JSONObject().apply {
                                 put("type", if (CallManager.isGroupCall) "call_group_leave" else "call_end")
                                 put("from", username)
                                 put("to",   peerId)
                                 put("call_id", cid)
                                 put("reason", "network_lost")
-                            }.toString())
+                            })
                         } catch (_: Exception) {}
                     }
                     android.os.Handler(android.os.Looper.getMainLooper()).post {
@@ -568,10 +568,10 @@ class MessengerService : Service() {
         intent?.getStringExtra("send_session_reset_to")?.let { contactId ->
             if (isConnected) {
                 scope.launch(Dispatchers.IO) {
-                    sendWs(JSONObject().apply {
+                    sendAnonOrDirect(contactId, JSONObject().apply {
                         put("type", "session_reset")
                         put("to", contactId)
-                    }.toString())
+                    })
                 }
             }
             return START_STICKY
@@ -1717,10 +1717,10 @@ class MessengerService : Service() {
                     Log.e(TAG, "session_init error: ${e.message}")
                     // Не смогли установить сессию — просим отправителя начать заново.
                     requestPrekeyBundle(from)
-                    sendWs(JSONObject().apply {
+                    sendAnonOrDirect(from, JSONObject().apply {
                         put("type", "session_reset")
                         put("to", from)
-                    }.toString())
+                    })
                 }
             }
 
@@ -1760,10 +1760,10 @@ class MessengerService : Service() {
                                 // Уведомляем отправителя сбросить сессию — иначе он будет
                                 // бесконечно слать сообщения старым ключом, и они будут дропаться.
                                 requestPrekeyBundle(from)
-                                sendWs(JSONObject().apply {
+                                sendAnonOrDirect(from, JSONObject().apply {
                                     put("type", "session_reset")
                                     put("to", from)
-                                }.toString())
+                                })
                             }
                             return
                         }
@@ -1781,10 +1781,10 @@ class MessengerService : Service() {
                     SessionKeyManager.deleteSession(from)
                     requestPrekeyBundle(from)
                     // Сигнализируем отправителю, что нужно сбросить сессию
-                    sendWs(JSONObject().apply {
+                    sendAnonOrDirect(from, JSONObject().apply {
                         put("type", "session_reset")
                         put("to", from)
-                    }.toString())
+                    })
                 }
             }
 
@@ -1848,7 +1848,7 @@ class MessengerService : Service() {
 
                     // Отправляем уведомление создателю что приняли приглашение
                     val inviteSignature = CryptoManager.sign("$groupId:$username")
-                    sendWs(JSONObject().apply {
+                    sendAnonOrDirect(from, JSONObject().apply {
                         put("type", "group_invite_accepted")
                         put("from", username)
                         put("to", from)
@@ -1856,7 +1856,7 @@ class MessengerService : Service() {
                         put("new_member", username)
                         put("new_member_name", UserStorage.getUsername(this@MessengerService))
                         put("signature", inviteSignature)
-                    }.toString())
+                    })
 
                     Log.d(TAG, "Приглашение в группу $groupName принято")
 
@@ -2595,7 +2595,7 @@ class MessengerService : Service() {
                 put("token", token)
                 put("payload", packet)
             }
-            sendWs(anonPacket.toString())
+            sendWs(addPadding(anonPacket).toString())
         } else {
             sendWs(packet.toString())
         }
@@ -2607,14 +2607,14 @@ class MessengerService : Service() {
                 val cachedKey = publicKeys[to] ?: return@launch
                 val encrypted = CryptoManager.encrypt(emoji, cachedKey)
                 val signature = CryptoManager.sign(encrypted)
-                sendWs(JSONObject().apply {
+                sendAnonOrDirect(to, JSONObject().apply {
                     put("type", "reaction")
                     put("from", username)
                     put("to", to)
                     put("message_id", messageId)
                     put("emoji", encrypted)
                     put("signature", signature)
-                }.toString())
+                })
             } catch (e: Exception) {
                 Log.e(TAG, "sendReaction error: ${e.message}")
             }
@@ -2628,14 +2628,14 @@ class MessengerService : Service() {
             try {
                 val encrypted = CryptoManager.encrypt(newText, cachedKey)
                 val signature = CryptoManager.sign(encrypted)
-                sendWs(JSONObject().apply {
+                sendAnonOrDirect(to, JSONObject().apply {
                     put("type", "edit")
                     put("from", username)
                     put("to", to)
                     put("id", messageId)
                     put("text", encrypted)
                     put("signature", signature)
-                }.toString())
+                })
             } catch (e: Exception) {
                 Log.e(TAG, "sendEdit error: ${e.message}")
             }
@@ -2651,12 +2651,12 @@ class MessengerService : Service() {
     fun sendDeleteMessage(to: String, messageId: String) {
         if (!isConnected) return
         scope.launch(Dispatchers.IO) {
-            sendWs(JSONObject().apply {
+            sendAnonOrDirect(to, JSONObject().apply {
                 put("type", "message_delete")
                 put("from", username)
                 put("to", to)
                 put("message_id", messageId)
-            }.toString())
+            })
         }
     }
 
@@ -2680,12 +2680,12 @@ class MessengerService : Service() {
     fun sendDisappearTimer(to: String, seconds: Long) {
         if (!isConnected) return
         scope.launch(Dispatchers.IO) {
-            sendWs(JSONObject().apply {
+            sendAnonOrDirect(to, JSONObject().apply {
                 put("type", "disappear_timer")
                 put("from", username)
                 put("to", to)
                 put("seconds", seconds)
-            }.toString())
+            })
         }
     }
 
@@ -2730,7 +2730,7 @@ class MessengerService : Service() {
                     batch.forEachIndexed { relIdx, chunk ->
                         val index = batchIdx * batchSize + relIdx
                         val signature = CryptoManager.signChunk(chunk, imageId, index)
-                        sendWs(addPadding(JSONObject().apply {
+                        sendAnonOrDirect(to, JSONObject().apply {
                             put("type", "image_chunk")
                             put("from", username)
                             put("to", to)
@@ -2740,7 +2740,7 @@ class MessengerService : Service() {
                             put("data", chunk)
                             put("signature", signature)
                             put("encrypted", true)
-                        }).toString())
+                        })
                     }
                     delay(30)
                 }
@@ -2805,7 +2805,7 @@ class MessengerService : Service() {
                     batch.forEachIndexed { relIdx, chunk ->
                         val index = batchIdx * batchSize + relIdx
                         val signature = CryptoManager.signChunk(chunk, fileId, index)
-                        sendWs(addPadding(JSONObject().apply {
+                        sendAnonOrDirect(to, JSONObject().apply {
                             put("type", "file_chunk")
                             put("from", username)
                             put("to", to)
@@ -2816,7 +2816,7 @@ class MessengerService : Service() {
                             put("data", chunk)
                             put("signature", signature)
                             put("encrypted", true)
-                        }).toString())
+                        })
                     }
                     delay(30)
                 }
@@ -2892,7 +2892,7 @@ class MessengerService : Service() {
                     batch.forEachIndexed { relIdx, chunk ->
                         val index = batchIdx * batchSize + relIdx
                         val signature = CryptoManager.signChunk(chunk, videoId, index)
-                        sendWs(JSONObject().apply {
+                        sendAnonOrDirect(to, JSONObject().apply {
                             put("type", "video_chunk")
                             put("from", username)
                             put("to", to)
@@ -2903,7 +2903,7 @@ class MessengerService : Service() {
                             put("signature", signature)
                             put("duration", duration)
                             put("encrypted", true)
-                        }.toString())
+                        })
                     }
                     delay(30) // небольшая пауза между пачками чтобы не перегружать сокет
                 }
@@ -3072,11 +3072,11 @@ class MessengerService : Service() {
         ChatStorage.addContact(this@MessengerService, from)
         // Notify sender that the message reached this device
         if (messageId != null) {
-            sendWs(JSONObject().apply {
+            sendAnonOrDirect(from, JSONObject().apply {
                 put("type", "delivered")
                 put("to",   from)
                 put("id",   messageId)
-            }.toString())
+            })
         }
         withContext(Dispatchers.Main) {
             val callback = onMessageReceived
@@ -3445,7 +3445,7 @@ class MessengerService : Service() {
                         val signature = CryptoManager.sign(encryptedGroupKey)
 
                         // Отправляем приглашение
-                        sendWs(JSONObject().apply {
+                        sendAnonOrDirect(memberId, JSONObject().apply {
                             put("type", "group_create")
                             put("from", username)
                             put("to", memberId)
@@ -3454,7 +3454,7 @@ class MessengerService : Service() {
                             put("group_avatar", groupAvatar)
                             put("encrypted_group_key", encryptedGroupKey)
                             put("signature", signature)
-                        }.toString())
+                        })
 
                         Log.d(TAG, "Приглашение в группу $groupName отправлено для $memberId")
                     } else {
@@ -3488,7 +3488,7 @@ class MessengerService : Service() {
 
                 // Отправляем сообщение всем участникам группы
                 members.filter { it != username }.forEach { memberId ->
-                    sendWs(addPadding(JSONObject().apply {
+                    sendAnonOrDirect(memberId, JSONObject().apply {
                         put("type", "group_message")
                         put("from", username)
                         put("to", memberId)
@@ -3497,7 +3497,7 @@ class MessengerService : Service() {
                         put("sender_name", senderName)
                         put("text", encryptedText)
                         put("signature", signature)
-                    }).toString())
+                    })
                 }
 
                 Log.d(TAG, "Групповое сообщение отправлено (группа: $groupId)")
@@ -3521,7 +3521,7 @@ class MessengerService : Service() {
             try {
                 val signature = CryptoManager.sign(emoji)
                 members.filter { it != username }.forEach { memberId ->
-                    sendWs(JSONObject().apply {
+                    sendAnonOrDirect(memberId, JSONObject().apply {
                         put("type", "group_reaction")
                         put("from", username)
                         put("to", memberId)
@@ -3529,7 +3529,7 @@ class MessengerService : Service() {
                         put("message_id", messageId)
                         put("emoji", emoji)
                         put("signature", signature)
-                    }.toString())
+                    })
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "sendGroupReaction error: ${e.message}")
@@ -3563,7 +3563,7 @@ class MessengerService : Service() {
                     val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, memberPublicKey)
                     val signature = CryptoManager.sign(encryptedGroupKey)
 
-                    sendWs(JSONObject().apply {
+                    sendAnonOrDirect(newMemberId, JSONObject().apply {
                         put("type", "group_create")
                         put("from", username)
                         put("to", newMemberId)
@@ -3572,7 +3572,7 @@ class MessengerService : Service() {
                         put("group_avatar", groupAvatar)
                         put("encrypted_group_key", encryptedGroupKey)
                         put("signature", signature)
-                    }.toString())
+                    })
 
                     Log.d(TAG, "Участник $newMemberId добавлен в группу $groupName")
                 }
@@ -3592,14 +3592,14 @@ class MessengerService : Service() {
             try {
                 val removeSignature = CryptoManager.sign("$groupId:$removedMemberId")
                 members.filter { it != username && it != removedMemberId }.forEach { memberId ->
-                    sendWs(JSONObject().apply {
+                    sendAnonOrDirect(memberId, JSONObject().apply {
                         put("type", "group_member_removed")
                         put("from", username)
                         put("to", memberId)
                         put("group_id", groupId)
                         put("removed_member", removedMemberId)
                         put("signature", removeSignature)
-                    }.toString())
+                    })
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "notifyMemberRemoved error: ${e.message}", e)
@@ -3629,14 +3629,14 @@ class MessengerService : Service() {
                         val encryptedNewKey = GroupManager.encryptGroupKeyForMember(newGroupKey, memberPublicKey)
                         val signature = CryptoManager.sign(encryptedNewKey)
 
-                        sendWs(JSONObject().apply {
+                        sendAnonOrDirect(memberId, JSONObject().apply {
                             put("type", "group_key_rotation")
                             put("from", username)
                             put("to", memberId)
                             put("group_id", groupId)
                             put("encrypted_new_key", encryptedNewKey)
                             put("signature", signature)
-                        }.toString())
+                        })
                     }
                 }
 
