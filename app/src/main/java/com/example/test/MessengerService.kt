@@ -2415,7 +2415,8 @@ class MessengerService : Service() {
         if (isConnected) {
             // Если у контакта есть mailboxTag (v3 инвайт) и нет ещё сессии — используем mailbox
             val mailboxTag = AnonTokenManager.getContactMailboxTag(this, to)
-            if (mailboxTag != null && !SessionKeyManager.hasSession(to)) {
+            val hasContactTokens = AnonTokenManager.getContactTokens(this, to).isNotEmpty()
+            if (mailboxTag != null && !hasContactTokens && !SessionKeyManager.hasSession(to)) {
                 val publicKey = publicKeys[to] ?: ChatStorage.getContactPublicKey(this, to)?.also { publicKeys[to] = it }
                 if (publicKey != null) {
                     val id = UUID.randomUUID().toString()
@@ -3030,6 +3031,8 @@ class MessengerService : Service() {
                 val arr = org.json.JSONArray(decryptedText.removePrefix("__beacon_tokens__:"))
                 val tokens = (0 until arr.length()).map { arr.getString(it) }
                 AnonTokenManager.addContactTokens(this@MessengerService, from, tokens)
+                // Токены получены — mailbox больше не нужен для этого контакта
+                AnonTokenManager.clearContactMailboxTag(this@MessengerService, from)
                 ChatStorage.addContact(this@MessengerService, from)
                 Log.d(TAG, "Получены анонимные токены от $from: ${tokens.size} шт.")
                 if (tokensSentThisSession.add(from)) {
