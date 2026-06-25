@@ -39,6 +39,7 @@ class CallService : Service() {
     }
 
     private var audioFocusRequest: AudioFocusRequest? = null
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
     private val notificationManager by lazy {
         getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     }
@@ -46,6 +47,11 @@ class CallService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        wakeLock = pm.newWakeLock(
+            android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
+            "beacon:call"
+        )
         // Слушаем завершение звонка
         CallManager.onCallEnded = { reason ->
             Log.d(TAG, "Call ended: $reason")
@@ -65,10 +71,12 @@ class CallService : Service() {
                 val peerName = intent.getStringExtra(EXTRA_PEER_NAME) ?: "Звонок"
                 val isVideo  = intent.getBooleanExtra(EXTRA_IS_VIDEO, false)
                 requestAudioFocus()
+                if (wakeLock?.isHeld == false) wakeLock?.acquire(2 * 60 * 60 * 1000L) // макс 2 часа
                 showActiveCallNotification(peerName, isVideo)
             }
             ACTION_END -> {
                 releaseAudioFocus()
+                if (wakeLock?.isHeld == true) wakeLock?.release()
                 stopSelf()
             }
         }
@@ -80,6 +88,7 @@ class CallService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         releaseAudioFocus()
+        if (wakeLock?.isHeld == true) wakeLock?.release()
         // ОС может убить сервис без ACTION_END (нехватка памяти, Force Stop и т.п.).
         // Если звонок ещё активен — завершаем его, чтобы собеседник получил call_end.
         // hangUp() idempotent: внутри AtomicBoolean-guard, двойной вызов безопасен.

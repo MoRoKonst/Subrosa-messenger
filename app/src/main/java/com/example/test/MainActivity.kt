@@ -358,7 +358,8 @@ class MainActivity : FragmentActivity() {
     private val screenLockReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(ctx: android.content.Context?, intent: android.content.Intent?) {
             if (intent?.action == android.content.Intent.ACTION_SCREEN_OFF) {
-                screenWasLocked = true
+                // Не блокируем приложение во время активного звонка
+                if (CallManager.callId.isEmpty()) screenWasLocked = true
             }
         }
     }
@@ -401,16 +402,19 @@ class MainActivity : FragmentActivity() {
         registerReceiver(emergencyReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
 
         if (UserStorage.isRegistered(this)) {
+            // Не блокируем приложение во время активного звонка
+            val callActive = CallManager.callId.isNotEmpty()
             // Блокировка по факту выключения экрана (независимо от таймаута)
-            if (screenWasLocked) {
+            if (screenWasLocked && !callActive) {
                 screenWasLocked = false
                 StorageKeyManager.lock()
                 isAppLocked.value = true
                 return
             }
+            screenWasLocked = false
             // Блокировка по таймауту (приложение было свёрнуто без выключения экрана)
             val timeoutSecs = UserStorage.getAutoLockTimeout(this)
-            if (timeoutSecs > 0) {
+            if (timeoutSecs > 0 && !callActive) {
                 val elapsed = (System.currentTimeMillis() - lastActiveTimeMs) / 1000
                 if (elapsed >= timeoutSecs) {
                     StorageKeyManager.lock()
