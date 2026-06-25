@@ -21,7 +21,6 @@ import androidx.compose.ui.unit.sp
 import com.bcon.messenger.ui.theme.LocalBeaconColors
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
-import java.security.MessageDigest
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,28 +34,13 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
         ChatStorage.getContactPublicKey(context, contactId) ?: "unknown"
     }
 
-    // SHA-256 от байт ключа — первые 16 байт в hex
+    // contactId — это уже SHA-256(pubkey) первые 8 байт в hex uppercase (16 символов)
     val fingerprintHex = remember {
-        try {
-            val keyBytes = android.util.Base64.decode(contactPublicKey, android.util.Base64.DEFAULT)
-            val hash = MessageDigest.getInstance("SHA-256").digest(keyBytes)
-            hash.take(16).joinToString(" ") { "%02x".format(it) }
-        } catch (e: Exception) {
-            val hash = MessageDigest.getInstance("SHA-256").digest(contactPublicKey.toByteArray())
-            hash.take(16).joinToString(" ") { "%02x".format(it) }
-        }
+        contactId.chunked(2).joinToString(" ").lowercase()
     }
 
-    // Emoji fingerprint — первые 5 байт маппируются на эмодзи
-    val fingerprintEmoji = remember {
-        try {
-            val keyBytes = android.util.Base64.decode(contactPublicKey, android.util.Base64.DEFAULT)
-            val hash = MessageDigest.getInstance("SHA-256").digest(keyBytes)
-            hash.take(5).joinToString("  ") { EMOJI_SET[it.toInt().and(0xFF) % EMOJI_SET.size] }
-        } catch (e: Exception) {
-            "🔑"
-        }
-    }
+    // Emoji fingerprint через ту же функцию что на ProfileScreen
+    val fingerprintEmoji = remember { fingerprintToEmoji(contactId) }
 
     val qrBitmap = remember { generateQRCode(fingerprintHex, 512) }
     var isVerified by remember { mutableStateOf(KeyHistoryManager.getHistory(context, contactId).lastOrNull()?.verified == true) }
