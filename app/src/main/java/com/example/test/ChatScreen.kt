@@ -121,11 +121,22 @@ data class Message(
     val isFailed: Boolean = false
 )
 
-fun bitmapToChunks(bitmap: Bitmap): List<String> {
+fun compressImageForSend(bitmap: Bitmap): ByteArray {
+    val maxDim = 2048
+    val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
+        val ratio = minOf(maxDim.toFloat() / bitmap.width, maxDim.toFloat() / bitmap.height)
+        Bitmap.createScaledBitmap(bitmap, (bitmap.width * ratio).toInt(), (bitmap.height * ratio).toInt(), true)
+    } else bitmap
     val stream = java.io.ByteArrayOutputStream()
-    bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
-    val bytes = stream.toByteArray()
-    val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.DEFAULT)
+    val format = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+        Bitmap.CompressFormat.WEBP_LOSSY else @Suppress("DEPRECATION") Bitmap.CompressFormat.WEBP
+    scaled.compress(format, 80, stream)
+    if (scaled !== bitmap) scaled.recycle()
+    return stream.toByteArray()
+}
+
+fun bitmapToChunks(bitmap: Bitmap): List<String> {
+    val base64 = android.util.Base64.encodeToString(compressImageForSend(bitmap), android.util.Base64.DEFAULT)
     return base64.chunked(50000)
 }
 
@@ -471,7 +482,7 @@ fun ChatScreen(
                         SoundManager.playMessageReceived()
                         val imageFile = File(context.filesDir, "image_$imageId.jpg.enc")
                         val stream = java.io.ByteArrayOutputStream()
-                        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+                        stream.write(compressImageForSend(bitmap))
                         SecureFileStorage.write(context, imageFile, stream.toByteArray())
                         messages.add(Message(id = imageId, text = s.chatAttachPhoto, isOwn = false, imageBitmap = bitmap))
                         ChatStorage.saveOrUpdateMessage(context, userId, recipient,
@@ -592,9 +603,7 @@ fun ChatScreen(
                 }
                 messengerService?.sendImage(recipient, chunks)
                 val imageFile = File(context.filesDir, "image_${UUID.randomUUID()}.jpg.enc")
-                val imgStream = java.io.ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 80, imgStream)
-                SecureFileStorage.write(context, imageFile, imgStream.toByteArray())
+                SecureFileStorage.write(context, imageFile, compressImageForSend(bitmap))
                 val msgId = UUID.randomUUID().toString()
                 messages.add(Message(id = msgId, text = s.chatAttachPhoto, isOwn = true, imageBitmap = bitmap))
                 ChatStorage.saveOrUpdateMessage(context, userId, recipient,
