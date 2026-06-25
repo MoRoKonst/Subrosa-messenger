@@ -649,7 +649,14 @@ class MessengerService : Service() {
         // ── Call signaling via intent ─────────────────────────────────────────
         intent?.getStringExtra("call_signal")?.let { signalJson ->
             if (isConnected) {
-                scope.launch(Dispatchers.IO) { sendWs(signalJson) }
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val obj = JSONObject(signalJson)
+                        val to = obj.optString("to")
+                        if (to.isNotBlank()) sendAnonOrDirect(to, obj)
+                        else sendWs(signalJson)
+                    } catch (_: Exception) { sendWs(signalJson) }
+                }
             }
             return START_STICKY
         }
