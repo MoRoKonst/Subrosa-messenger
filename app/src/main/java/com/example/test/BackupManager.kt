@@ -27,11 +27,25 @@ object BackupManager {
 
         val displayName = UserStorage.getUserDisplayName(context)
 
+        // EC keypair — приватный ключ выгружается как raw PKCS8 (без SMK-обёртки)
+        // Бэкап сам защищён AES-256-GCM + PBKDF2 300k, поэтому безопасно
+        val ecPrefs = EncryptedStorage.getEncryptedPrefs(context, "beacon_ec_keys_enc")
+        val privStored = ecPrefs.getString("ec_priv", null)
+        val pubB64     = ecPrefs.getString("ec_pub", null)
+
         val backup = JSONObject().apply {
-            put("version", 5) // версия 5 = + display_name
+            put("version", 6) // версия 6 = + EC keypair (сохраняет fingerprint/identity)
             put("timestamp", System.currentTimeMillis())
             put("username", username)
             put("display_name", displayName)
+
+            // EC keypair
+            if (privStored != null && pubB64 != null) {
+                val privRaw = StorageKeyManager.unwrapBytes(privStored)
+                put("ec_private_key", Base64.encodeToString(privRaw, Base64.NO_WRAP))
+                put("ec_public_key", pubB64)
+                privRaw.fill(0)
+            }
 
             // Серверы
             put("servers", JSONArray().apply {
@@ -151,6 +165,26 @@ object BackupManager {
                 if (savedDisplayName.isNotBlank()) {
                     UserStorage.saveUserDisplayName(context, savedDisplayName)
                 }
+            }
+
+            // EC keypair (версия 6+) — восстанавливает fingerprint/identity
+            if (version >= 6 && backup.has("ec_private_key") && backup.has("ec_public_key")) {
+                val privRaw = Base64.decode(backup.getString("ec_private_key"), Base64.NO_WRAP)
+                val pubB64  = backup.getString("ec_public_key")
+                val ecPrefs = EncryptedStorage.getEncryptedPrefs(context, "beacon_ec_keys_enc")
+                val privToStore = if (StorageKeyManager.isUnlocked)
+                    StorageKeyManager.wrapBytes(privRaw)
+                else
+                    Base64.encodeToString(privRaw, Base64.NO_WRAP)
+                ecPrefs.edit().putString("ec_priv", privToStore).putString("ec_pub", pubB64).commit()
+                privRaw.fill(0)
+                // Сразу обновляем userId чтобы не ждать перезапуска MessengerService
+                try {
+                    val pubBytes = Base64.decode(pubB64, Base64.NO_WRAP)
+                    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(pubBytes)
+                    val restoredUserId = digest.take(8).joinToString("") { "%02X".format(it) }
+                    UserStorage.setUserId(context, restoredUserId)
+                } catch (_: Exception) {}
             }
 
             // Серверы
