@@ -227,7 +227,7 @@ fun ProfileScreen(
             UserStorage.getInviteCode(context) ?: userId
         }
     }
-    val fingerprint      = remember { extractFingerprint(inviteCode) }
+    val fingerprint      = remember { userId.takeIf { it.isNotBlank() } }
     val emojiFingerprint = remember { fingerprint?.let { fingerprintToEmoji(it) } }
     val qrBitmap         = remember { generateQRCode(inviteCode, 512) }
 
