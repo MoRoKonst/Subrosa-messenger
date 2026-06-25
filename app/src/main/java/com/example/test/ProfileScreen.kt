@@ -165,6 +165,7 @@ fun ProfileScreen(
     onOpenWipeSettings: () -> Unit = {},
     onOpenSupport: () -> Unit = {}
 ) {
+    androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
     val c = LocalBeaconColors.current

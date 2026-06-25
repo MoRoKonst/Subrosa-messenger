@@ -29,6 +29,7 @@ import com.bcon.messenger.ui.theme.LocalBeaconColors
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
+    androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
     val c = LocalBeaconColors.current

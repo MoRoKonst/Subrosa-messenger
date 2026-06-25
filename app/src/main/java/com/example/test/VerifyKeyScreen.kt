@@ -25,6 +25,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
+    androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val c = LocalBeaconColors.current
     val s = LocalStrings.current

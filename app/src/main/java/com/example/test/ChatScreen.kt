@@ -154,6 +154,7 @@ fun ChatScreen(
     onStartCall: ((isVideo: Boolean) -> Unit)? = null,
     onVerifyKey: () -> Unit = {}
 ) {
+    androidx.activity.compose.BackHandler { onBack() }
     var isRecording by remember { mutableStateOf(false) }
     var recordingFile by remember { mutableStateOf<File?>(null) }
     var isVideoMode by remember { mutableStateOf(false) }

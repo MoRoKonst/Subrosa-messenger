@@ -29,6 +29,7 @@ import kotlin.math.absoluteValue
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
+    androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
     val userId = UserStorage.getUserId(context)

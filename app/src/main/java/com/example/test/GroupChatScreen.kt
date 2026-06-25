@@ -93,6 +93,7 @@ fun GroupChatScreen(
     onOpenInfo: () -> Unit,
     onStartGroupCall: ((isVideo: Boolean) -> Unit)? = null
 ) {
+    androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
     val userId = UserStorage.getUserId(context)

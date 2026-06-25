@@ -51,6 +51,7 @@ fun ChannelFeedScreen(
     channelId: String,
     onBack: () -> Unit
 ) {
+    androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
     val c = LocalBeaconColors.current
