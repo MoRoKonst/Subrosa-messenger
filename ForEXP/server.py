@@ -795,7 +795,7 @@ async def handle_client(websocket):
                 "register", "register_bundle", "request_prekey", "get_key", "ping", "pong",
                 "message", "session_init",
                 "reaction", "voice", "typing", "edit",
-                "image_chunk", "file_chunk", "video_chunk",
+                "image_chunk", "file_chunk", "video_chunk", "chunk_ack",
                 "challenge_response", "read",
                 "publish_prekey_bundle",
                 "get_prekey_bundle", "group_reaction",
