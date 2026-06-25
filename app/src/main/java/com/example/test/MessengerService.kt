@@ -811,9 +811,8 @@ class MessengerService : Service() {
     // ─── WebSocket отправка ───────────────────────────────────────────────────
 
     // ─── Constant-rate cover traffic ─────────────────────────────────────────
-    // В режиме MODERATE/AGGRESSIVE реальные сообщения ставятся в очередь и
-    // отправляются по таймеру вместо очередного шумового пакета.
-    // Наблюдатель видит равномерный поток — невозможно выделить реальные сообщения по времени.
+    // AGGRESSIVE: реальные сообщения в очередь, отправляются по таймеру — наблюдатель видит равномерный поток.
+    // MODERATE: реальные сообщения немедленно, шум заполняет паузы — без задержки, но паттерн виден.
 
     private val outboundQueue = java.util.concurrent.LinkedBlockingQueue<String>()
     private var coverTrafficJob: kotlinx.coroutines.Job? = null
@@ -858,7 +857,7 @@ class MessengerService : Service() {
 
     private fun sendWs(json: String) {
         val mode = UserStorage.getCoverTrafficMode(this)
-        if (mode != UserStorage.CoverTrafficMode.OFF && isConnected) {
+        if (mode == UserStorage.CoverTrafficMode.AGGRESSIVE && isConnected) {
             outboundQueue.offer(json)
         } else {
             webSocket?.send(json)
