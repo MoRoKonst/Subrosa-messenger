@@ -967,6 +967,10 @@ object CallManager {
 
     private fun sendSignal(data: JSONObject) {
         val ctx = appContext ?: return
+        if (!data.has("from")) {
+            val myId = UserStorage.getUserId(ctx)
+            if (myId.isNotBlank()) data.put("from", myId)
+        }
         ctx.startService(Intent(ctx, MessengerService::class.java).apply {
             putExtra("call_signal", data.toString())
         })
