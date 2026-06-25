@@ -592,11 +592,13 @@ fun ChatScreen(
             }
             try {
                 val bitmap = android.provider.MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
-                val chunks = bitmapToChunks(bitmap)
-                if (chunks.sumOf { it.length } > 20 * 1024 * 1024) {
+                // Проверяем оригинал до сжатия: 4 байта на пиксель (ARGB_8888)
+                if (bitmap.byteCount > 100 * 1024 * 1024) {
                     android.widget.Toast.makeText(context, s.chatPhotoTooBig, android.widget.Toast.LENGTH_SHORT).show()
+                    bitmap.recycle()
                     return@collect
                 }
+                val chunks = bitmapToChunks(bitmap)
                 if (!isOnline) {
                     android.widget.Toast.makeText(context, s.chatMediaOffline, android.widget.Toast.LENGTH_SHORT).show()
                     return@collect
