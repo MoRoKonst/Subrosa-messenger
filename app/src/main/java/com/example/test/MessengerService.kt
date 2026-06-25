@@ -565,6 +565,13 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
+        if (intent?.getBooleanExtra("reload_cover_traffic", false) == true) {
+            stopCoverTraffic()
+            outboundQueue.clear()
+            if (isConnected) startCoverTraffic()
+            return START_STICKY
+        }
+
         intent?.getStringExtra("send_session_reset_to")?.let { contactId ->
             if (isConnected) {
                 scope.launch(Dispatchers.IO) {

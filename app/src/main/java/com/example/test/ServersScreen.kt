@@ -155,8 +155,8 @@ fun ServersScreen(onBack: () -> Unit) {
                         } else {
                             coverMode = next
                             UserStorage.setCoverTrafficMode(context, next)
-                            context.stopService(android.content.Intent(context, MessengerService::class.java))
-                            context.startForegroundService(android.content.Intent(context, MessengerService::class.java))
+                            context.startService(android.content.Intent(context, MessengerService::class.java)
+                                .putExtra("reload_cover_traffic", true))
                         }
                     }) {
                         Text(
@@ -305,8 +305,8 @@ fun ServersScreen(onBack: () -> Unit) {
                     val next = pendingCoverMode ?: return@TextButton
                     coverMode = next
                     UserStorage.setCoverTrafficMode(context, next)
-                    context.stopService(android.content.Intent(context, MessengerService::class.java))
-                    context.startForegroundService(android.content.Intent(context, MessengerService::class.java))
+                    context.startService(android.content.Intent(context, MessengerService::class.java)
+                        .putExtra("reload_cover_traffic", true))
                     showCoverWarning = false
                 }) { Text("Включить", color = c.accent, fontFamily = AppFont, fontWeight = FontWeight.Bold) }
             },
