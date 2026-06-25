@@ -25,10 +25,13 @@ object BackupManager {
     fun exportBackup(context: Context, password: String): String {
         val username = UserStorage.getUserId(context)
 
+        val displayName = UserStorage.getUserDisplayName(context)
+
         val backup = JSONObject().apply {
-            put("version", 4) // версия 4 = GZIP + AES-GCM + ГРУППЫ
+            put("version", 5) // версия 5 = + display_name
             put("timestamp", System.currentTimeMillis())
             put("username", username)
+            put("display_name", displayName)
 
             // Серверы
             put("servers", JSONArray().apply {
@@ -141,6 +144,14 @@ object BackupManager {
 
             val username = UserStorage.getUserId(context)
             val version = backup.optInt("version", 1)
+
+            // Имя профиля (версия 5+)
+            if (version >= 5) {
+                val savedDisplayName = backup.optString("display_name", "")
+                if (savedDisplayName.isNotBlank()) {
+                    UserStorage.saveUserDisplayName(context, savedDisplayName)
+                }
+            }
 
             // Серверы
             if (backup.has("servers")) {

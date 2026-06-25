@@ -400,7 +400,7 @@ fun ProfileScreen(
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Text(
-                                            text = displayName.first().uppercaseChar().toString(),
+                                            text = displayName.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
                                             fontSize = 40.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color.White,

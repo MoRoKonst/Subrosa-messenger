@@ -38,6 +38,26 @@ fun BackupScreen(onBack: () -> Unit) {
     var confirmPassword by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
+    var pendingBackupContent by remember { mutableStateOf<String?>(null) }
+
+    val saveFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        val content = pendingBackupContent ?: return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
+            message = s.backupCreated
+            isError = false
+            pendingBackupContent = null
+            password = ""
+            confirmPassword = ""
+        } catch (e: Exception) {
+            message = s.error(e.message ?: "")
+            isError = true
+        }
+    }
+
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -161,39 +181,53 @@ fun BackupScreen(onBack: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                Button(
-                    onClick = {
-                        when {
-                            password.isEmpty() -> { message = s.backupErrEnterPassword; isError = true }
-                            password != confirmPassword -> { message = s.backupErrPasswordMatch; isError = true }
-                            password.length < 8 -> { message = s.backupErrPasswordLength; isError = true }
-                            else -> {
-                                try {
-                                    val backup = BackupManager.exportBackup(context, password)
-                                    val file = File(context.cacheDir, "messenger_backup_${System.currentTimeMillis()}.backup")
-                                    file.writeText(backup)
-                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "application/octet-stream"
-                                        putExtra(Intent.EXTRA_STREAM, uri)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(Intent.createChooser(shareIntent, s.backupSaveChooser))
-                                    message = s.backupCreated
-                                    isError = false
-                                    password = ""
-                                    confirmPassword = ""
-                                } catch (e: Exception) {
-                                    message = s.error(e.message ?: "")
-                                    isError = true
-                                }
-                            }
+                fun validateAndExport(onSuccess: (String) -> Unit) {
+                    when {
+                        password.isEmpty() -> { message = s.backupErrEnterPassword; isError = true }
+                        password != confirmPassword -> { message = s.backupErrPasswordMatch; isError = true }
+                        password.length < 8 -> { message = s.backupErrPasswordLength; isError = true }
+                        else -> try {
+                            onSuccess(BackupManager.exportBackup(context, password))
+                        } catch (e: Exception) {
+                            message = s.error(e.message ?: ""); isError = true
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = c.topBar)
-                ) {
-                    Text(s.backupExport, fontFamily = AppFont, color = Color.White)
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            validateAndExport { backup ->
+                                val file = File(context.cacheDir, "messenger_backup_${System.currentTimeMillis()}.backup")
+                                file.writeText(backup)
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "application/octet-stream"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, s.backupSaveChooser))
+                                message = s.backupCreated; isError = false
+                                password = ""; confirmPassword = ""
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = c.topBar)
+                    ) {
+                        Text(s.backupExport, fontFamily = AppFont, color = Color.White, fontSize = 13.sp)
+                    }
+                    Button(
+                        onClick = {
+                            validateAndExport { backup ->
+                                pendingBackupContent = backup
+                                saveFileLauncher.launch(BackupManager.getBackupFileName())
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = c.topBar)
+                    ) {
+                        Text("В файлы", fontFamily = AppFont, color = Color.White, fontSize = 13.sp)
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
