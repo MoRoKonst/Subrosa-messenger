@@ -289,7 +289,7 @@ object CryptoManager {
 
     private fun deriveAesKey(sharedSecret: ByteArray, info: String): ByteArray {
         val mac = javax.crypto.Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(ByteArray(32), "HmacSHA256"))
+        mac.init(SecretKeySpec("BeaconHKDF".toByteArray(Charsets.UTF_8), "HmacSHA256"))
         val prk = mac.doFinal(sharedSecret)
         mac.init(SecretKeySpec(prk, "HmacSHA256"))
         mac.update(info.toByteArray())

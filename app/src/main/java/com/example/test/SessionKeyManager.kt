@@ -560,7 +560,7 @@ object SessionKeyManager {
 
     // ─── Symmetric Ratchet ───────────────────────────────────────────────────
 
-    fun nextSendKey(contactId: String): SendKeyResult {
+    fun nextSendKey(contactId: String): SendKeyResult = synchronized(this) {
         val state = sessions[contactId]
             ?: throw IllegalStateException("Нет сессии с $contactId. Нужен X3DH.")
 
@@ -599,7 +599,7 @@ object SessionKeyManager {
      * 4. counter > recvCounter → gap, вычисляем пропущенные ключи
      * 5. counter == recvCounter → нормальный порядок
      */
-    fun nextRecvKey(contactId: String, expectedCounter: Int, dhKeyB64: String? = null): ByteArray {
+    fun nextRecvKey(contactId: String, expectedCounter: Int, dhKeyB64: String? = null): ByteArray = synchronized(this) {
         var state = sessions[contactId]
             ?: throw IllegalStateException("Нет сессии с $contactId")
 
@@ -646,7 +646,9 @@ object SessionKeyManager {
         // ── Случай 2: gap — counter > recvCounter ────────────────────────────
         if (expectedCounter > state.recvCounter) {
             val gap = expectedCounter - state.recvCounter
-            if (gap > MAX_SKIPPED_KEYS) {
+            // Проверяем суммарный размер ДО заполнения, чтобы атакующий не мог
+            // раздуть буфер накопленными старыми ключами + большим gap.
+            if (gap > MAX_SKIPPED_KEYS || state.skippedKeys.size + gap > MAX_SKIPPED_KEYS) {
                 throw SecurityException("Слишком большой разрыв счётчика: gap=$gap, лимит=$MAX_SKIPPED_KEYS")
             }
 
@@ -664,9 +666,11 @@ object SessionKeyManager {
                 chainKey = next
             }
 
-            // Вытесняем самые старые если буфер переполнен
+            // Вытесняем по времени добавления (LRU) — не по строковому ключу
             if (newSkipped.size > MAX_SKIPPED_KEYS) {
-                val toEvict = newSkipped.keys.sortedBy { it }.take(newSkipped.size - MAX_SKIPPED_KEYS)
+                val toEvict = newSkipped.keys
+                    .sortedBy { k -> newTs[k] ?: 0L }
+                    .take(newSkipped.size - MAX_SKIPPED_KEYS)
                 toEvict.forEach { k ->
                     newSkipped[k]?.let { SecureMemory.wipe(it) }
                     newSkipped.remove(k); newTs.remove(k)

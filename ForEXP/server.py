@@ -757,6 +757,68 @@ async def handle_client(websocket):
         challenge_b64 = base64.b64encode(challenge).decode()
         await websocket.send(json.dumps({"type": "challenge", "data": challenge_b64}))
 
+        # Ждём ответ на challenge с таймаутом — не даём полуоткрытым соединениям висеть
+        try:
+            raw_handshake = await asyncio.wait_for(websocket.recv(), timeout=HANDSHAKE_TIMEOUT_SEC)
+        except asyncio.TimeoutError:
+            print(f"[SECURITY] Handshake timeout от {ip}")
+            return
+
+        if len(raw_handshake) > MAX_PACKET_SIZE_BYTES:
+            ban_ip(ip)
+            return
+        try:
+            hs_msg = json.loads(raw_handshake)
+        except Exception:
+            print(f"[SECURITY] Невалидный JSON в handshake от {ip}")
+            return
+        strip_padding(hs_msg)
+        hs_type = hs_msg.get("type")
+
+        if hs_type == "federation_auth" and FEDERATION_SECRET:
+            provided = base64.b64decode(hs_msg.get("mac", ""))
+            expected = hmac.new(FEDERATION_SECRET.encode(), challenge, hashlib.sha256).digest()
+            if not hmac.compare_digest(provided, expected):
+                print(f"[FEDERATION] Неверный MAC от {ip}")
+                return
+            is_fed = True
+            await websocket.send(json.dumps({"type": "federation_auth_ok"}))
+            print(f"[FEDERATION] Входящий пир аутентифицирован: {ip}")
+            # Передаём управление федерационному обработчику ниже
+        elif hs_type == "challenge_response":
+            try:
+                from cryptography.hazmat.primitives import serialization, hashes
+                from cryptography.hazmat.primitives.asymmetric import ec
+                from cryptography.hazmat.backends import default_backend
+                from cryptography.exceptions import InvalidSignature
+
+                public_key_b64 = hs_msg.get("public_key")
+                signature_b64  = hs_msg.get("signature")
+                if not public_key_b64 or not signature_b64:
+                    return
+
+                key_bytes  = base64.b64decode(public_key_b64)
+                public_key = serialization.load_der_public_key(key_bytes, backend=default_backend())
+                sig_bytes  = base64.b64decode(signature_b64)
+                public_key.verify(sig_bytes, challenge, ec.ECDSA(hashes.SHA256()))
+
+                authenticated = True
+                print(f"[HANDSHAKE] Успешно: {ip}")
+                await websocket.send(json.dumps({"type": "handshake_ok"}))
+
+            except InvalidSignature:
+                print(f"[HANDSHAKE] Неверная подпись от {ip}")
+                return
+            except Exception as e:
+                print(f"[HANDSHAKE] Ошибка: {e}")
+                return
+        else:
+            print(f"[SECURITY] Ожидался challenge_response, получен {hs_type} от {ip}")
+            return
+
+        if not authenticated and not is_fed:
+            return
+
         async for raw_message in websocket:
 
             # Лимит размера пакета
@@ -774,29 +836,12 @@ async def handle_client(websocket):
             strip_padding(message)
             msg_type = message.get("type")
 
-            if not authenticated:
-                if msg_type == "federation_auth" and FEDERATION_SECRET:
-                    provided = base64.b64decode(message.get("mac", ""))
-                    expected = hmac.new(
-                        FEDERATION_SECRET.encode(), challenge, hashlib.sha256
-                    ).digest()
-                    if not hmac.compare_digest(provided, expected):
-                        print(f"[FEDERATION] Неверный MAC от {ip}")
-                        return
-                    is_fed = True
-                    await websocket.send(json.dumps({"type": "federation_auth_ok"}))
-                    print(f"[FEDERATION] Входящий пир аутентифицирован: {ip}")
-                    break  # exit the message loop → handle_federation_peer_incoming below
-                elif msg_type != "challenge_response":
-                    print(f"[SECURITY] Попытка {msg_type} до handshake от {ip}")
-                    continue
-
             ALLOWED_TYPES = [
                 "register", "register_bundle", "request_prekey", "get_key", "ping", "pong",
                 "message", "session_init",
                 "reaction", "voice", "typing", "edit",
                 "image_chunk", "file_chunk", "video_chunk", "chunk_ack",
-                "challenge_response", "read",
+                "read",
                 "publish_prekey_bundle",
                 "get_prekey_bundle", "group_reaction",
                 "group_create",
@@ -835,39 +880,9 @@ async def handle_client(websocket):
                 print(f"[SECURITY] Неизвестный тип '{msg_type}' от {ip}")
                 continue
 
-            # ─── Challenge-Response ───────────────────────────────────────────
-            if msg_type == "challenge_response":
-                try:
-                    from cryptography.hazmat.primitives import serialization, hashes
-                    from cryptography.hazmat.primitives.asymmetric import ec
-                    from cryptography.hazmat.backends import default_backend
-                    from cryptography.exceptions import InvalidSignature
-
-                    public_key_b64 = message.get("public_key")
-                    signature_b64  = message.get("signature")
-                    if not public_key_b64 or not signature_b64:
-                        return
-
-                    key_bytes  = base64.b64decode(public_key_b64)
-                    public_key = serialization.load_der_public_key(key_bytes, backend=default_backend())
-                    sig_bytes  = base64.b64decode(signature_b64)
-                    public_key.verify(sig_bytes, challenge, ec.ECDSA(hashes.SHA256()))
-
-                    authenticated = True
-                    print(f"[HANDSHAKE] Успешно: {ip}")
-                    await websocket.send(json.dumps({"type": "handshake_ok"}))
-
-                except InvalidSignature:
-                    print(f"[HANDSHAKE] Неверная подпись от {ip}")
-                    return
-                except Exception as e:
-                    print(f"[HANDSHAKE] Ошибка: {e}")
-                    return
-                continue
-
             # ─── Register ────────────────────────────────────────────────────
             if msg_type == "register":
-                name       = message.get("name", "")
+                name       = message.get("name", "")[:64]  # max 64 chars
                 public_key = message.get("public_key")
                 device_id  = message.get("device_id")
 
@@ -1493,7 +1508,7 @@ async def handle_client(websocket):
             # ─── Generate Channel Invite Code (admin only) ────────────────────
             if msg_type == "generate_channel_code":
                 admin_secret = message.get("admin_secret", "")
-                if not CHANNEL_ADMIN_SECRET or admin_secret != CHANNEL_ADMIN_SECRET:
+                if not CHANNEL_ADMIN_SECRET or not hmac.compare_digest(admin_secret, CHANNEL_ADMIN_SECRET):
                     await websocket.send(json.dumps({"type": "error", "reason": "Unauthorized"}))
                     continue
                 # Generate a unique one-time code
@@ -1607,7 +1622,7 @@ async def handle_client(websocket):
                 text       = message.get("text", "").strip()
                 image_data = message.get("image_data", "")
                 post_id    = message.get("id", secrets.token_urlsafe(16))
-                timestamp  = message.get("timestamp", int(time.time() * 1000))
+                timestamp  = int(time.time() * 1000)  # всегда серверное время
 
                 # Validate image size (max 5MB base64)
                 if len(image_data) > 5 * 1024 * 1024:
@@ -1794,6 +1809,9 @@ async def handle_client(websocket):
                 continue
 
             if msg_type == "anon_message":
+                if not rate_limit_check(username, "anon_message"):
+                    await send_safe(websocket, json.dumps({"type": "error", "reason": "Rate limit exceeded"}))
+                    continue
                 token   = message.get("token", "")
                 payload = message.get("payload", {})
                 msg_id  = payload.get("id", "") if isinstance(payload, dict) else ""
@@ -1820,7 +1838,9 @@ async def handle_client(websocket):
                     else:
                         # Получатель закрыл сокет между проверкой и отправкой — ставим в очередь
                         async with lock:
-                            token_pending.setdefault(token, []).append({"type": "anon_delivery", "payload": payload})
+                            q = token_pending.setdefault(token, [])
+                            if len(q) < 10:
+                                q.append({"type": "anon_delivery", "payload": payload})
                 else:
                     # Токен не зарегистрирован локально — пробуем федерацию по fingerprint из payload
                     fed_to = payload.get("to") if isinstance(payload, dict) else None
@@ -1831,11 +1851,15 @@ async def handle_client(websocket):
                         else:
                             # Ни локально ни по федерации — ставим в очередь по токену
                             async with lock:
-                                token_pending.setdefault(token, []).append({"type": "anon_delivery", "payload": payload})
+                                q = token_pending.setdefault(token, [])
+                                if len(q) < 10:
+                                    q.append({"type": "anon_delivery", "payload": payload})
                             print(f"[ANON] Токен …{token[-6:]} офлайн, сообщение в очереди")
                     else:
                         async with lock:
-                            token_pending.setdefault(token, []).append({"type": "anon_delivery", "payload": payload})
+                            q = token_pending.setdefault(token, [])
+                            if len(q) < 10:
+                                q.append({"type": "anon_delivery", "payload": payload})
                         print(f"[ANON] Токен …{token[-6:]} офлайн, сообщение в очереди")
                 if msg_id:
                     await send_safe(websocket, json.dumps({"type": "ack", "id": msg_id}))
@@ -1843,6 +1867,9 @@ async def handle_client(websocket):
 
             # ─── Anonymous Mailbox ────────────────────────────────────────────
             if msg_type == "mailbox_put":
+                if not rate_limit_check(username, "mailbox_put"):
+                    await send_safe(websocket, json.dumps({"type": "error", "reason": "Rate limit exceeded"}))
+                    continue
                 tag  = message.get("tag", "")
                 blob = message.get("blob", "")
                 if (not tag or not blob
@@ -1855,6 +1882,8 @@ async def handle_client(websocket):
                 async with lock:
                     # Чистим устаревшие блобы в этом слоте
                     existing = [e for e in mailbox.get(tag, []) if now - e["ts"] < MAILBOX_TTL]
+                    if len(existing) >= 5:  # max 5 блобов на тег — защита от DoS
+                        continue
                     existing.append({"blob": blob, "ts": now})
                     mailbox[tag] = existing
                 continue
@@ -1931,6 +1960,12 @@ async def handle_client(websocket):
                 if clients.get(username, {}).get("ws") == websocket:
                     clients.pop(username, None)
                 authenticated_users.pop(websocket, None)
+                # Чистим токены этого клиента из known_tokens чтобы очередь не росла вечно
+                owned_tokens = ws_to_tokens.pop(websocket, set())
+                for t in owned_tokens:
+                    token_to_ws.pop(t, None)
+                    known_tokens.discard(t)
+                    token_pending.pop(t, None)
             if username in rate_limits:
                 rate_limits[username]["disconnected_at"] = time.time()
             suspicious_activity.pop(username, None)
@@ -1961,7 +1996,7 @@ async def handle_admin_http(reader, writer):
             if not CHANNEL_ADMIN_SECRET:
                 body = '{"error": "CHANNEL_ADMIN_SECRET not set"}'
                 status = "503 Service Unavailable"
-            elif provided_secret != CHANNEL_ADMIN_SECRET:
+            elif not hmac.compare_digest(provided_secret, CHANNEL_ADMIN_SECRET):
                 body = '{"error": "Invalid secret"}'
                 status = "403 Forbidden"
             else:

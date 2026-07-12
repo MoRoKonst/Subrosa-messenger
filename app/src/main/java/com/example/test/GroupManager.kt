@@ -47,6 +47,7 @@ object GroupManager {
 
     private const val PREFS_NAME = "groups"
     private const val KEY_GROUPS = "my_groups"
+    private val lock = Any()
 
     // ─── Генерация группового ключа ──────────────────────────────────────────
 
@@ -120,11 +121,22 @@ object GroupManager {
     /**
      * Сохранить группу локально
      */
-    fun saveGroup(context: Context, group: Group) {
+    fun saveGroup(context: Context, group: Group) = synchronized(lock) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
-        val groups = loadGroups(context).toMutableList()
 
-        // Удаляем старую версию если есть
+        // Считываем raw-строки существующих ключей — нужны если SMK залочен
+        val existingRawKeys = mutableMapOf<String, String>()
+        try {
+            val existing = JSONArray(prefs.getString(KEY_GROUPS, "[]") ?: "[]")
+            for (i in 0 until existing.length()) {
+                val obj = existing.getJSONObject(i)
+                val id = obj.optString("id")
+                val rawKey = obj.optString("groupKey", null)
+                if (id.isNotEmpty() && rawKey != null) existingRawKeys[id] = rawKey
+            }
+        } catch (_: Exception) {}
+
+        val groups = loadGroups(context).toMutableList()
         groups.removeIf { it.id == group.id }
         groups.add(group)
 
@@ -140,10 +152,15 @@ object GroupManager {
                 put("createdAt", g.createdAt)
                 put("description", g.description)
                 if (g.groupKey != null) {
-                    val groupKeyStored = if (StorageKeyManager.isUnlocked)
+                    val groupKeyStored = if (StorageKeyManager.isUnlocked) {
                         StorageKeyManager.wrapBytes(g.groupKey)
-                    else
-                        Base64.encodeToString(g.groupKey, Base64.NO_WRAP)
+                    } else {
+                        // SMK залочен — сохраняем уже существующий raw ключ чтобы
+                        // не понижать защиту до plain Base64. Новый ключ (ротация)
+                        // будет re-wrap при следующей загрузке когда SMK разблокируется.
+                        existingRawKeys[g.id]
+                            ?: Base64.encodeToString(g.groupKey, Base64.NO_WRAP)
+                    }
                     put("groupKey", groupKeyStored)
                 }
             })
@@ -155,14 +172,29 @@ object GroupManager {
     /**
      * Загрузить все группы
      */
-    fun loadGroups(context: Context): List<Group> {
+    fun loadGroups(context: Context): List<Group> = synchronized(lock) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val jsonStr = prefs.getString(KEY_GROUPS, "[]") ?: "[]"
 
         return try {
             val json = JSONArray(jsonStr)
-            (0 until json.length()).map { i ->
+            var migrated = false
+
+            val groups = (0 until json.length()).map { i ->
                 val obj = json.getJSONObject(i)
+                val storedKey = if (obj.has("groupKey")) obj.getString("groupKey") else null
+                val groupKey = if (storedKey != null) StorageKeyManager.unwrapBytes(storedKey) else null
+
+                // Eager re-wrap: если ключ хранился как plain Base64 и SMK теперь доступен
+                if (storedKey != null
+                    && !storedKey.startsWith(StorageKeyManager.SMK_PREFIX)
+                    && StorageKeyManager.isUnlocked
+                    && groupKey != null
+                ) {
+                    obj.put("groupKey", StorageKeyManager.wrapBytes(groupKey))
+                    migrated = true
+                }
+
                 Group(
                     id = obj.getString("id"),
                     name = obj.getString("name"),
@@ -175,12 +207,16 @@ object GroupManager {
                     },
                     createdBy = obj.getString("createdBy"),
                     createdAt = obj.getLong("createdAt"),
-                    groupKey = if (obj.has("groupKey"))
-                        StorageKeyManager.unwrapBytes(obj.getString("groupKey"))
-                    else null,
+                    groupKey = groupKey,
                     description = obj.optString("description", "")
                 )
             }
+
+            if (migrated) {
+                prefs.edit().putString(KEY_GROUPS, json.toString()).apply()
+            }
+
+            groups
         } catch (e: Exception) {
             emptyList()
         }
@@ -196,8 +232,20 @@ object GroupManager {
     /**
      * Удалить группу
      */
-    fun deleteGroup(context: Context, groupId: String) {
+    fun deleteGroup(context: Context, groupId: String) = synchronized(lock) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+
+        val existingRawKeys = mutableMapOf<String, String>()
+        try {
+            val existing = JSONArray(prefs.getString(KEY_GROUPS, "[]") ?: "[]")
+            for (i in 0 until existing.length()) {
+                val obj = existing.getJSONObject(i)
+                val id = obj.optString("id")
+                val rawKey = obj.optString("groupKey", null)
+                if (id.isNotEmpty() && rawKey != null) existingRawKeys[id] = rawKey
+            }
+        } catch (_: Exception) {}
+
         val groups = loadGroups(context).filter { it.id != groupId }
 
         val json = JSONArray()
@@ -212,10 +260,12 @@ object GroupManager {
                 put("createdAt", g.createdAt)
                 put("description", g.description)
                 if (g.groupKey != null) {
-                    val groupKeyStored = if (StorageKeyManager.isUnlocked)
+                    val groupKeyStored = if (StorageKeyManager.isUnlocked) {
                         StorageKeyManager.wrapBytes(g.groupKey)
-                    else
-                        Base64.encodeToString(g.groupKey, Base64.NO_WRAP)
+                    } else {
+                        existingRawKeys[g.id]
+                            ?: Base64.encodeToString(g.groupKey, Base64.NO_WRAP)
+                    }
                     put("groupKey", groupKeyStored)
                 }
             })

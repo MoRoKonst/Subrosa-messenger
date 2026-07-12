@@ -8,6 +8,8 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
+import org.bouncycastle.crypto.generators.Argon2BytesGenerator
+import org.bouncycastle.crypto.params.Argon2Parameters
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -28,7 +30,7 @@ object BackupManager {
         val displayName = UserStorage.getUserDisplayName(context)
 
         // EC keypair — приватный ключ выгружается как raw PKCS8 (без SMK-обёртки)
-        // Бэкап сам защищён AES-256-GCM + PBKDF2 300k, поэтому безопасно
+        // Бэкап защищён AES-256-GCM + Argon2id (m=64MB, t=3), поэтому безопасно
         val ecPrefs = EncryptedStorage.getEncryptedPrefs(context, "beacon_ec_keys_enc")
         val privStored = ecPrefs.getString("ec_priv", null)
         val pubB64     = ecPrefs.getString("ec_pub", null)
@@ -353,13 +355,22 @@ object BackupManager {
         return cipher.doFinal(encrypted)
     }
 
-    // ─── PBKDF2 деривация ключа ───────────────────────────────────────────────
+    // ─── Argon2id деривация ключа ────────────────────────────────────────────
+    // Параметры: m=65536 (64 МБ), t=3, p=1
+    // GPU-атака при 64 МБ/попытку: RTX 4090 ~300 параллельных потоков вместо миллионов
+    // → эффективная скорость ~30 паролей/сек против 10 000/сек у PBKDF2
 
     private fun deriveKey(password: String, salt: ByteArray): ByteArray {
-        val factory = javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        val spec    = javax.crypto.spec.PBEKeySpec(password.toCharArray(), salt, 300_000, 256)
-        val key     = factory.generateSecret(spec).encoded
-        spec.clearPassword()
+        val params = Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
+            .withSalt(salt)
+            .withParallelism(1)
+            .withMemoryAsKB(65_536)
+            .withIterations(3)
+            .build()
+        val gen = Argon2BytesGenerator()
+        gen.init(params)
+        val key = ByteArray(32)
+        gen.generateBytes(password.toCharArray(), key)
         return key
     }
 }

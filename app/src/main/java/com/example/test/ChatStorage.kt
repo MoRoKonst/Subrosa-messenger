@@ -37,12 +37,6 @@ object ChatStorage {
     private fun chatKey(myUserId: String, recipientUserId: String): String {
         val pair = listOf(myUserId, recipientUserId).sorted()
         val key = "chat_${pair[0]}_${pair[1]}"
-
-        android.util.Log.d(
-            "ChatKey",
-            "chatKey: me=$myUserId recipient=$recipientUserId result=$key"
-        )
-
         return key
     }
 
@@ -113,16 +107,6 @@ object ChatStorage {
         recipientUserId: String,
         message: StoredMessage
     ) {
-        android.util.Log.e(
-            "ChatStorage",
-            "SAVE MSG: id=${message.id} voicePath=${message.voicePath} voiceDuration=${message.voiceDuration} reactions=${message.reactions}"
-        )
-        android.util.Log.e("ChatStorage", "=== ChatStorage.saveOrUpdateMessage CALLED ===")
-        android.util.Log.d(
-            "ChatStorage",
-            "SAVE: id=${message.id}, reactions=${message.reactions}, voicePath=${message.voicePath}, duration=${message.voiceDuration}"
-        )
-        android.util.Log.d("ChatStorage", "saveOrUpdateMessage ВЫЗВАН: id=${message.id}, reactions=${message.reactions}")
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val key = chatKey(myUserId, recipientUserId)
         val array = loadJsonArray(prefs, key)
@@ -343,18 +327,7 @@ object ChatStorage {
 
     // Сохранить имя контакта по его ID
     fun saveContactName(context: Context, contactId: String, name: String?) {
-        android.util.Log.d(
-            "ChatStorage",
-            "saveContactName: contactId=$contactId name='$name'"
-        )
-
-        if (name.isNullOrBlank()) {
-            android.util.Log.w(
-                "ChatStorage",
-                "saveContactName: SKIP empty name for $contactId"
-            )
-            return
-        }
+        if (name.isNullOrBlank()) return
 
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         prefs.edit().putString("name_$contactId", name).apply()
@@ -441,22 +414,32 @@ object ChatStorage {
         val jsonStr = if (raw.startsWith(StorageKeyManager.SMK_PREFIX)) {
             val blob = Base64.decode(raw.removePrefix(StorageKeyManager.SMK_PREFIX), Base64.NO_WRAP)
             String(StorageKeyManager.decrypt(blob), Charsets.UTF_8)
-        } else raw
+        } else {
+            // Legacy plaintext — eager re-wrap если SMK уже разблокирован
+            if (raw != "[]" && StorageKeyManager.isUnlocked) {
+                try {
+                    val wrapped = StorageKeyManager.SMK_PREFIX + Base64.encodeToString(
+                        StorageKeyManager.encrypt(raw.toByteArray(Charsets.UTF_8)),
+                        Base64.NO_WRAP
+                    )
+                    prefs.edit().putString(key, wrapped).apply()
+                } catch (_: Exception) {}
+            }
+            raw
+        }
         return JSONArray(jsonStr)
     }
 
     /**
-     * Сохраняет JSON-массив сообщений в prefs, шифруя SMK если доступен.
+     * Сохраняет JSON-массив сообщений в prefs, шифруя SMK.
+     * Если SMK залочен — не пишем plaintext, пропускаем запись.
      */
     private fun saveJsonArray(prefs: SharedPreferences, key: String, array: JSONArray) {
-        val toStore = if (StorageKeyManager.isUnlocked) {
-            StorageKeyManager.SMK_PREFIX + Base64.encodeToString(
-                StorageKeyManager.encrypt(array.toString().toByteArray(Charsets.UTF_8)),
-                Base64.NO_WRAP
-            )
-        } else {
-            array.toString()
-        }
+        if (!StorageKeyManager.isUnlocked) return  // никогда не пишем plaintext
+        val toStore = StorageKeyManager.SMK_PREFIX + Base64.encodeToString(
+            StorageKeyManager.encrypt(array.toString().toByteArray(Charsets.UTF_8)),
+            Base64.NO_WRAP
+        )
         prefs.edit().putString(key, toStore).apply()
     }
 }

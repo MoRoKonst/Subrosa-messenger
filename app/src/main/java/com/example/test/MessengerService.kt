@@ -566,9 +566,15 @@ class MessengerService : Service() {
         }
 
         if (intent?.getBooleanExtra("reload_cover_traffic", false) == true) {
-            stopCoverTraffic()
-            outboundQueue.clear()
-            if (isConnected) startCoverTraffic()
+            if (!isConnected) {
+                scope.launch(Dispatchers.IO) { connect() }
+            } else {
+                val drained = mutableListOf<String>()
+                outboundQueue.drainTo(drained)
+                stopCoverTraffic()
+                startCoverTraffic()
+                drained.forEach { outboundQueue.offer(it) }
+            }
             return START_STICKY
         }
 
@@ -814,7 +820,7 @@ class MessengerService : Service() {
     // AGGRESSIVE: реальные сообщения в очередь, отправляются по таймеру — наблюдатель видит равномерный поток.
     // MODERATE: реальные сообщения немедленно, шум заполняет паузы — без задержки, но паттерн виден.
 
-    private val outboundQueue = java.util.concurrent.LinkedBlockingQueue<String>()
+    private val outboundQueue = java.util.concurrent.LinkedBlockingQueue<String>(200)
     private var coverTrafficJob: kotlinx.coroutines.Job? = null
 
     private fun startCoverTraffic() {
@@ -858,7 +864,10 @@ class MessengerService : Service() {
     private fun sendWs(json: String) {
         val mode = UserStorage.getCoverTrafficMode(this)
         if (mode == UserStorage.CoverTrafficMode.AGGRESSIVE && isConnected) {
-            outboundQueue.offer(json)
+            if (!outboundQueue.offer(json)) {
+                Log.w(TAG, "outboundQueue переполнена — отправляем напрямую")
+                webSocket?.send(json)
+            }
         } else {
             webSocket?.send(json)
         }
@@ -1274,6 +1283,13 @@ class MessengerService : Service() {
                     val from = json.getString("from")
                     val messageId = json.getString("message_id")
                     val encryptedEmoji = json.getString("emoji")
+                    val signature = json.optString("signature", null)
+                    val senderKey = publicKeys[from]
+                        ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also { publicKeys[from] = it }
+                    if (signature == null || senderKey == null || !CryptoManager.verify(encryptedEmoji, signature, senderKey)) {
+                        Log.e(TAG, "reaction: неверная или отсутствующая подпись от $from")
+                        return
+                    }
                     val emoji = CryptoManager.decrypt(encryptedEmoji)
                     withContext(Dispatchers.Main) { onReactionReceived?.invoke(from, messageId, emoji) }
                 } catch (e: Exception) {
@@ -1284,6 +1300,13 @@ class MessengerService : Service() {
             "message_delete" -> {
                 val from = json.getString("from")
                 val messageId = json.getString("message_id")
+                val signature = json.optString("signature", null)
+                val senderKey = publicKeys[from]
+                    ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also { publicKeys[from] = it }
+                if (signature == null || senderKey == null || !CryptoManager.verify(messageId, signature, senderKey)) {
+                    Log.e(TAG, "message_delete: неверная или отсутствующая подпись от $from")
+                    return
+                }
                 val myId = UserStorage.getUserId(this@MessengerService)
                 ChatStorage.deleteMessage(this@MessengerService, myId, from, messageId)
                 withContext(Dispatchers.Main) { onMessageDeleted?.invoke(from, messageId) }
@@ -1292,6 +1315,13 @@ class MessengerService : Service() {
             "disappear_timer" -> {
                 val from = json.getString("from")
                 val seconds = json.getLong("seconds")
+                val signature = json.optString("signature", null)
+                val senderKey = publicKeys[from]
+                    ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also { publicKeys[from] = it }
+                if (signature == null || senderKey == null || !CryptoManager.verify(seconds.toString(), signature, senderKey)) {
+                    Log.e(TAG, "disappear_timer: неверная или отсутствующая подпись от $from")
+                    return
+                }
                 val myId = UserStorage.getUserId(this@MessengerService)
                 ChatStorage.setDisappearTimer(this@MessengerService, myId, from, seconds)
                 withContext(Dispatchers.Main) { onDisappearTimerChanged?.invoke(from, seconds) }
@@ -1702,6 +1732,10 @@ class MessengerService : Service() {
                     val fixedSenderIk = senderIk.replace('-', '+').replace('_', '/')
                     publicKeys[from] = fixedSenderIk
                     ChatStorage.saveContactPublicKey(this@MessengerService, from, fixedSenderIk)
+                    if (KeyHistoryManager.checkKeyChange(this@MessengerService, from, fixedSenderIk)) {
+                        Log.w(TAG, "⚠️ TOFU: ключ контакта $from изменился в session_init!")
+                        withContext(Dispatchers.Main) { onKeyChanged?.invoke(from) }
+                    }
                     Log.d(TAG, "Публичный ключ из session_init сохранён: $from")
 
                     val senderKey = publicKeys[from]!!  // Теперь гарантированно есть
@@ -2022,6 +2056,12 @@ class MessengerService : Service() {
 
                     if (!CryptoManager.verify(encryptedNewKey, signature, senderKey)) {
                         Log.e(TAG, "Неверная подпись ротации ключа от $from")
+                        return
+                    }
+
+                    // Проверяем что отправитель является администратором группы
+                    if (!GroupManager.isAdmin(this@MessengerService, groupId, from)) {
+                        Log.e(TAG, "group_key_rotation от не-администратора $from в группе $groupId")
                         return
                     }
 
@@ -2670,6 +2710,7 @@ class MessengerService : Service() {
                 put("from", username)
                 put("to", to)
                 put("message_id", messageId)
+                put("signature", CryptoManager.sign(messageId))
             })
         }
     }
@@ -2699,6 +2740,7 @@ class MessengerService : Service() {
                 put("from", username)
                 put("to", to)
                 put("seconds", seconds)
+                put("signature", CryptoManager.sign(seconds.toString()))
             })
         }
     }
@@ -3315,6 +3357,7 @@ class MessengerService : Service() {
 
     private fun showChannelPostNotification(channelId: String, channelName: String, text: String) {
         if (ChannelManager.getChannel(this, channelId)?.isMuted == true) return
+        val hideContent = UserStorage.getHideNotificationContent(this)
         val intent = Intent(this, MainActivity::class.java).apply {
             putExtra("open_channel", channelId)
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -3326,13 +3369,14 @@ class MessengerService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("📢 $channelName")
-            .setContentText(text)
+            .setContentTitle(if (hideContent) s.notifNewMessage else "📢 $channelName")
+            .setContentText(if (hideContent) s.notifTapToRead else text)
             .setSmallIcon(android.R.drawable.ic_dialog_email)
             .setContentIntent(pending)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setVisibility(if (hideContent) NotificationCompat.VISIBILITY_PRIVATE else NotificationCompat.VISIBILITY_PUBLIC)
             .build()
         getSystemService(NotificationManager::class.java).notify(System.currentTimeMillis().toInt(), notification)
     }

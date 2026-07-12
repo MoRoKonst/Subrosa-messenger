@@ -2,6 +2,7 @@ package com.bcon.messenger
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.security.KeyStore
@@ -110,6 +111,7 @@ object StorageKeyManager {
             val decrypted = decryptWithKeystore(blob)
             smk?.fill(0)
             smk = decrypted
+            migrateKsKeyIfNeeded(context, decrypted)
             true
         } catch (_: Exception) {
             false
@@ -133,7 +135,7 @@ object StorageKeyManager {
         prefs(context).edit()
             .putString(KEY_ENC_SMK_PWD, Base64.encodeToString(encPwd,  Base64.NO_WRAP))
             .putString(KEY_SALT,        Base64.encodeToString(salt,    Base64.NO_WRAP))
-            .apply()
+            .commit()
     }
 
     // ─── Симметричное шифрование данных с SMK ───────────────────────────────
@@ -145,9 +147,9 @@ object StorageKeyManager {
      */
     fun encrypt(data: ByteArray): ByteArray {
         val key = smk ?: error("StorageKeyManager is locked")
+        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
         val cipher = Cipher.getInstance(AES_GCM)
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"))
-        val iv = cipher.iv  // 12 bytes
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
         return iv + cipher.doFinal(data)
     }
 
@@ -202,9 +204,10 @@ object StorageKeyManager {
     }
 
     private fun encryptWithPassword(smkBytes: ByteArray, password: String, salt: ByteArray): ByteArray {
+        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
         val cipher = Cipher.getInstance(AES_GCM)
-        cipher.init(Cipher.ENCRYPT_MODE, deriveKey(password, salt))
-        return cipher.iv + cipher.doFinal(smkBytes)  // iv(12) + ct(32) + tag(16) = 60
+        cipher.init(Cipher.ENCRYPT_MODE, deriveKey(password, salt), GCMParameterSpec(128, iv))
+        return iv + cipher.doFinal(smkBytes)  // iv(12) + ct(32) + tag(16) = 60
     }
 
     private fun decryptWithPassword(blob: ByteArray, password: String, salt: ByteArray): ByteArray {
@@ -227,6 +230,8 @@ object StorageKeyManager {
                     .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                     .setKeySize(256)
+                    .setUserAuthenticationRequired(true)
+                    .setUserAuthenticationValidityDurationSeconds(10)
                     .build()
             )
             kg.generateKey()
@@ -234,10 +239,31 @@ object StorageKeyManager {
         return ks.getKey(KS_ALIAS, null) as SecretKey
     }
 
+    // Мигрирует существующий KS-ключ без setUserAuthenticationRequired на новый с биометрией.
+    // Вызывается после успешного unlockWithKeystore(), пока SMK ещё в памяти.
+    private fun migrateKsKeyIfNeeded(context: Context, currentSmk: ByteArray) {
+        try {
+            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).also { it.load(null) }
+            val key = ks.getKey(KS_ALIAS, null) as? SecretKey ?: return
+            val factory = SecretKeyFactory.getInstance(key.algorithm, ANDROID_KEYSTORE)
+            val info = factory.getKeySpec(key, KeyInfo::class.java) as KeyInfo
+            if (!info.isUserAuthenticationRequired) {
+                ks.deleteEntry(KS_ALIAS)
+                val newEncKs = encryptWithKeystore(currentSmk, context) // создаёт новый ключ через getOrCreateKsKey
+                prefs(context).edit()
+                    .putString(KEY_ENC_SMK_KS, Base64.encodeToString(newEncKs, Base64.NO_WRAP))
+                    .apply()
+            }
+        } catch (_: Exception) {
+            // Миграция не критична — старый ключ продолжит работу
+        }
+    }
+
     private fun encryptWithKeystore(smkBytes: ByteArray, context: Context): ByteArray {
+        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
         val cipher = Cipher.getInstance(AES_GCM)
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKsKey())
-        return cipher.iv + cipher.doFinal(smkBytes)
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKsKey(), GCMParameterSpec(128, iv))
+        return iv + cipher.doFinal(smkBytes)
     }
 
     private fun decryptWithKeystore(blob: ByteArray): ByteArray {
