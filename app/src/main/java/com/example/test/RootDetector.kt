@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.os.Build
 import com.bcon.messenger.BuildConfig
@@ -6,11 +6,10 @@ import java.io.File
 
 object RootDetector {
 
-    // Уровень угрозы — используется в UI
     enum class RootLevel {
-        NONE,     // чисто
-        WARNING,  // подозрительно, но не критично
-        DANGER    // рут/инструментация/эмулятор подтверждены
+        NONE,
+        WARNING,
+        DANGER
     }
 
     data class RootCheckResult(
@@ -25,30 +24,25 @@ object RootDetector {
     fun checkResult(): RootCheckResult {
         val reasons = mutableListOf<String>()
 
-        // ── Root ──────────────────────────────────────────────────────────────
         if (checkRootBinaries())    reasons.add("su бинарник найден")
         if (checkBuildTags())       reasons.add("test-keys сборка")
         if (checkRootPackages())    reasons.add("root-приложение установлено")
         if (checkWhichSu())         reasons.add("which su вернул результат")
         if (checkSystemWritable())  reasons.add("/system доступен на запись")
 
-        // ── Anti-Debugging (только в release-сборках) ─────────────────────────
         if (!BuildConfig.DEBUG) {
             if (checkDebuggerConnected()) reasons.add("JDWP-отладчик подключён (adb/Android Studio)")
             if (checkTracerPid())         reasons.add("процесс трассируется (GDB/strace/LLDB)")
         }
 
-        // ── Anti-Frida ────────────────────────────────────────────────────────
         if (checkFridaPort())       reasons.add("Frida-сервер активен (порт 27042)")
         if (checkFridaMaps())       reasons.add("Frida-агент найден в памяти процесса")
         if (checkFridaProcesses())  reasons.add("Frida-процесс обнаружен")
 
-        // ── Anti-Xposed / LSPosed ─────────────────────────────────────────────
         if (checkXposedBridge())    reasons.add("Xposed/LSPosed активен в рантайме")
         if (checkXposedPackages())  reasons.add("Xposed/LSPosed менеджер установлен")
         if (checkXposedMaps())      reasons.add("XposedBridge.jar найден в памяти процесса")
 
-        // ── Emulator / Sandbox ────────────────────────────────────────────────
         val emuScore = emulatorScore()
         if (emuScore >= 4)          reasons.add("эмулятор (высокая уверенность, score=$emuScore)")
         else if (emuScore >= 2)     reasons.add("возможно эмулятор (score=$emuScore)")
@@ -61,10 +55,6 @@ object RootDetector {
 
         return RootCheckResult(level, reasons)
     }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ROOT
-    // ═══════════════════════════════════════════════════════════════════════════
 
     private fun checkRootBinaries(): Boolean {
         val paths = arrayOf(
@@ -122,18 +112,9 @@ object RootDetector {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ANTI-DEBUGGING
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /** JDWP — Java Debug Wire Protocol. Активен при подключении adb / Android Studio. */
     private fun checkDebuggerConnected(): Boolean =
         android.os.Debug.isDebuggerConnected()
 
-    /**
-     * TracerPid > 0 означает, что к процессу прикреплён нативный отладчик
-     * (GDB, LLDB, strace). Читаем из /proc/self/status.
-     */
     private fun checkTracerPid(): Boolean = try {
         File("/proc/self/status").readLines()
             .firstOrNull { it.startsWith("TracerPid:") }
@@ -146,11 +127,6 @@ object RootDetector {
         false
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ANTI-FRIDA
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /** Frida-server по умолчанию слушает порт 27042. */
     private fun checkFridaPort(): Boolean {
         return try {
             val socket = java.net.Socket()
@@ -162,7 +138,6 @@ object RootDetector {
         }
     }
 
-    /** Frida инжектирует gum-js и frida-agent в адресное пространство процесса. */
     private fun checkFridaMaps(): Boolean {
         return try {
             File("/proc/self/maps").readText().let { maps ->
@@ -175,7 +150,6 @@ object RootDetector {
         }
     }
 
-    /** Ищем frida-server/frida-inject в списке процессов. */
     private fun checkFridaProcesses(): Boolean {
         return try {
             File("/proc").listFiles()?.any { dir ->
@@ -190,11 +164,6 @@ object RootDetector {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ANTI-XPOSED / LSPOSED
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /** Если XposedBridge загружен — хукинг активен прямо сейчас. */
     private fun checkXposedBridge(): Boolean {
         return try {
             Class.forName("de.robv.android.xposed.XposedBridge")
@@ -206,19 +175,17 @@ object RootDetector {
         }
     }
 
-    /** Менеджеры Xposed/LSPosed в системе. */
     private fun checkXposedPackages(): Boolean {
         val packages = arrayOf(
             "de.robv.android.xposed.installer",
             "io.github.lsposed.manager",
             "org.lsposed.manager",
-            "com.solohsu.android.edxp.manager",  // EdXposed
-            "me.weishu.exp"                       // VirtualXposed
+            "com.solohsu.android.edxp.manager",
+            "me.weishu.exp"
         )
         return packages.any { isPackageInstalled(it) }
     }
 
-    /** XposedBridge.jar появляется в /proc/self/maps при активном Xposed. */
     private fun checkXposedMaps(): Boolean {
         return try {
             File("/proc/self/maps").readText().contains("XposedBridge.jar")
@@ -227,38 +194,25 @@ object RootDetector {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // EMULATOR / SANDBOX
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Каждый признак добавляет +1 к счёту.
-     * Score ≥ 4 → высокая уверенность, Score ≥ 2 → возможно эмулятор.
-     */
     private fun emulatorScore(): Int {
         var score = 0
 
-        // Build.FINGERPRINT — самый надёжный признак
         val fp = Build.FINGERPRINT.lowercase()
         if (fp.startsWith("generic"))            score += 2
         if (fp.contains(":sdk_gphone"))          score += 2
         if (fp.contains("generic/sdk"))          score += 2
         if (fp.contains("emulator"))             score++
 
-        // Аппаратная платформа эмулятора
         val hw = Build.HARDWARE.lowercase()
         if (hw == "goldfish" || hw == "ranchu")  score += 2
 
-        // Модель
         val model = Build.MODEL.lowercase()
         if (model.contains("emulator"))          score += 2
         if (model.contains("android sdk built")) score += 2
         if (model.contains("google_sdk"))        score += 2
 
-        // Производитель
         if (Build.MANUFACTURER.equals("unknown", ignoreCase = true)) score++
 
-        // Product / Board
         val product = Build.PRODUCT.lowercase()
         if (product.startsWith("sdk") ||
             product.contains("_sdk") ||
@@ -267,15 +221,13 @@ object RootDetector {
 
         if (Build.BOARD.equals("unknown", ignoreCase = true)) score++
 
-        // Brand
         val brand = Build.BRAND.lowercase()
         if (brand.startsWith("generic") ||
             brand == "android")                  score++
 
-        // Характерные файлы эмуляторов
         val emuFiles = arrayOf(
-            "/dev/socket/qemud",      // QEMU
-            "/dev/qemu_pipe",         // QEMU
+            "/dev/socket/qemud",
+            "/dev/qemu_pipe",
             "/system/lib/libc_malloc_debug_qemu.so",
             "/sys/qemu_trace",
             "/system/bin/qemu-props"
@@ -284,10 +236,6 @@ object RootDetector {
 
         return score
     }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // УТИЛИТЫ
-    // ═══════════════════════════════════════════════════════════════════════════
 
     private fun isPackageInstalled(packageName: String): Boolean {
         return try {

@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.content.Intent
@@ -38,15 +38,10 @@ object TorManager {
     private fun notifyError(msg: String) = errorListeners.forEach { it(msg) }
     private fun notifyProgress(p: Int, s: String) = progressListeners.forEach { it(p, s) }
 
-    // ─── Запуск ───────────────────────────────────────────────────────────────
-    //
-    // Если Orbot установлен — запрашиваем старт и ждём пока SOCKS порт откроется.
-    // Если нет — сразу сообщаем об ошибке, приложение работает напрямую.
-
     fun start(context: Context, scope: CoroutineScope, strings: AppStrings = ruStrings) {
         scope.launch(Dispatchers.IO) {
             try {
-                // Если Orbot уже запущен — SOCKS сразу доступен
+
                 if (isSocksAvailable()) {
                     isConnected = true
                     bootstrapProgress = 100
@@ -73,7 +68,6 @@ object TorManager {
 
                 requestOrbotStart(context)
 
-                // Ждём пока SOCKS порт откроется
                 val deadline = System.currentTimeMillis() + TOR_TIMEOUT_MS
                 var progress = 5
 
@@ -148,9 +142,7 @@ object TorManager {
         Log.d(TAG, "Подключаемся через Tor к $host:$port")
         val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(SOCKS_HOST, SOCKS_PORT))
         val rawSocket = java.net.Socket(proxy)
-        // createUnresolved — имя хоста НЕ резолвится через системный DNS.
-        // Передаём строку напрямую в Orbot, который разрешает её внутри Tor.
-        // Без этого провайдер видит DNS запрос к серверу (DNS leak).
+
         rawSocket.connect(InetSocketAddress.createUnresolved(host, port), CONNECT_TIMEOUT_MS)
         val sslSocket = sslSocketFactory.createSocket(rawSocket, host, port, true) as SSLSocket
         sslSocket.enabledProtocols = arrayOf("TLSv1.3")

@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -20,9 +20,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.size
 import androidx.core.content.FileProvider
 import java.io.File
 import com.bcon.messenger.ui.theme.LocalBeaconColors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
 
@@ -33,17 +37,22 @@ fun BackupScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val s = LocalStrings.current
     val c = LocalBeaconColors.current
+    val scope = rememberCoroutineScope()
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(false) }
     var pendingBackupContent by remember { mutableStateOf<String?>(null) }
 
     val saveFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
+        if (uri == null) {
+            pendingBackupContent = null
+            return@rememberLauncherForActivityResult
+        }
         val content = pendingBackupContent ?: return@rememberLauncherForActivityResult
         try {
             context.contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
@@ -62,22 +71,32 @@ fun BackupScreen(onBack: () -> Unit) {
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri ?: return@rememberLauncherForActivityResult
-        try {
-            val content = context.contentResolver.openInputStream(uri)
-                ?.bufferedReader()?.readText() ?: ""
-            val result = BackupManager.importBackup(context, content, password)
-            if (result.isSuccess) {
-                message = "✓ ${result.getOrNull()}"
-                isError = false
-                password = ""
-                confirmPassword = ""
-            } else {
-                message = s.error(result.exceptionOrNull()?.message ?: "")
+        val pwd = password
+        scope.launch {
+            isLoading = true
+            try {
+                val content = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)
+                        ?.bufferedReader()?.readText() ?: ""
+                }
+                val result = withContext(Dispatchers.IO) {
+                    BackupManager.importBackup(context, content, pwd)
+                }
+                if (result.isSuccess) {
+                    message = "✓ ${result.getOrNull()}"
+                    isError = false
+                    password = ""
+                    confirmPassword = ""
+                } else {
+                    message = s.error(result.exceptionOrNull()?.message ?: "")
+                    isError = true
+                }
+            } catch (e: Exception) {
+                message = s.error(e.message ?: "")
                 isError = true
+            } finally {
+                isLoading = false
             }
-        } catch (e: Exception) {
-            message = s.error(e.message ?: "")
-            isError = true
         }
     }
 
@@ -126,7 +145,6 @@ fun BackupScreen(onBack: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Предупреждение о безопасности бэкапа
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = c.dangerCard)
@@ -181,15 +199,26 @@ fun BackupScreen(onBack: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                fun validateAndExport(onSuccess: (String) -> Unit) {
+                fun launchExport(onSuccess: (String) -> Unit) {
                     when {
                         password.isEmpty() -> { message = s.backupErrEnterPassword; isError = true }
                         password != confirmPassword -> { message = s.backupErrPasswordMatch; isError = true }
                         password.length < 8 -> { message = s.backupErrPasswordLength; isError = true }
-                        else -> try {
-                            onSuccess(BackupManager.exportBackup(context, password))
-                        } catch (e: Exception) {
-                            message = s.error(e.message ?: ""); isError = true
+                        else -> {
+                            val pwd = password
+                            scope.launch {
+                                isLoading = true
+                                try {
+                                    val backup = withContext(Dispatchers.IO) {
+                                        BackupManager.exportBackup(context, pwd)
+                                    }
+                                    onSuccess(backup)
+                                } catch (e: Exception) {
+                                    message = s.error(e.message ?: ""); isError = true
+                                } finally {
+                                    isLoading = false
+                                }
+                            }
                         }
                     }
                 }
@@ -197,34 +226,40 @@ fun BackupScreen(onBack: () -> Unit) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = {
-                            validateAndExport { backup ->
-                                val file = File(context.cacheDir, "messenger_backup_${System.currentTimeMillis()}.backup")
-                                file.writeText(backup)
-                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "application/octet-stream"
-                                    putExtra(Intent.EXTRA_STREAM, uri)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            launchExport { backup ->
+                                val file = File(context.cacheDir, "beacon_backup_tmp.backup")
+                                try {
+                                    file.writeText(backup)
+                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "application/octet-stream"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, s.backupSaveChooser))
+                                    message = s.backupCreated; isError = false
+                                    password = ""; confirmPassword = ""
+                                } finally {
+                                    file.delete()
                                 }
-                                context.startActivity(Intent.createChooser(shareIntent, s.backupSaveChooser))
-                                message = s.backupCreated; isError = false
-                                password = ""; confirmPassword = ""
                             }
                         },
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = c.topBar)
+                        colors = ButtonDefaults.buttonColors(containerColor = c.topBar),
+                        enabled = !isLoading
                     ) {
                         Text(s.backupExport, fontFamily = AppFont, color = Color.White, fontSize = 13.sp)
                     }
                     Button(
                         onClick = {
-                            validateAndExport { backup ->
+                            launchExport { backup ->
                                 pendingBackupContent = backup
                                 saveFileLauncher.launch(BackupManager.getBackupFileName())
                             }
                         },
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = c.topBar)
+                        colors = ButtonDefaults.buttonColors(containerColor = c.topBar),
+                        enabled = !isLoading
                     ) {
                         Text("В файлы", fontFamily = AppFont, color = Color.White, fontSize = 13.sp)
                     }
@@ -238,10 +273,15 @@ fun BackupScreen(onBack: () -> Unit) {
                         else importLauncher.launch(arrayOf("*/*"))
                     },
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = c.accent),
                     border = androidx.compose.foundation.BorderStroke(1.dp, c.accent)
                 ) {
-                    Text(s.backupImport, fontFamily = AppFont)
+                    if (isLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = c.accent, strokeWidth = 2.dp)
+                    } else {
+                        Text(s.backupImport, fontFamily = AppFont)
+                    }
                 }
 
                 if (message.isNotEmpty()) {

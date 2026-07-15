@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
@@ -67,8 +67,6 @@ private fun extractFingerprint(inviteCode: String): String? {
         inviteCode.split("&").find { it.startsWith("fp=") }?.removePrefix("fp=")
     } catch (e: Exception) { null }
 }
-
-// ─── Shared sub-composables ────────────────────────────────────────────────────
 
 @Composable
 private fun PSection(label: String) {
@@ -144,9 +142,6 @@ private fun PChevron() {
     )
 }
 
-// ─── Main screen ──────────────────────────────────────────────────────────────
-
-/** Проверяет, активирован ли EmergencyService в системных настройках доступности */
 private fun isEmergencyServiceEnabled(context: android.content.Context): Boolean =
     (context.getSystemService(android.content.Context.ACCESSIBILITY_SERVICE) as AccessibilityManager)
         .getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
@@ -171,7 +166,6 @@ fun ProfileScreen(
     val c = LocalBeaconColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
-    // ── State ──────────────────────────────────────────────────────────────
     var showNotMeConfirm   by remember { mutableStateOf(false) }
     var showSupportDialog  by remember { mutableStateOf(false) }
     var showQr             by remember { mutableStateOf(false) }
@@ -189,7 +183,6 @@ fun ProfileScreen(
     val clipboardManager = LocalClipboardManager.current
     val currentTheme     by MainActivity.currentTheme.collectAsState()
 
-    // Обновляем состояние переключателя когда пользователь возвращается из системных настроек
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -219,7 +212,7 @@ fun ProfileScreen(
                 displayName.ifBlank { userId }
             )
             UserStorage.saveInviteCode(context, fresh)
-            // Сохраняем mailboxTag из нового инвайта — будем опрашивать сервер по нему
+
             InviteCodeManager.parseInviteCode(fresh)?.mailboxTag?.let { tag ->
                 AnonTokenManager.addMyMailboxTag(context, tag)
             }
@@ -232,7 +225,6 @@ fun ProfileScreen(
     val emojiFingerprint = remember { fingerprint?.let { fingerprintToEmoji(it) } }
     val qrBitmap         = remember { generateQRCode(inviteCode, 512) }
 
-    // ── Avatar ─────────────────────────────────────────────────────────────
     var myAvatarBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(Unit) {
         val b64 = UserStorage.getMyAvatar(context)
@@ -281,7 +273,6 @@ fun ProfileScreen(
         }
     }
 
-    // ── QR scanner ────────────────────────────────────────────────────────
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val scannedCode = result.contents ?: return@rememberLauncherForActivityResult
         val inviteData = InviteCodeManager.parseInviteCode(scannedCode)
@@ -319,8 +310,6 @@ fun ProfileScreen(
         )[displayName.hashCode().absoluteValue % 6]
     }
 
-
-    // ══════════════════════════════════════════════════════════════════════
     Scaffold(containerColor = Color.Transparent) { padding ->
         Box(
             modifier = Modifier
@@ -334,7 +323,6 @@ fun ProfileScreen(
                     .verticalScroll(rememberScrollState())
             ) {
 
-                // ── Header ────────────────────────────────────────────────
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -357,14 +345,13 @@ fun ProfileScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Avatar + glow ring + camera badge
                     Box(
                         modifier = Modifier
                             .size(108.dp)
                             .clickable { galleryLauncher.launch("image/*") },
                         contentAlignment = Alignment.Center
                     ) {
-                        // Кольцо-свечение
+
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -378,7 +365,7 @@ fun ProfileScreen(
                                     )
                                 )
                         )
-                        // Аватар
+
                         Box(
                             modifier = Modifier
                                 .size(96.dp)
@@ -410,7 +397,7 @@ fun ProfileScreen(
                                 }
                             }
                         }
-                        // Camera badge
+
                         Box(
                             modifier = Modifier
                                 .size(30.dp)
@@ -438,7 +425,6 @@ fun ProfileScreen(
                         fontFamily = AppFont
                     )
 
-                    // Emoji fingerprint pill
                     if (emojiFingerprint != null) {
                         Spacer(modifier = Modifier.height(10.dp))
                         Surface(
@@ -463,7 +449,6 @@ fun ProfileScreen(
                     }
                 }
 
-                // ── Invite / QR ───────────────────────────────────────────
                 PSection(s.profileInviteCode)
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -471,7 +456,7 @@ fun ProfileScreen(
                     colors = CardDefaults.cardColors(containerColor = c.card)
                 ) {
                     Column {
-                        // Code preview + copy + share
+
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -575,7 +560,6 @@ fun ProfileScreen(
                     }
                 }
 
-                // ── Appearance ────────────────────────────────────────────
                 PSection(s.profileThemeLabel)
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -649,7 +633,6 @@ fun ProfileScreen(
                     }
                 }
 
-                // ── Security ──────────────────────────────────────────────
                 PSection(s.profileSectionSecurity)
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -719,7 +702,7 @@ fun ProfileScreen(
                                                 emergencyEnabled = true
                                                 UserStorage.setEmergencyWipeEnabled(context, true)
                                             } else {
-                                                // Сервис не активирован — показываем инструкцию
+
                                                 showEmergencyInfoDialog = true
                                             }
                                         } else {
@@ -737,7 +720,6 @@ fun ProfileScreen(
                     }
                 }
 
-                // ── General ───────────────────────────────────────────────
                 PSection(s.profileSectionGeneral)
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -759,7 +741,6 @@ fun ProfileScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // ── Danger zone ───────────────────────────────────────────
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -789,8 +770,6 @@ fun ProfileScreen(
             }
         }
     }
-
-    // ── Dialogs ───────────────────────────────────────────────────────────────
 
     if (showLockDialog) {
         AlertDialog(
@@ -895,7 +874,6 @@ fun ProfileScreen(
         )
     }
 
-    // ── Emergency wipe: инструкция по активации accessibility-сервиса ─────────
     if (showEmergencyInfoDialog) {
         AlertDialog(
             onDismissRequest = { showEmergencyInfoDialog = false },
@@ -903,7 +881,7 @@ fun ProfileScreen(
             title = { Text(s.emergencyInfoTitle, color = Color.White, fontFamily = AppFont) },
             text = { Text(s.emergencyInfoMessage, color = c.textPrimary, fontFamily = AppFont, fontSize = 13.sp) },
             confirmButton = {
-                // На Android 13+ сначала нужно разрешить «огр. настройки» в инфо о приложении
+
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                     Row {
                         TextButton(onClick = {

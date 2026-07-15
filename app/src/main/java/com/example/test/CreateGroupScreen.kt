@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -44,7 +44,6 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
     var showAvatarPicker by remember { mutableStateOf(false) }
     var messengerService by remember { mutableStateOf<MessengerService?>(null) }
 
-    // Подключение к сервису
     val connection = remember {
         object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName, binder: IBinder) {
@@ -93,7 +92,7 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                 .padding(padding)
                 .padding(16.dp)
         ) {
-            // Аватар группы
+
             Surface(
                 shape = CircleShape,
                 color = Color(0xFF2481CC),
@@ -117,7 +116,6 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Название группы
             OutlinedTextField(
                 value = groupName,
                 onValueChange = { groupName = it },
@@ -147,7 +145,6 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Список контактов
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -216,7 +213,6 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Кнопка создания
             Button(
                 onClick = {
                     if (groupName.isNotBlank() && selectedMembers.isNotEmpty()) {
@@ -237,7 +233,6 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
 
                         GroupManager.saveGroup(context, group)
 
-                        // Отправляем приглашения через сервис
                         messengerService?.createGroup(
                             groupId = groupId,
                             groupName = groupName,
@@ -262,7 +257,6 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
         }
     }
 
-    // Диалог выбора аватара
     if (showAvatarPicker) {
         AlertDialog(
             onDismissRequest = { showAvatarPicker = false },

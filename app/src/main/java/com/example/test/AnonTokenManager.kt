@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import org.json.JSONArray
@@ -16,8 +16,6 @@ object AnonTokenManager {
     private val rng = SecureRandom()
 
     private fun prefs(ctx: Context) = EncryptedStorage.getEncryptedPrefs(ctx, PREFS_NAME)
-
-    // ── Мои токены (сервер слушает их для меня) ───────────────────────────────
 
     fun getMyTokens(ctx: Context): List<String> {
         val json = prefs(ctx).getString(PREF_MY_TOKENS, "[]") ?: "[]"
@@ -44,10 +42,7 @@ object AnonTokenManager {
         }
     }
 
-    // Возвращает BATCH_TO_SHARE токенов для отправки контакту (без удаления из пула)
     fun tokensToShareWith(ctx: Context): List<String> = ensureMyTokenPool(ctx).take(BATCH_TO_SHARE)
-
-    // ── Токены контакта (отправляем ему — сервер роутит к нему) ──────────────
 
     fun getContactTokens(ctx: Context, fingerprint: String): List<String> {
         val key = "$PREF_CT_PREFIX$fingerprint"
@@ -61,7 +56,7 @@ object AnonTokenManager {
     fun addContactTokens(ctx: Context, fingerprint: String, tokens: List<String>) {
         val existing = getContactTokens(ctx, fingerprint).toMutableList()
         existing.addAll(tokens.filter { it.isNotBlank() && it.length == 32 })
-        // Ограничиваем пул — защита от OOM при вредоносном контакте
+
         val capped = if (existing.size > POOL_SIZE) existing.takeLast(POOL_SIZE) else existing
         prefs(ctx).edit()
             .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(capped).toString())
@@ -71,7 +66,6 @@ object AnonTokenManager {
     fun needsRefill(ctx: Context, fingerprint: String): Boolean =
         getContactTokens(ctx, fingerprint).size < REFILL_THRESHOLD
 
-    // Потребляет следующий токен контакта для отправки. Возвращает null если пул пуст.
     fun consumeNextContactToken(ctx: Context, fingerprint: String): String? {
         val tokens = getContactTokens(ctx, fingerprint).toMutableList()
         if (tokens.isEmpty()) return null
@@ -82,13 +76,9 @@ object AnonTokenManager {
         return token
     }
 
-    // ── Mailbox теги ─────────────────────────────────────────────────────────
-    // "Мои" теги — из инвайтов которые я создал; сервер хранит блобы для меня по этим тегам.
-    // "Контакта" теги — куда слать первое сообщение, когда приняли чужой инвайт.
-
     private const val PREF_MY_MBOX_TAGS   = "mbox_my_tags"
     private const val PREF_CT_MBOX_PREFIX = "mbox_ct_"
-    private const val MBOX_TOTAL = 20  // всегда ровно 20 тегов в запросе (реальные + фейки)
+    private const val MBOX_TOTAL = 20
 
     fun addMyMailboxTag(ctx: Context, tag: String) {
         val tags = getMyMailboxTags(ctx).toMutableList()
@@ -121,17 +111,12 @@ object AnonTokenManager {
         prefs(ctx).edit().remove("$PREF_CT_MBOX_PREFIX$fingerprint").apply()
     }
 
-    /** Составляет список тегов для mailbox_fetch: всегда ровно MBOX_TOTAL тегов.
-     *  Реальные теги дополняются фейками до фиксированного размера —
-     *  сервер не может по количеству запросов определить сколько у клиента реальных тегов. */
     fun buildFetchTagList(ctx: Context): List<String> {
         val real = getMyMailboxTags(ctx)
         val fakeCount = maxOf(MBOX_TOTAL - real.size, 0)
         val fakes = (1..fakeCount).map { generateToken() }
         return (real + fakes).shuffled(java.util.Random(rng.nextLong()))
     }
-
-    // ── Служебное ─────────────────────────────────────────────────────────────
 
     fun generateDummyToken(): String = generateToken()
 

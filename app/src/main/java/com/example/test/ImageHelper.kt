@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -10,23 +10,19 @@ import java.io.ByteArrayOutputStream
 object ImageHelper {
 
     private const val MAX_SIZE = 800
-    private const val CHUNK_SIZE = 32 * 1024 // 32KB
+    private const val CHUNK_SIZE = 32 * 1024
 
-    // Сжимаем и конвертируем фото в Base64 чанки
     fun prepareImage(context: Context, uri: Uri): List<String> {
         val inputStream = context.contentResolver.openInputStream(uri)
         val original = BitmapFactory.decodeStream(inputStream)
         inputStream?.close()
 
-        // Масштабируем
         val scaled = scaleBitmap(original, MAX_SIZE)
 
-        // Конвертируем в JPEG байты
         val outputStream = ByteArrayOutputStream()
         scaled.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
         val bytes = outputStream.toByteArray()
 
-        // Разбиваем на чанки Base64
         val chunks = mutableListOf<String>()
         var offset = 0
         while (offset < bytes.size) {
@@ -39,7 +35,6 @@ object ImageHelper {
         return chunks
     }
 
-    // Собираем чанки обратно в Bitmap
     fun assembleImage(chunks: List<String>): Bitmap? {
         return try {
             val outputStream = ByteArrayOutputStream()
@@ -54,7 +49,6 @@ object ImageHelper {
         }
     }
 
-    // Single-part base64 for channel posts (no chunking)
     fun prepareImageSingle(context: Context, uri: Uri, maxSize: Int = 1024, quality: Int = 75): String {
         val inputStream = context.contentResolver.openInputStream(uri)
         val original = BitmapFactory.decodeStream(inputStream)
@@ -66,7 +60,6 @@ object ImageHelper {
         return Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
 
-    // Decode single-part base64 back to Bitmap
     fun decodeBase64ToBitmap(base64: String): Bitmap? {
         return try {
             val bytes = Base64.decode(base64, Base64.NO_WRAP)

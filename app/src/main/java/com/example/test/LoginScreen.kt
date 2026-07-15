@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import androidx.compose.foundation.background
@@ -43,7 +43,6 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var showNotMeConfirm by remember { mutableStateOf(false) }
 
-    // Staggered entrance
     var visibleEmoji by remember { mutableStateOf(false) }
     var visibleTitle by remember { mutableStateOf(false) }
     var visibleForm  by remember { mutableStateOf(false) }
@@ -174,18 +173,17 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
                             delay(500)
 
                             if (UserStorage.isPanicPassword(context, password)) {
-                                // Panic password: показываем decoy вместо wipe.
-                                // Реальные данные остаются нетронутыми — правдоподобное отрицание.
+
                                 isLoading = false
                                 onPanicMode()
                                 return@launch
                             } else if (UserStorage.checkPassword(context, password)) {
-                                // После экстренного вайпа реальный пароль открывает фейковые чаты
+
                                 if (UserStorage.isDecoyMode(context)) {
                                     isLoading = false
                                     onPanicMode()
                                 } else {
-                                    // Разблокировать SMK (второй слой шифрования)
+
                                     withContext(Dispatchers.IO) {
                                         if (!StorageKeyManager.isSetup(context))
                                             StorageKeyManager.setup(context, password)
@@ -237,8 +235,8 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
                 CircularProgressIndicator(modifier = Modifier.padding(16.dp), color = c.accent)
                 Text(s.loginWaitingBiometric, fontSize = 14.sp, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
             }
-            } // end Column
-            } // end Box
+            }
+            }
         }
 
         TextButton(
@@ -258,7 +256,7 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
             confirmButton = {
                 TextButton(onClick = {
                     showNotMeConfirm = false
-                    // Полный экстренный сброс: ключи AndroidKeyStore + все данные + kill процесса
+
                     (context as? MainActivity)?.emergencyWipe()
                 }) {
                     Text(s.loginNotMeConfirm, color = c.error, fontFamily = AppFont)

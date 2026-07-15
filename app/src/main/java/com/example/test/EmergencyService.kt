@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
@@ -10,7 +10,7 @@ class EmergencyService : AccessibilityService() {
     private var volumeDownCount = 0
     private var lastPressTime = 0L
     private val TIMEOUT = 3000L
-    private val DEBOUNCE_MS = 150L  // защита от дребезга кнопки
+    private val DEBOUNCE_MS = 150L
     private lateinit var wakeLock: android.os.PowerManager.WakeLock
 
     override fun onCreate() {
@@ -25,8 +25,7 @@ class EmergencyService : AccessibilityService() {
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        // Проверяем первой строкой — если функция выключена, выходим сразу
-        // без лишних вычислений currentTimeMillis и т.д.
+
         if (!UserStorage.isEmergencyWipeEnabled(applicationContext)) {
             return super.onKeyEvent(event)
         }
@@ -34,12 +33,10 @@ class EmergencyService : AccessibilityService() {
         if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN && event.action == KeyEvent.ACTION_DOWN) {
             val now = System.currentTimeMillis()
 
-            // Защита от дребезга — игнорируем нажатие если оно слишком быстро после предыдущего
             if (now - lastPressTime < DEBOUNCE_MS) {
                 return super.onKeyEvent(event)
             }
 
-            // Сброс счётчика если прошло больше TIMEOUT
             if (now - lastPressTime > TIMEOUT) {
                 volumeDownCount = 0
             }
@@ -64,8 +61,6 @@ class EmergencyService : AccessibilityService() {
                 wakeLock.acquire(10000)
             }
 
-            // FLAG_RECEIVER_FOREGROUND — broadcast обработается с наивысшим приоритетом
-            // даже если система под нагрузкой
             val intent = Intent("com.bcon.messenger.EMERGENCY_WIPE").apply {
                 setPackage(packageName)
                 addFlags(Intent.FLAG_RECEIVER_FOREGROUND)

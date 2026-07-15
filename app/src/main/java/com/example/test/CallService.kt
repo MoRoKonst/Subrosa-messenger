@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -16,11 +16,6 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 
-/**
- * Foreground-сервис для звонков.
- * Держит аудиофокус и уведомление пока звонок активен.
- * Запускается через startForegroundService() при начале/принятии звонка.
- */
 class CallService : Service() {
 
     companion object {
@@ -52,7 +47,7 @@ class CallService : Service() {
             android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
             "beacon:call"
         )
-        // Слушаем завершение звонка
+
         CallManager.onCallEnded = { reason ->
             Log.d(TAG, "Call ended: $reason")
             stopSelf()
@@ -71,7 +66,7 @@ class CallService : Service() {
                 val peerName = intent.getStringExtra(EXTRA_PEER_NAME) ?: "Звонок"
                 val isVideo  = intent.getBooleanExtra(EXTRA_IS_VIDEO, false)
                 requestAudioFocus()
-                if (wakeLock?.isHeld == false) wakeLock?.acquire(2 * 60 * 60 * 1000L) // макс 2 часа
+                if (wakeLock?.isHeld == false) wakeLock?.acquire(2 * 60 * 60 * 1000L)
                 showActiveCallNotification(peerName, isVideo)
             }
             ACTION_END -> {
@@ -89,16 +84,12 @@ class CallService : Service() {
         super.onDestroy()
         releaseAudioFocus()
         if (wakeLock?.isHeld == true) wakeLock?.release()
-        // ОС может убить сервис без ACTION_END (нехватка памяти, Force Stop и т.п.).
-        // Если звонок ещё активен — завершаем его, чтобы собеседник получил call_end.
-        // hangUp() idempotent: внутри AtomicBoolean-guard, двойной вызов безопасен.
+
         if (CallManager.callId.isNotEmpty()) {
             CallManager.hangUp()
         }
         Log.d(TAG, "CallService destroyed")
     }
-
-    // ─── Уведомление входящего звонка ─────────────────────────────────────────
 
     private fun showIncomingCallNotification(peerName: String, isVideo: Boolean, isGroup: Boolean) {
         val typeStr = when {
@@ -107,7 +98,6 @@ class CallService : Service() {
             else    -> "Аудиозвонок"
         }
 
-        // Intent для открытия экрана входящего звонка
         val openIntent = Intent(this, MainActivity::class.java).apply {
             action = "OPEN_INCOMING_CALL"
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -116,7 +106,6 @@ class CallService : Service() {
             this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Intent для отклонения без открытия приложения
         val declineIntent = Intent(this, CallService::class.java).apply { action = ACTION_END }
         val declinePi = PendingIntent.getService(
             this, 1, declineIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -141,8 +130,6 @@ class CallService : Service() {
             startForeground(NOTIF_INCOMING, notification)
         }
     }
-
-    // ─── Уведомление активного звонка ─────────────────────────────────────────
 
     private fun showActiveCallNotification(peerName: String, isVideo: Boolean = false) {
         val openIntent = Intent(this, MainActivity::class.java).apply {
@@ -180,8 +167,6 @@ class CallService : Service() {
         }
     }
 
-    // ─── Аудиофокус ───────────────────────────────────────────────────────────
-
     private fun requestAudioFocus() {
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -213,8 +198,6 @@ class CallService : Service() {
         }
         am.mode = AudioManager.MODE_NORMAL
     }
-
-    // ─── Notification channel ─────────────────────────────────────────────────
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(

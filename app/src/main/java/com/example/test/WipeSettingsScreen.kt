@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -30,12 +30,10 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
     val c = LocalBeaconColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
-    // ── DMS state ─────────────────────────────────────────────────────────────
     var dmsEnabled by remember { mutableStateOf(DeadMansSwitchManager.isEnabled(context)) }
     var dmsIntervalHours by remember { mutableIntStateOf(DeadMansSwitchManager.getIntervalHours(context)) }
     var dmsRemaining by remember { mutableLongStateOf(DeadMansSwitchManager.getTimeRemainingMs(context)) }
 
-    // Обновляем таймер каждые 60 секунд пока DMS включён
     LaunchedEffect(dmsEnabled, dmsIntervalHours) {
         while (dmsEnabled) {
             dmsRemaining = DeadMansSwitchManager.getTimeRemainingMs(context)
@@ -43,20 +41,16 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
         }
     }
 
-    // ── Timeout wipe state ────────────────────────────────────────────────────
     var timeoutEnabled by remember { mutableStateOf(UserStorage.getTimeoutWipeHours(context) > 0) }
     var timeoutHours by remember { mutableIntStateOf(
         UserStorage.getTimeoutWipeHours(context).takeIf { it > 0 } ?: 24
     )}
 
-    // ── Panic button state ────────────────────────────────────────────────────
     var panicButtonEnabled by remember { mutableStateOf(UserStorage.getPanicButtonEnabled(context)) }
     var panicButtonDecoy   by remember { mutableStateOf(UserStorage.getPanicButtonDecoy(context)) }
 
-    // ── Calculator disguise state ──────────────────────────────────────────────
     var calcDisguise by remember { mutableStateOf(UserStorage.getCalculatorDisguise(context)) }
 
-    // ── Wipe on breach state ──────────────────────────────────────────────────
     var wipeOnBreach by remember { mutableStateOf(UserStorage.getWipeOnBreach(context)) }
     var breachLevel by remember { mutableStateOf(
         runCatching { WipeManager.Level.valueOf(UserStorage.getBreachWipeLevel(context)) }
@@ -94,7 +88,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // ── Warning card ───────────────────────────────────────────────
+
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0x33FF6B6B)),
                     modifier = Modifier.fillMaxWidth()
@@ -108,7 +102,6 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     )
                 }
 
-                // ── Wipe levels description ────────────────────────────────────
                 SectionHeader("Уровни уничтожения", c.textPrimary.copy(alpha = 0.6f))
                 WipeLevelCard(
                     title = s.wipeLevelSoft,
@@ -131,7 +124,6 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
 
                 Spacer(Modifier.height(4.dp))
 
-                // ── Dead Man's Switch ──────────────────────────────────────────
                 SectionHeader(s.dmsTitle, c.textPrimary.copy(alpha = 0.6f))
                 Card(
                     colors = CardDefaults.cardColors(containerColor = c.card),
@@ -199,7 +191,6 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                // ── Password timeout wipe ──────────────────────────────────────
                 SectionHeader(s.timeoutWipeTitle, c.textPrimary.copy(alpha = 0.6f))
                 Card(
                     colors = CardDefaults.cardColors(containerColor = c.card),
@@ -241,7 +232,6 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                // ── Wipe on breach ─────────────────────────────────────────────
                 SectionHeader(s.wipeOnBreachTitle, c.textPrimary.copy(alpha = 0.6f))
                 Card(
                     colors = CardDefaults.cardColors(containerColor = c.card),
@@ -286,7 +276,6 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                // ── Panic button ───────────────────────────────────────────────
                 SectionHeader(s.panicButtonLabel, c.textPrimary.copy(alpha = 0.6f))
                 Card(
                     colors = CardDefaults.cardColors(containerColor = c.card),
@@ -333,7 +322,6 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                // ── Calculator disguise ────────────────────────────────────────
                 SectionHeader(s.calcDisguiseLabel, c.textPrimary.copy(alpha = 0.6f))
                 Card(
                     colors = CardDefaults.cardColors(containerColor = c.card),

@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.util.Base64
@@ -17,22 +17,12 @@ object UserStorage {
     private const val KEY_INVITE_CODE = "invite_code"
     private const val KEY_PANIC_PASSWORD_HASH = "panic_password_hash"
 
-    // ─── Password Hashing ────────────────────────────────────────────────────
-
-    /**
-     * Legacy SHA-256 (без соли) — используется ТОЛЬКО для миграции старых аккаунтов.
-     * Новые пароли всегда хэшируются через [hashPasswordV2].
-     */
     private fun hashPasswordLegacy(password: String): String {
         val bytes = MessageDigest.getInstance("SHA-256")
             .digest(password.toByteArray())
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
-    /**
-     * PBKDF2WithHmacSHA256 + случайная 16-байтная соль, 100 000 итераций.
-     * Возвращает строку вида "v2:<saltBase64>:<hashBase64>".
-     */
     private fun hashPasswordV2(password: String): String {
         val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
         return deriveV2(password, salt)
@@ -47,12 +37,6 @@ object UserStorage {
         return "v2:$saltB64:$hashB64"
     }
 
-    /**
-     * Проверяет пароль против сохранённого хэша.
-     * Поддерживает оба формата:
-     *   - Старый: чистый hex SHA-256 (без префикса)
-     *   - Новый:  "v2:<saltBase64>:<hashBase64>" — PBKDF2WithHmacSHA256
-     */
     private fun verifyPassword(password: String, stored: String): Boolean {
         return if (stored.startsWith("v2:")) {
             val parts = stored.split(":")
@@ -62,12 +46,10 @@ object UserStorage {
                 deriveV2(password, salt) == stored
             } catch (e: Exception) { false }
         } else {
-            // Обратная совместимость: сравниваем с legacy SHA-256
+
             hashPasswordLegacy(password) == stored
         }
     }
-
-    // ─── Invite Code ─────────────────────────────────────────────────────────
 
     fun saveInviteCode(context: Context, inviteCode: String) {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
@@ -80,8 +62,6 @@ object UserStorage {
         return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getString(KEY_INVITE_CODE, null)
     }
-
-    // ─── Panic Password ───────────────────────────────────────────────────────
 
     fun setPanicPassword(context: Context, panicPassword: String) {
         val hash = hashPasswordV2(panicPassword)
@@ -102,15 +82,13 @@ object UserStorage {
         return verifyPassword(password, savedHash)
     }
 
-    // ─── Registration / Login ────────────────────────────────────────────────
-
     fun isRegistered(context: Context): Boolean {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         return prefs.contains(KEY_USERNAME)
     }
 
     fun register(context: Context, username: String, password: String) {
-        // Генерируем уникальный ID: username_xxxx
+
         val randomPart = UUID.randomUUID().toString().take(4)
         val userId = "${username.lowercase()}_$randomPart"
 
@@ -118,7 +96,7 @@ object UserStorage {
             .edit()
             .putString(KEY_USERNAME, username)
             .putString(KEY_USER_ID, userId)
-            .putString(KEY_PASSWORD_HASH, hashPasswordV2(password))   // PBKDF2 + salt
+            .putString(KEY_PASSWORD_HASH, hashPasswordV2(password))
             .putString("display_name", username)
             .apply()
         android.util.Log.d("UserStorage", "Registered new user")
@@ -131,15 +109,11 @@ object UserStorage {
             .apply()
     }
 
-    /**
-     * Проверяет пароль.
-     * При успешной проверке старого SHA-256 хэша автоматически мигрирует на v2 (PBKDF2).
-     */
     fun checkPassword(context: Context, password: String): Boolean {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val savedHash = prefs.getString(KEY_PASSWORD_HASH, null) ?: return false
         if (!verifyPassword(password, savedHash)) return false
-        // Автомиграция с legacy SHA-256 → PBKDF2+salt
+
         if (!savedHash.startsWith("v2:")) {
             prefs.edit().putString(KEY_PASSWORD_HASH, hashPasswordV2(password)).apply()
             android.util.Log.i("UserStorage", "Пароль мигрирован с SHA-256 на PBKDF2+salt")
@@ -182,18 +156,12 @@ object UserStorage {
         return prefs.getString("display_name", null) ?: getUsername(context)
     }
 
-    // ─── Device ID ───────────────────────────────────────────────────────────
-
-    // Уникальный ID устройства — генерируется один раз при первом запуске.
-    // Хранится в ЗАШИФРОВАННЫХ prefs (EncryptedSharedPreferences), чтобы исключить
-    // утечку через незашифрованный app_prefs (другие приложения с правами чтения).
-    // При первом вызове после обновления выполняется автоматическая миграция.
     fun getDeviceId(context: Context): String {
         val encPrefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
-        // Уже мигрировано / изначально в зашифрованном хранилище
+
         val existing = encPrefs.getString("device_id", null)
         if (existing != null) return existing
-        // Миграция: device_id был в незашифрованных prefs → переносим
+
         val plainPrefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
         val fromPlain = plainPrefs.getString("device_id", null)
         if (fromPlain != null) {
@@ -201,25 +169,21 @@ object UserStorage {
             plainPrefs.edit().remove("device_id").apply()
             return fromPlain
         }
-        // Первый запуск — генерируем новый UUID
+
         return UUID.randomUUID().toString().also { newId ->
             encPrefs.edit().putString("device_id", newId).apply()
         }
     }
 
-    // ─── Emergency Wipe ───────────────────────────────────────────────────────
-
     fun isEmergencyWipeEnabled(context: Context): Boolean {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
-        return prefs.getBoolean("emergency_wipe_enabled", true) // По умолчанию включено
+        return prefs.getBoolean("emergency_wipe_enabled", true)
     }
 
     fun setEmergencyWipeEnabled(context: Context, enabled: Boolean) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         prefs.edit().putBoolean("emergency_wipe_enabled", enabled).apply()
     }
-
-    // ─── Panic Button (lock screen notification) ──────────────────────────────
 
     fun getPanicButtonEnabled(context: Context): Boolean {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
@@ -241,8 +205,6 @@ object UserStorage {
         prefs.edit().putBoolean("panic_button_decoy", enabled).apply()
     }
 
-    // ─── Calculator Disguise ──────────────────────────────────────────────────
-
     fun getCalculatorDisguise(context: Context): Boolean {
         return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getBoolean("calculator_disguise", false)
@@ -251,7 +213,7 @@ object UserStorage {
     fun setCalculatorDisguise(context: Context, enabled: Boolean) {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .edit().putBoolean("calculator_disguise", enabled).apply()
-        // Переключаем иконку/название в лончере
+
         val pm = context.packageManager
         val pkg = context.packageName
         pm.setComponentEnabledSetting(
@@ -268,8 +230,6 @@ object UserStorage {
         )
     }
 
-    // ─── Paranoid Mode ────────────────────────────────────────────────────────
-
     fun getParanoidMode(context: Context): Boolean {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         return prefs.getBoolean("paranoid_mode", false)
@@ -280,8 +240,6 @@ object UserStorage {
         prefs.edit().putBoolean("paranoid_mode", enabled).apply()
     }
 
-    // ─── HoneyToken ──────────────────────────────────────────────────────────
-
     fun getHoneyHash(context: Context): String =
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getString("honey_integrity_hash", "") ?: ""
@@ -291,8 +249,6 @@ object UserStorage {
             .edit().putString("honey_integrity_hash", hash).apply()
     }
 
-    // ─── Alert URL ───────────────────────────────────────────────────────────
-
     fun getAlertUrl(context: Context): String =
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getString("paranoid_alert_url", "") ?: ""
@@ -301,8 +257,6 @@ object UserStorage {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .edit().putString("paranoid_alert_url", url).apply()
     }
-
-    // ─── Dead Man's Switch ───────────────────────────────────────────────────
 
     fun getDmsEnabled(context: Context): Boolean =
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
@@ -331,8 +285,6 @@ object UserStorage {
             .edit().putLong("dms_last_checkin", ts).apply()
     }
 
-    // ─── Timeout Wipe ────────────────────────────────────────────────────────
-
     fun getTimeoutWipeHours(context: Context): Int =
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getInt("timeout_wipe_hours", 0)
@@ -350,8 +302,6 @@ object UserStorage {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .edit().putLong("last_password_entry", ts).apply()
     }
-
-    // ─── Wipe on Breach ──────────────────────────────────────────────────────
 
     fun getWipeOnBreach(context: Context): Boolean =
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
@@ -371,8 +321,6 @@ object UserStorage {
             .edit().putString("breach_wipe_level", level).apply()
     }
 
-    // ─── Notification Content ────────────────────────────────────────────────
-
     fun getHideNotificationContent(context: Context): Boolean {
         return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getBoolean("hide_notif_content", false)
@@ -383,9 +331,6 @@ object UserStorage {
             .edit().putBoolean("hide_notif_content", hide).apply()
     }
 
-    // ─── Auto-Lock ────────────────────────────────────────────────────────────
-
-    // 0 = выкл, иначе количество секунд неактивности до блокировки
     fun getAutoLockTimeout(context: Context): Int {
         return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getInt("auto_lock_timeout", 0)
@@ -396,9 +341,6 @@ object UserStorage {
             .edit().putInt("auto_lock_timeout", seconds).apply()
     }
 
-    // ─── Language ─────────────────────────────────────────────────────────────
-
-    /** "ru" или "en" */
     fun getLanguage(context: Context): String {
         return context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             .getString("app_language", "ru") ?: "ru"
@@ -408,8 +350,6 @@ object UserStorage {
         context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             .edit().putString("app_language", langCode).apply()
     }
-
-    // ─── Theme ────────────────────────────────────────────────────────────────
 
     fun getTheme(context: Context): com.bcon.messenger.ui.theme.BeaconTheme {
         val name = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
@@ -427,8 +367,6 @@ object UserStorage {
             .edit().putString("app_theme", theme.name).apply()
     }
 
-    // ─── Constant-Rate Cover Traffic ────────────────────────────────────────
-
     enum class CoverTrafficMode { OFF, MODERATE, AGGRESSIVE }
 
     fun getCoverTrafficMode(context: Context): CoverTrafficMode {
@@ -442,22 +380,12 @@ object UserStorage {
             .edit().putString("cover_traffic_mode", mode.name).apply()
     }
 
-    // ─── Post-Wipe Decoy Mode ────────────────────────────────────────────────
-
-    /**
-     * После экстренного вайпа emergencyWipe() записывает минимальные учётные данные
-     * в незашифрованные SharedPreferences ("beacon_recovery").
-     * При следующем запуске приложения этот метод переносит их в свежий
-     * EncryptedSharedPreferences и выставляет флаг decoy_mode.
-     * Пользователь вводит свой настоящий пароль → видит фейковые чаты.
-     */
     fun migrateDecoyState(context: Context) {
         val recovery = context.getSharedPreferences("beacon_recovery", Context.MODE_PRIVATE)
 
-        // Восстанавливаем маскировку калькулятора (независимо от decoy-аккаунта)
         if (recovery.getBoolean("calculator_disguise", false)) {
             setCalculatorDisguise(context, true)
-            // Надёжный plain-prefs сигнал для onUnlock: показать DecoyScreen
+
             context.getSharedPreferences("beacon_ui_state", Context.MODE_PRIVATE)
                 .edit().putBoolean("calc_pending_decoy", true).apply()
         }
@@ -472,7 +400,7 @@ object UserStorage {
 
         try {
             val enc = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
-            if (!enc.contains(KEY_USERNAME)) {  // только если прошёл полный вайп
+            if (!enc.contains(KEY_USERNAME)) {
                 enc.edit()
                     .putString(KEY_USERNAME,      username)
                     .putString(KEY_USER_ID,       userId)
@@ -482,10 +410,9 @@ object UserStorage {
             }
         } catch (_: Exception) {}
 
-        recovery.edit().clear().apply()  // удаляем временный файл
+        recovery.edit().clear().apply()
     }
 
-    /** Возвращает true если устройство находится в режиме фейка после экстренного вайпа. */
     fun isDecoyMode(context: Context): Boolean {
         return try {
             EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
@@ -493,12 +420,6 @@ object UserStorage {
         } catch (_: Exception) { false }
     }
 
-    /**
-     * Возвращает сохранённые индексы фейковых чатов (случайный выбор из пула).
-     * При первом вызове выбирает [count] случайных индексов из [poolSize] и сохраняет.
-     * Один и тот же набор отображается между перезапусками — полиция не заметит расхождений.
-     * После нового вайпа+decoy пул пересоздаётся заново.
-     */
     fun getOrCreateDecoySelection(context: Context, poolSize: Int, count: Int = 6): List<Int> {
         return try {
             val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
@@ -516,15 +437,11 @@ object UserStorage {
         }
     }
 
-    // ─── My Avatar ────────────────────────────────────────────────────────────
-
-    /** Сохраняет свой аватар как base64-строку (JPEG 128×128). */
     fun saveMyAvatar(context: Context, base64: String) {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .edit().putString("my_avatar_b64", base64).apply()
     }
 
-    /** Возвращает сохранённый base64-аватар или null если не установлен. */
     fun getMyAvatar(context: Context): String? {
         return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getString("my_avatar_b64", null)

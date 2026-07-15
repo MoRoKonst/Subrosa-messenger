@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,17 +9,6 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
-/**
- * Постоянное уведомление «Паника» на lock screen.
- *
- * Уведомление видно без разблокировки экрана (VISIBILITY_PUBLIC).
- * Кнопка в уведомлении — единственное действие, нажатие сразу
- * запускает HARD-вайп через WipeReceiver.
- *
- * Жизненный цикл:
- *   show()    — вызывать после успешного входа в приложение
- *   dismiss() — вызывать при wipe / logout
- */
 object PanicNotificationManager {
 
     const val ACTION_EMERGENCY_WIPE = "com.bcon.messenger.EMERGENCY_WIPE"
@@ -28,7 +17,6 @@ object PanicNotificationManager {
     private const val NOTIF_ID   = 9998
     private const val REQ_CODE   = 9200
 
-    /** Показать уведомление, если функция включена в настройках. */
     fun show(context: Context) {
         if (!UserStorage.getPanicButtonEnabled(context)) return
         ensureChannel(context)
@@ -37,9 +25,9 @@ object PanicNotificationManager {
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_delete)
             .setContentTitle(s.panicNotifTitle)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)  // видно на lock screen
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setOngoing(true)       // нельзя смахнуть
+            .setOngoing(true)
             .setAutoCancel(false)
             .addAction(0, s.panicNotifButton, makeWipePendingIntent(context))
             .build()
@@ -49,12 +37,9 @@ object PanicNotificationManager {
         } catch (_: SecurityException) {}
     }
 
-    /** Скрыть уведомление (при wipe / logout). */
     fun dismiss(context: Context) {
         NotificationManagerCompat.from(context).cancel(NOTIF_ID)
     }
-
-    // ── Internal ──────────────────────────────────────────────────────────────
 
     private fun makeWipePendingIntent(context: Context): PendingIntent {
         val intent = Intent(context, WipeReceiver::class.java).apply {

@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 
@@ -18,7 +18,7 @@ object ServerManager {
         val path: String = ""
     ) {
         fun toWssUrl(): String {
-            // Если хост уже содержит протокол — разобрать через Uri и пересобрать правильно
+
             if (host.contains("://")) {
                 return try {
                     val uri = android.net.Uri.parse(host)
@@ -34,7 +34,7 @@ object ServerManager {
                 }
             }
             val suffix = if (path.isNotEmpty()) "/$path" else ""
-            // Локальный сервер — без TLS
+
             if (host == "10.0.2.2" ||
                 host == "localhost" ||
                 host == "127.0.0.1" ||
@@ -44,7 +44,7 @@ object ServerManager {
                 host.matches(Regex("^172\\.(1[6-9]|2[0-9]|3[0-1])\\..*"))) {
                 return "ws://$host:$port$suffix"
             }
-            // Продакшн — TLS
+
             return if (port == 9000) "wss://$host$suffix" else "wss://$host:$port$suffix"
         }
     }
@@ -64,12 +64,12 @@ object ServerManager {
                     path    = obj.optString("path", "")
                 )
             }
-            // Миграция: заменяем устаревший адрес сервера на актуальный
+
             val defaults = getDefaultServers()
             var migrated = servers.map { s ->
                 if (s.host == "beacon-app.org") defaults.first() else s
             }.toMutableList()
-            // Добавляем onion-сервер если его ещё нет
+
             val onionServer = defaults[1]
             if (migrated.none { it.host == onionServer.host }) {
                 migrated.add(onionServer)
@@ -147,9 +147,6 @@ object ServerManager {
         }
     }
 
-    // ─── Меш-пиры (динамически полученные от серверов) ────────────────────────
-
-    /** Серверы, присланные через server_peers (кешируются между сессиями). */
     fun getDiscoveredPeers(context: Context): List<Server> {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val json = prefs.getString(KEY_DISCOVERED_PEERS, null) ?: return emptyList()
@@ -183,7 +180,6 @@ object ServerManager {
         prefs.edit().putString(KEY_DISCOVERED_PEERS, array.toString()).apply()
     }
 
-    /** Добавляет пир из полного URL (wss://host:port/path). Дубликаты игнорируются. */
     fun addDiscoveredPeer(context: Context, url: String) {
         val server = serverFromUrl(url) ?: return
         val peers = getDiscoveredPeers(context).toMutableList()
@@ -194,10 +190,6 @@ object ServerManager {
         }
     }
 
-    /**
-     * Все известные серверы: ручные (getServers) + меш-пиры (getDiscoveredPeers).
-     * Пиры уже присутствующие в ручном списке не дублируются.
-     */
     fun getAllKnownServers(context: Context): List<Server> {
         val manual = getServers(context)
         val discovered = getDiscoveredPeers(context)
@@ -212,8 +204,7 @@ object ServerManager {
             val host = uri.host?.takeIf { it.isNotEmpty() } ?: return null
             val port = if (uri.port != -1) uri.port else 443
             val path = uri.path?.trim('/') ?: ""
-            // Сохраняем полный URL как host — toWssUrl() увидит "://" и правильно
-            // сохранит схему (ws:// для домашних серверов без TLS).
+
             Server(host = url, port = port, name = "$host (peer)", enabled = true, path = path)
         } catch (e: Exception) { null }
     }

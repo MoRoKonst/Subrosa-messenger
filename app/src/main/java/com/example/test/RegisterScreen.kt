@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,7 +36,6 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
     var isGeneratingKeys by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    // Импорт бэкапа
     var showImportDialog by remember { mutableStateOf(false) }
     var importPassword by remember { mutableStateOf("") }
     var importError by remember { mutableStateOf("") }
@@ -174,7 +173,7 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                                 try {
                                     CryptoManager.generateKeyPair()
                                     UserStorage.register(context, username.trim(), password)
-                                    // Инициализировать SMK (второй слой шифрования) сразу после регистрации
+
                                     if (!StorageKeyManager.isSetup(context)) {
                                         StorageKeyManager.setup(context, password)
                                     }
@@ -207,7 +206,6 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Кнопка импорта бэкапа
             OutlinedButton(
                 onClick = { showImportDialog = true },
                 modifier = Modifier.fillMaxWidth().height(50.dp),
@@ -220,7 +218,6 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
         }
     }
 
-    // Диалог импорта
     if (showImportDialog) {
         AlertDialog(
             onDismissRequest = { showImportDialog = false; importPassword = ""; importError = "" },

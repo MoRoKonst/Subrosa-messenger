@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -82,11 +82,6 @@ fun PortholeSendButton(
     }
 }
 
-/**
- * Объединённая кнопка медиа:
- * - Tap  → переключение между голосом и видео
- * - Long → начать запись в текущем режиме
- */
 @Composable
 fun CombinedMediaButton(
     isVideoMode: Boolean,
@@ -164,7 +159,6 @@ fun CombinedMediaButton(
             }
         }
 
-        // Индикатор режима — маленькая точка в углу
         Box(
             modifier = Modifier
                 .size(8.dp)

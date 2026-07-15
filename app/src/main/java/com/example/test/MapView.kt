@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -77,7 +77,7 @@ fun MapDialog(
         )
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Карта на весь экран с мультитач
+
             AndroidView(
                 factory = { ctx ->
                     MapView(ctx).apply {
@@ -97,7 +97,6 @@ fun MapDialog(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Верхняя панель поверх карты
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

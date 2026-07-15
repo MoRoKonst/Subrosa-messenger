@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.util.Base64
@@ -35,10 +35,7 @@ object ChannelManager {
     private const val PREFS_CHANNELS = "subscribed_channels"
     private const val KEY_LIST = "channels_list"
 
-    /** Bumped on every saveChannel / removePost — ChannelFeedScreen collects this to refresh UI */
     val channelUpdateEvents = MutableStateFlow(0L)
-
-    // ─── Channels ────────────────────────────────────────────────────────────
 
     fun getChannels(context: Context): List<Channel> {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_CHANNELS)
@@ -77,7 +74,7 @@ object ChannelManager {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_CHANNELS)
         val list = getChannels(context).filter { it.id != channelId }
         prefs.edit().putString(KEY_LIST, serializeChannels(list)).apply()
-        // Clear cached posts
+
         EncryptedStorage.getEncryptedPrefs(context, "ch_posts_$channelId")
             .edit().clear().apply()
         channelUpdateEvents.value = System.currentTimeMillis()
@@ -105,8 +102,6 @@ object ChannelManager {
         }
         return arr.toString()
     }
-
-    // ─── Posts ───────────────────────────────────────────────────────────────
 
     fun addPost(context: Context, post: ChannelPost) {
         val posts = loadPosts(context, post.channelId).toMutableList()
@@ -159,12 +154,6 @@ object ChannelManager {
         prefs.edit().putString("posts", arr.toString()).apply()
     }
 
-    // ─── Links ───────────────────────────────────────────────────────────────
-
-    /**
-     * Generates a subscribe deep link for the channel.
-     * Format: beacon://channel?id=CHANNEL_ID&name=NAME_B64&avatar=AVATAR_B64
-     */
     fun generateSubscribeLink(
         channelId: String,
         channelName: String,

@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.app.AlarmManager
 import android.app.NotificationChannel
@@ -21,14 +21,12 @@ object DeadMansSwitchManager {
     private const val REQ_FIRE          = 9100
     private const val REQ_WIPE          = 9101
     private const val REQ_CHECKIN       = 9102
-    const val GRACE_PERIOD_MS           = 15 * 60 * 1000L  // 15 минут
-
-    // ── Публичный API ─────────────────────────────────────────────────────────
+    const val GRACE_PERIOD_MS           = 15 * 60 * 1000L
 
     fun enable(context: Context, intervalHours: Int) {
         UserStorage.setDmsEnabled(context, true)
         UserStorage.setDmsIntervalHours(context, intervalHours)
-        checkIn(context)  // сбросить таймер и запланировать первый алерт
+        checkIn(context)
     }
 
     fun disable(context: Context) {
@@ -49,7 +47,6 @@ object DeadMansSwitchManager {
         return (intervalMs - elapsed).coerceAtLeast(0L)
     }
 
-    /** Пользователь подтвердил безопасность — сбросить таймер. */
     fun checkIn(context: Context) {
         val now = System.currentTimeMillis()
         UserStorage.setDmsLastCheckin(context, now)
@@ -60,13 +57,10 @@ object DeadMansSwitchManager {
         }
     }
 
-    /** Немедленно показать предупреждение (для триггера таймаута пароля). */
     fun triggerWarningImmediate(context: Context) {
         showWarningNotification(context)
         scheduleWipeAlarm(context, GRACE_PERIOD_MS)
     }
-
-    // ── AlarmManager ──────────────────────────────────────────────────────────
 
     fun scheduleFireAlarm(context: Context) {
         val triggerAt = UserStorage.getDmsLastCheckin(context) +
@@ -84,7 +78,7 @@ object DeadMansSwitchManager {
     private fun scheduleExact(context: Context, triggerAt: Long, intent: PendingIntent) {
         val am = getAlarmManager(context)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
-            // Разрешение не выдано — используем менее точный но безопасный вариант
+
             am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, intent)
         } else {
             am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, intent)
@@ -95,8 +89,6 @@ object DeadMansSwitchManager {
         getAlarmManager(context).cancel(makePendingIntent(context, ACTION_DMS_FIRE, REQ_FIRE))
         getAlarmManager(context).cancel(makePendingIntent(context, ACTION_DMS_WIPE, REQ_WIPE))
     }
-
-    // ── Уведомления ───────────────────────────────────────────────────────────
 
     fun showWarningNotification(context: Context) {
         ensureChannel(context)
@@ -125,9 +117,6 @@ object DeadMansSwitchManager {
         NotificationManagerCompat.from(context).cancel(NOTIF_WARNING_ID)
     }
 
-    // ── Вспомогательные ───────────────────────────────────────────────────────
-
-    /** Получить строки для языка пользователя вне Compose-контекста. */
     private fun strings(context: Context): AppStrings =
         if (UserStorage.getLanguage(context) == "en") enStrings else ruStrings
 

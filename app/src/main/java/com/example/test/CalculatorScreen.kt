@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,30 +16,22 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * Полноэкранный калькулятор — маскировка приложения.
- * При вводе «4 + 20 =» вызывает [onUnlock] для перехода в мессенджер.
- * Все прочие вычисления работают как обычный калькулятор.
- */
 @Composable
 fun CalculatorScreen(onUnlock: () -> Unit) {
 
-    // ── State ──────────────────────────────────────────────────────────────────
     var display      by remember { mutableStateOf("0") }
     var pendingOp    by remember { mutableStateOf<String?>(null) }
     var pendingVal   by remember { mutableStateOf(0.0) }
-    var pendingStr   by remember { mutableStateOf("") }   // строка первого операнда
+    var pendingStr   by remember { mutableStateOf("") }
     var isNewInput   by remember { mutableStateOf(true) }
 
-    // ── Colors (iOS-style dark) ────────────────────────────────────────────────
     val bgColor      = Color(0xFF000000)
-    val topRowColor  = Color(0xFFA5A5A5)   // C  +/−  %
-    val opColor      = Color(0xFFFF9F0A)   // ÷  ×  −  +  =
-    val digitColor   = Color(0xFF333333)   // цифры и .
+    val topRowColor  = Color(0xFFA5A5A5)
+    val opColor      = Color(0xFFFF9F0A)
+    val digitColor   = Color(0xFF333333)
     val textDark     = Color(0xFF000000)
     val textLight    = Color(0xFFFFFFFF)
 
-    // ── Helpers ────────────────────────────────────────────────────────────────
     fun fmt(v: Double): String {
         if (v.isNaN()) return "Ошибка"
         if (v.isInfinite()) return if (v > 0) "∞" else "-∞"
@@ -64,7 +56,7 @@ fun CalculatorScreen(onUnlock: () -> Unit) {
         } else {
             if (display == "0" && d != ".") display = d
             else if (d == "." && display.contains(".")) return
-            else if (display.length >= 12) return      // cap длины
+            else if (display.length >= 12) return
             else display += d
         }
     }
@@ -82,7 +74,6 @@ fun CalculatorScreen(onUnlock: () -> Unit) {
     fun onEquals() {
         if (pendingOp == null) return
 
-        // ── Секретный код: 4 + 20 = ───────────────────────────────────────────
         if (pendingStr == "4" && pendingOp == "+" && display == "20") {
             onUnlock()
             return
@@ -106,9 +97,6 @@ fun CalculatorScreen(onUnlock: () -> Unit) {
         val v = display.toDoubleOrNull() ?: return; display = fmt(v / 100.0)
     }
 
-    // ── Button grid definition ─────────────────────────────────────────────────
-    // Каждый элемент: Triple(label, weight, bgColor)
-    // "0" занимает 2 колонки (weight=2)
     data class CalcBtn(val label: String, val weight: Float = 1f, val bg: Color, val fg: Color)
 
     val rows = listOf(
@@ -143,7 +131,6 @@ fun CalculatorScreen(onUnlock: () -> Unit) {
         )
     )
 
-    // ── UI ─────────────────────────────────────────────────────────────────────
     Column(
         Modifier
             .fillMaxSize()
@@ -153,7 +140,6 @@ fun CalculatorScreen(onUnlock: () -> Unit) {
         verticalArrangement = Arrangement.Bottom
     ) {
 
-        // Дисплей
         Column(
             Modifier
                 .fillMaxWidth()
@@ -185,7 +171,6 @@ fun CalculatorScreen(onUnlock: () -> Unit) {
 
         Spacer(Modifier.height(4.dp))
 
-        // Кнопки
         Column(
             Modifier.padding(horizontal = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)

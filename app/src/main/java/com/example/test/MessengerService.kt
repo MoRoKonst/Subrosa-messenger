@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.app.*
 import android.content.Context
@@ -38,13 +38,13 @@ class MessengerService : Service() {
 
     companion object {
         const val CHANNEL_ID = "messenger_channel"
-        /** Тихий канал только для foreground-уведомления сервиса. */
+
         const val CHANNEL_ID_SERVICE = "messenger_service_silent"
         const val NOTIFICATION_ID = 1
         private const val TAG = "MessengerService"
-        /** Флаг реального WebSocket-подключения (handshake завершён). Читается из UI. */
+
         @Volatile var connected: Boolean = false
-        /** Реактивный статус подключения для Compose UI. */
+
         val connectionState = MutableStateFlow(false)
     }
 
@@ -54,19 +54,15 @@ class MessengerService : Service() {
 
     private val binder = LocalBinder()
 
-    /** Возвращает строки для текущего языка приложения. */
     private val s: AppStrings get() = if (UserStorage.getLanguage(this) == "en") enStrings else ruStrings
 
-    // ─── WebSocket ────────────────────────────────────────────────────────────
     private var handshakeComplete = false
     private var webSocket: WebSocket? = null
 
-    // Клиент без Tor (прямое подключение)
     private val wsClient: OkHttpClient by lazy {
         buildOkHttpClient(useTor = false)
     }
 
-    // Клиент через Tor (SOCKS5 → Orbot 127.0.0.1:9050)
     private val wsTorClient: OkHttpClient by lazy {
         buildOkHttpClient(useTor = true)
     }
@@ -77,10 +73,7 @@ class MessengerService : Service() {
             .connectTimeout(if (useTor) 60 else 15, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.SECONDS)
         if (useTor) {
-            // Кастомный SocketFactory: передаёт имя хоста в Orbot без локального DNS-резолва.
-            // Стандартный .proxy() резолвит хост через системный DNS до SOCKS5 — DNS-утечка.
-            // createUnresolved() отправляет строку напрямую в Orbot (SOCKS5 DOMAIN-тип),
-            // что также позволяет подключаться к .onion-адресам.
+
             val torProxy = java.net.Proxy(
                 java.net.Proxy.Type.SOCKS,
                 java.net.InetSocketAddress(TorManager.SOCKS_HOST, TorManager.SOCKS_PORT)
@@ -109,20 +102,19 @@ class MessengerService : Service() {
         return builder.build()
     }
 
-    // Возвращает нужный клиент в зависимости от состояния Tor
     private fun activeWsClient(): OkHttpClient {
         if (!TorManager.isConnected) return wsClient
-        // Проверяем что SOCKS доступен
+
         val socksAvailable = try {
             val s = java.net.Socket()
             s.connect(java.net.InetSocketAddress(TorManager.SOCKS_HOST, TorManager.SOCKS_PORT), 1000)
             s.close(); true
         } catch (e: Exception) { false }
         return if (socksAvailable) {
-            // SOCKS режим — явный прокси без DNS-утечки
+
             wsTorClient
         } else {
-            // VPN режим Orbot — трафик перехватывается системой, используем обычный клиент
+
             Log.d(TAG, "Orbot VPN режим — используем прямой клиент")
             wsClient
         }
@@ -134,23 +126,23 @@ class MessengerService : Service() {
     private var isConnecting = false
     private var handshakeDone = false
     private var reconnectAttempts = 0
-    private var failuresOnCurrentServer = 0          // счётчик неудач на текущем сервере
-    private val MAX_FAILURES_BEFORE_SWITCH = 3       // сколько неудач до переключения
+    private var failuresOnCurrentServer = 0
+    private val MAX_FAILURES_BEFORE_SWITCH = 3
     private var username = ""
 
     private val publicKeys = mutableMapOf<String, String>()
     private val tokensSentThisSession = mutableSetOf<String>()
     private val pendingMessages = mutableMapOf<String, MutableList<Pair<String, String>>>()
-    // Дедупликация групповых сообщений: защита от replay-атаки через сервер
+
     private val processedGroupMessageIds = mutableSetOf<String>()
     private val pendingSessionMessages = mutableMapOf<String, MutableList<Pair<String, String>>>()
     private val pendingReactions = mutableListOf<Triple<String, String, String>>()
-    // Очередь видеокружков для отправки при офлайн / нет ключа
+
     private data class PendingVideoCircle(val to: String, val videoId: String, val encFilePath: String, val duration: Int)
     private val pendingVideoCircles = mutableListOf<PendingVideoCircle>()
-    // id → время получения; очистка по TTL вместо фиксированного окна в 100 сообщений
+
     private val receivedMessageIds = HashMap<String, Long>()
-    private val REPLAY_WINDOW_MS = 60 * 60 * 1000L  // 1 час
+    private val REPLAY_WINDOW_MS = 60 * 60 * 1000L
     private val imageChunks = mutableMapOf<String, MutableMap<Int, String>>()
     private val imageTotals = mutableMapOf<String, Int>()
     private val fileChunks = mutableMapOf<String, FileMeta>()
@@ -158,7 +150,7 @@ class MessengerService : Service() {
     private val fileChunkAcks = mutableMapOf<String, kotlinx.coroutines.channels.Channel<Int>>()
     private val videoChunkAcks = mutableMapOf<String, kotlinx.coroutines.channels.Channel<Int>>()
     private val cancelledTransfers = mutableSetOf<String>()
-    // Накопленные строки для InboxStyle уведомлений: key → список последних сообщений
+
     private val notifLines = mutableMapOf<String, MutableList<String>>()
 
     var onMessageReceived: ((String, String) -> Unit)? = null
@@ -166,34 +158,27 @@ class MessengerService : Service() {
     var onReactionReceived: ((String, String, String) -> Unit)? = null
     var onTypingReceived: ((String) -> Unit)? = null
     var onReadReceived: ((String) -> Unit)? = null
-    var onDeliveredReceived: ((String) -> Unit)? = null   // msgId → sender delivered it
+    var onDeliveredReceived: ((String) -> Unit)? = null
     var onEditReceived: ((String, String) -> Unit)? = null
     var onImageReceived: ((String, android.graphics.Bitmap) -> Unit)? = null
     var onKeyChanged: ((String) -> Unit)? = null
     var onVoiceReceived: ((String, File, Int) -> Unit)? = null
     var onFileReceived: ((String, File, String) -> Unit)? = null
     var onGroupMessageReceived: ((String, GroupMessage) -> Unit)? = null
-    var onGroupReactionReceived: ((String, String, String, String) -> Unit)? = null  // groupId, from, messageId, emoji
+    var onGroupReactionReceived: ((String, String, String, String) -> Unit)? = null
     var onGroupInviteReceived: ((Group, String) -> Unit)? = null
-    var onChannelPostReceived: ((String, ChannelPost) -> Unit)? = null  // channelId, post
+    var onChannelPostReceived: ((String, ChannelPost) -> Unit)? = null
     var onChannelCreated: ((Channel) -> Unit)? = null
-    var onChannelPostDeleted: ((String, String) -> Unit)? = null        // channelId, postId
-    var onChannelInfoUpdated: ((String) -> Unit)? = null                // channelId
-    var onChannelDeleted: ((String) -> Unit)? = null                    // channelId
-    var onMessageDeleted: ((fromId: String, messageId: String) -> Unit)? = null  // удалено у всех
+    var onChannelPostDeleted: ((String, String) -> Unit)? = null
+    var onChannelInfoUpdated: ((String) -> Unit)? = null
+    var onChannelDeleted: ((String) -> Unit)? = null
+    var onMessageDeleted: ((fromId: String, messageId: String) -> Unit)? = null
     var onDisappearTimerChanged: ((fromId: String, seconds: Long) -> Unit)? = null
     var onGroupMessageDeleted: ((groupId: String, messageId: String) -> Unit)? = null
     var onVideoReceived: ((videoId: String, file: File, duration: Int) -> Unit)? = null
 
-    // ─── Lifecycle ────────────────────────────────────────────────────────────
-
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
 
-    // ─── Silent audio + MediaSession — захватывает Volume кнопки на lock screen ──
-    // AudioTrack один недостаточен: Android не знает что приложение "играет".
-    // MediaSession с STATE_PLAYING регистрирует нас как активный медиаплеер —
-    // только тогда Volume кнопки на lock screen адресуются к STREAM_MUSIC
-    // и ContentObserver стабильно получает onChange().
     private var silentTrack: AudioTrack? = null
     private var silentJob: Job? = null
     private var silentSession: MediaSession? = null
@@ -203,7 +188,7 @@ class MessengerService : Service() {
     private fun startSilentAudio() {
         if (silentTrack != null || !UserStorage.isEmergencyWipeEnabled(this)) return
         try {
-            // 1. AudioTrack: беззвучный поток PCM на STREAM_MUSIC
+
             val rate = 8000
             val bufSize = AudioTrack.getMinBufferSize(
                 rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -227,7 +212,7 @@ class MessengerService : Service() {
                 .build()
                 .also { it.play() }
 
-            val silence = ShortArray(bufSize / 2)  // PCM16 → Short, all zeros
+            val silence = ShortArray(bufSize / 2)
             silentJob = scope.launch(Dispatchers.IO) {
                 while (isActive) {
                     if (silentTrack?.playState == AudioTrack.PLAYSTATE_PLAYING) {
@@ -236,8 +221,6 @@ class MessengerService : Service() {
                 }
             }
 
-            // 2. AudioFocus: явно занимаем STREAM_MUSIC, чтобы Volume-кнопки
-            //    всегда адресовались к медиапотоку, а не рингтону
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val focusAttr = AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -250,8 +233,6 @@ class MessengerService : Service() {
                 getSystemService(AudioManager::class.java).requestAudioFocus(audioFocusRequest!!)
             }
 
-            // 3. MediaSession STATE_PLAYING: сообщает ОС что мы активный медиаплеер
-            //    → Volume-кнопки на lock screen → STREAM_MUSIC
             silentSession = MediaSession(this, "beacon_vol_guard").apply {
                 setPlaybackToLocal(
                     AudioAttributes.Builder()
@@ -268,19 +249,12 @@ class MessengerService : Service() {
                 isActive = true
             }
 
-            // 4. Поллинг getStreamVolume: работает и при заблокированном экране.
-            //    На Android 12+ Settings.System не обновляется при изменении громкости
-            //    через lock screen, поэтому ContentObserver ненадёжен — читаем
-            //    AudioService напрямую.
-            //    Когда громкость достигает минимума — тихо восстанавливаем до safeVol,
-            //    чтобы следующие нажатия тоже детектировались (ADJUST_SAME не меняет значение).
             val am = getSystemService(AudioManager::class.java)
             val minVol  = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
                 am.getStreamMinVolume(AudioManager.STREAM_MUSIC) else 0
             val safeVol = (am.getStreamMaxVolume(AudioManager.STREAM_MUSIC) / 3)
                 .coerceAtLeast(minVol + 3)
-            // Если уже на минимуме — поднимаем до safeVol, иначе первые нажатия
-            // дадут ADJUST_SAME и не будут детектированы
+
             if (am.getStreamVolume(AudioManager.STREAM_MUSIC) <= minVol) {
                 am.setStreamVolume(AudioManager.STREAM_MUSIC, safeVol, 0)
             }
@@ -293,7 +267,7 @@ class MessengerService : Service() {
                         current < lastVol -> {
                             lastVol = current
                             volumeObserver.dispatchChange(false)
-                            // Достигли минимума — восстанавливаем без показа UI (flags=0)
+
                             if (current <= minVol) {
                                 am.setStreamVolume(AudioManager.STREAM_MUSIC, safeVol, 0)
                                 lastVol = safeVol
@@ -319,7 +293,6 @@ class MessengerService : Service() {
         audioFocusRequest = null
     }
 
-    // ─── Volume × 5 в фоне → Emergency Wipe ─────────────────────────────────────
     private var volPressCount = 0
     private var firstVolPressMs = 0L
     private val volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -338,7 +311,6 @@ class MessengerService : Service() {
         }
     }
 
-    // ─── Детектирование новых Accessibility-сервисов в фоне ─────────────────────
     private val knownA11yServices = mutableSetOf<String>()
     private val a11yObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
@@ -442,14 +414,14 @@ class MessengerService : Service() {
                 scope.launch { connect() }
             }
         }
-        // Orbot не запустился — подключаемся напрямую без Tor
+
         TorManager.onTorError = { _ ->
             if (!isConnected && !isConnecting) {
                 scope.launch { connect() }
             }
         }
         if (TorManager.isConnected) {
-            // Tor уже готов (запущен MainActivity ранее) — подключаемся сразу
+
             scope.launch { connect() }
         } else {
             TorManager.start(this, scope)
@@ -484,14 +456,14 @@ class MessengerService : Service() {
             .build()
         networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: android.net.Network) {
-                // Сеть появилась — переподключаемся если не подключены
+
                 Log.d(TAG, "Сеть доступна — проверяем соединение")
                 if (!isConnected && !isConnecting) {
                     scope.launch { connect() }
                 }
             }
             override fun onLost(network: android.net.Network) {
-                // Сеть пропала — сначала завершаем активный звонок, потом закрываем сокет
+
                 Log.d(TAG, "Сеть потеряна — закрываем соединение")
                 if (CallManager.callId.isNotEmpty() && username.isNotEmpty()) {
                     val peers = CallManager.peerConnections.keys.toList()
@@ -530,8 +502,7 @@ class MessengerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "=== СЕРВИС ЗАПУЩЕН ===")
-        // Вычисляем username из текущего ключа AndroidKeyStore (как делает сервер).
-        // Если ключи пересоздавались — сохранённый userId мог устареть.
+
         username = try {
             val pubKeyStr = CryptoManager.getPublicKeyString()
             val keyBytes = android.util.Base64.decode(pubKeyStr, android.util.Base64.NO_WRAP)
@@ -590,7 +561,6 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
-        // Channel operations via intent
         intent?.getStringExtra("channel_post_id")?.let { channelId ->
             val text = intent.getStringExtra("channel_post_text") ?: return@let
             val msgId = intent.getStringExtra("channel_post_msg_id") ?: UUID.randomUUID().toString()
@@ -641,7 +611,6 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
-        // ── FCM token registration ────────────────────────────────────────────
         intent?.getStringExtra("fcm_token")?.let { token ->
             if (isConnected) {
                 scope.launch(Dispatchers.IO) {
@@ -652,14 +621,13 @@ class MessengerService : Service() {
                     }.toString())
                 }
             } else {
-                // Сохраняем для отправки после подключения
+
                 getSharedPreferences("fcm_prefs", android.content.Context.MODE_PRIVATE)
                     .edit().putString("pending_fcm_token", token).apply()
             }
             return START_STICKY
         }
 
-        // ── Call signaling via intent ─────────────────────────────────────────
         intent?.getStringExtra("call_signal")?.let { signalJson ->
             if (isConnected) {
                 scope.launch(Dispatchers.IO) {
@@ -693,7 +661,6 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
-        // ── Get channel info (subscriber count, pinned post) ──────────────────
         intent?.getStringExtra("channel_get_info_id")?.let { channelId ->
             if (isConnected) {
                 scope.launch(Dispatchers.IO) {
@@ -707,7 +674,6 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
-        // ── Delete post ───────────────────────────────────────────────────────
         intent?.getStringExtra("channel_delete_post_channel_id")?.let { channelId ->
             val postId = intent.getStringExtra("channel_delete_post_id") ?: return@let
             if (isConnected) {
@@ -723,7 +689,6 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
-        // ── Update channel info (name / description / avatar) ─────────────────
         intent?.getStringExtra("channel_update_info_id")?.let { channelId ->
             val name   = intent.getStringExtra("channel_update_info_name") ?: return@let
             val desc   = intent.getStringExtra("channel_update_info_desc") ?: ""
@@ -743,7 +708,6 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
-        // ── Delete channel ────────────────────────────────────────────────────
         intent?.getStringExtra("channel_delete_id")?.let { channelId ->
             if (isConnected) {
                 scope.launch(Dispatchers.IO) {
@@ -757,7 +721,6 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
-        // ── Pin / unpin post ──────────────────────────────────────────────────
         intent?.getStringExtra("channel_pin_post_channel_id")?.let { channelId ->
             val postId = intent.getStringExtra("channel_pin_post_id") ?: return@let
             val unpin  = intent.getBooleanExtra("channel_pin_post_unpin", false)
@@ -775,17 +738,15 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
-        // ── Forward post text to contact ──────────────────────────────────────
         intent?.getStringExtra("forward_to")?.let { contactId ->
             val text = intent.getStringExtra("forward_text") ?: return@let
             scope.launch(Dispatchers.IO) { send(contactId, text) }
             return START_STICKY
         }
 
-        // ── Обновление аватара профиля ───────────────────────────────────────
         intent?.getStringExtra("avatar_update")?.let { b64 ->
             UserStorage.saveMyAvatar(this, b64)
-            // Обновляем собственный аватар в AvatarStore
+
             try {
                 val bytes = android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)
                 val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -814,12 +775,6 @@ class MessengerService : Service() {
 
     override fun onBind(intent: Intent): IBinder = binder
 
-    // ─── WebSocket отправка ───────────────────────────────────────────────────
-
-    // ─── Constant-rate cover traffic ─────────────────────────────────────────
-    // AGGRESSIVE: реальные сообщения в очередь, отправляются по таймеру — наблюдатель видит равномерный поток.
-    // MODERATE: реальные сообщения немедленно, шум заполняет паузы — без задержки, но паттерн виден.
-
     private val outboundQueue = java.util.concurrent.LinkedBlockingQueue<String>(200)
     private var coverTrafficJob: kotlinx.coroutines.Job? = null
 
@@ -837,7 +792,7 @@ class MessengerService : Service() {
                 if (packet != null) {
                     webSocket?.send(packet)
                 } else {
-                    // Шумовой пакет — неотличим от реального по размеру
+
                     val fakeToken = AnonTokenManager.generateDummyToken()
                     val noise = addPadding(JSONObject().apply {
                         put("type", "anon_message")
@@ -873,8 +828,6 @@ class MessengerService : Service() {
         }
     }
 
-    // ─── Connect ──────────────────────────────────────────────────────────────
-
     private suspend fun connect() {
         if (isConnected) return
         if (isConnecting) return
@@ -895,7 +848,6 @@ class MessengerService : Service() {
 
                 val wsUrl = server.toWssUrl()
 
-                // Onion-адрес требует Tor — если SOCKS недоступен, ждём
                 if (wsUrl.contains(".onion") && !TorManager.isConnected) {
                     Log.w(TAG, "Onion-сервер выбран, но Tor недоступен — ждём Orbot")
                     delay(5000)
@@ -903,7 +855,6 @@ class MessengerService : Service() {
                 }
 
                 Log.d(TAG, "Подключаемся к $wsUrl")
-
 
                 val request = Request.Builder()
                     .url(wsUrl)
@@ -946,9 +897,8 @@ class MessengerService : Service() {
                     }
                 }
 
-                handshakeDone = false  // Сброс
+                handshakeDone = false
 
-                // Onion через Orbot VPN — не используем явный SOCKS прокси
                 val client = if (wsUrl.contains(".onion")) wsClient else activeWsClient()
                 webSocket = client.newWebSocket(request, listener)
 
@@ -959,16 +909,12 @@ class MessengerService : Service() {
                     handshakeDone
                 } ?: false
 
-                // BUG FIX: handshakeDone=true устанавливается и при onFailure,
-                // поэтому дополнительно проверяем isConnected.
-                // Если onFailure сработал → isConnected=false → бросаем исключение.
                 if (!success || !isConnected) {
                     Log.e(TAG, "Handshake failed (success=$success, connected=$isConnected)")
                     webSocket?.close(1000, "handshake failed")
                     throw Exception("Handshake failed")
                 }
 
-                // Регистрация
                 val displayName = UserStorage.getUsername(this@MessengerService)
                 val myAvatarB64 = UserStorage.getMyAvatar(this@MessengerService) ?: ""
                 sendWs(JSONObject().apply {
@@ -985,7 +931,7 @@ class MessengerService : Service() {
                 contacts.forEach { contactId ->
                     val savedKey = ChatStorage.getContactPublicKey(this@MessengerService, contactId)
                     if (savedKey != null) publicKeys[contactId] = savedKey
-                    // Загружаем сохранённые аватары контактов в AvatarStore
+
                     val b64 = ChatStorage.getContactAvatar(this@MessengerService, contactId)
                     if (!b64.isNullOrBlank()) {
                         try {
@@ -1001,7 +947,6 @@ class MessengerService : Service() {
                 SessionKeyManager.initialize(this@MessengerService)
                 publishPrekeyBundle()
 
-                // Подписываемся на наши анонимные токены доставки
                 val myTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
                 if (myTokens.isNotEmpty()) {
                     sendWs(JSONObject().apply {
@@ -1017,7 +962,6 @@ class MessengerService : Service() {
                     failuresOnCurrentServer = 0
                 }
 
-                // Отправляем FCM-токен если есть (для wake-up уведомлений)
                 val pendingToken = getSharedPreferences("fcm_prefs", android.content.Context.MODE_PRIVATE)
                     .getString("pending_fcm_token", null)
                     ?: getSharedPreferences("fcm_prefs", android.content.Context.MODE_PRIVATE)
@@ -1034,7 +978,6 @@ class MessengerService : Service() {
 
                 flushQueue()
 
-                // Ждём пока соединение живо
                 while (isConnected && scope.isActive) {
                     delay(1000)
                 }
@@ -1048,7 +991,7 @@ class MessengerService : Service() {
                 failuresOnCurrentServer++
 
                 if (failuresOnCurrentServer >= MAX_FAILURES_BEFORE_SWITCH) {
-                    // Текущий сервер недоступен — переключаемся на следующий
+
                     val next = ServerManager.switchToNext(this@MessengerService)
                     failuresOnCurrentServer = 0
                     reconnectAttempts = 0
@@ -1065,8 +1008,6 @@ class MessengerService : Service() {
         }
         isConnecting = false
     }
-
-    // ─── Обработка входящих сообщений ─────────────────────────────────────────
 
     private suspend fun handleMessage(json: JSONObject) {
         val type = json.optString("type")
@@ -1098,7 +1039,7 @@ class MessengerService : Service() {
 
                 try {
                     if (!SessionKeyManager.hasSession("__init_check__")) {
-                        // Повторная инициализация если нужно
+
                         SessionKeyManager.initialize(this@MessengerService)
                         Log.d(TAG, "SessionKeyManager переинициализирован")
                     }
@@ -1119,9 +1060,8 @@ class MessengerService : Service() {
                     onStatusChanged?.invoke(true)
                 }
 
-                // Флашим видеокружки, накопившиеся пока были офлайн
                 flushPendingVideoCircles()
-                // Опрашиваем mailbox только если есть активные инвайт-теги
+
                 pollMailbox()
                 scope.launch(Dispatchers.IO) {
                     while (isConnected && scope.isActive) {
@@ -1158,8 +1098,6 @@ class MessengerService : Service() {
 
             "ping" -> sendWs(JSONObject().apply { put("type", "pong") }.toString())
 
-            // Сервер доставляет TURN-учётные данные после регистрации.
-            // Хранятся только в памяти — не записываются на диск.
             "turn_config" -> {
                 val turnUser = json.optString("user", "")
                 val turnPass = json.optString("pass", "")
@@ -1172,7 +1110,6 @@ class MessengerService : Service() {
                 }
             }
 
-            // Список меш-пиров от сервера (резервные адреса для фейловера)
             "server_peers" -> {
                 val peersArray = json.optJSONArray("peers")
                 if (peersArray != null && peersArray.length() > 0) {
@@ -1186,7 +1123,6 @@ class MessengerService : Service() {
                 }
             }
 
-            // Сервер доставляет аватар пользователя (при регистрации других или profile_update)
             "avatar_data" -> {
                 val fromUser = json.optString("from", null) ?: return
                 val b64 = json.optString("avatar", null) ?: return
@@ -1208,7 +1144,7 @@ class MessengerService : Service() {
                 val targetUsername = json.getString("username")
                 val key = if (json.isNull("key")) null else json.getString("key")
                 if (key != null) {
-                    // Конвертация URL-safe Base64
+
                     val fixedKey = key.replace('-', '+').replace('_', '/')
 
                     if (KeyHistoryManager.checkKeyChange(this@MessengerService, targetUsername, fixedKey)) {
@@ -1216,8 +1152,7 @@ class MessengerService : Service() {
                     }
                     publicKeys[targetUsername] = fixedKey
                     ChatStorage.saveContactPublicKey(this@MessengerService, targetUsername, fixedKey)
-                    // Если были сообщения, ожидавшие этот ключ — сразу отправляем их.
-                    // pendingMessages заполняется в flushQueue() когда ключ не закэширован.
+
                     if (pendingMessages.remove(targetUsername) != null) {
                         MessageQueue.load(this@MessengerService)
                             .filter { it.to == targetUsername }
@@ -1237,14 +1172,13 @@ class MessengerService : Service() {
                 val from = json.getString("from")
                 Log.w(TAG, "session_reset от $from — сбрасываем сессию, ждём их session_init")
                 SessionKeyManager.deleteSession(from)
-                // НЕ запрашиваем bundle сами — иначе оба инициируют X3DH одновременно и сессии
-                // расходятся. Отправитель session_reset сам переинициирует и пришлёт session_init.
+
             }
 
             "read" -> {
                 val messageId = json.getString("id")
                 val from = json.optString("from", null)
-                // Персистируем: помечаем все собственные до этого сообщения как прочитанные
+
                 if (from != null) {
                     val myId = UserStorage.getUserId(this@MessengerService)
                     ChatStorage.markRead(this@MessengerService, myId, from, messageId)
@@ -1255,7 +1189,7 @@ class MessengerService : Service() {
             "delivered" -> {
                 val messageId = json.optString("id", null) ?: return
                 val from      = json.optString("from", null) ?: return
-                // Persist delivery status in storage
+
                 val myId = UserStorage.getUserId(this@MessengerService)
                 ChatStorage.markDelivered(this@MessengerService, myId, from, messageId)
                 withContext(Dispatchers.Main) { onDeliveredReceived?.invoke(messageId) }
@@ -1352,7 +1286,6 @@ class MessengerService : Service() {
                 if (signature != null && senderKey != null &&
                     CryptoManager.verifyChunk(chunkData, signature, senderKey, imageId, chunkIndex)) {
 
-                    // Отправляем ACK
                     sendWs(JSONObject().apply {
                         put("type", "chunk_ack")
                         put("image_id", imageId)
@@ -1360,11 +1293,10 @@ class MessengerService : Service() {
                     }.toString())
 
                     try {
-                        // Ключ буфера включает отправителя, чтобы два разных отправителя
-                        // с одинаковым imageId не смешивали чанки друг друга.
+
                         val transferKey = "$from:$imageId"
                         if (isEncrypted) {
-                            // Новый формат: собираем зашифрованные чанки
+
                             val chunks = imageChunks.getOrPut(transferKey) { mutableMapOf() }
                             chunks[chunkIndex] = chunkData
                             imageTotals[transferKey] = totalChunks
@@ -1375,11 +1307,9 @@ class MessengerService : Service() {
                                 val ordered = (0 until totalChunks).map { chunks[it]!! }
                                 val packedData = ordered.joinToString("")
 
-                                // Расшифровываем
                                 val encryptedFileData = CryptoManager.unpackEncryptedFile(packedData)
                                 val decryptedBytes = CryptoManager.decryptFile(encryptedFileData)
 
-                                // Декодируем bitmap
                                 val bitmap = android.graphics.BitmapFactory.decodeByteArray(
                                     decryptedBytes, 0, decryptedBytes.size
                                 )
@@ -1393,7 +1323,7 @@ class MessengerService : Service() {
                                 }
                             }
                         } else {
-                            // Legacy формат: текстовые чанки
+
                             val decryptedChunk = CryptoManager.decrypt(chunkData)
                             val chunks = imageChunks.getOrPut(transferKey) { mutableMapOf() }
                             chunks[chunkIndex] = decryptedChunk
@@ -1452,8 +1382,6 @@ class MessengerService : Service() {
                         put("chunk_index", chunkIndex)
                     }.toString())
 
-                    // Ключ буфера включает отправителя — изолируем передачи разных
-                    // отправителей с одинаковым fileId друг от друга.
                     val fileTransferKey = "$from:$fileId"
 
                     if (!fileChunks.containsKey(fileTransferKey)) {
@@ -1543,9 +1471,6 @@ class MessengerService : Service() {
                         Log.e(TAG, "⚠️ video_chunk неверная подпись от $from")
                         return
                     }
-                    // Примечание: chunk_ack отправляет сам СЕРВЕР отправителю сразу после
-                    // пересылки чанка получателю (см. server.py video_chunk handler).
-                    // Получатель НЕ должен отправлять chunk_ack — сервер его не обрабатывает.
 
                     val transferKey = "$from:$videoId"
                     val chunks = imageChunks.getOrPut(transferKey) { mutableMapOf() }
@@ -1592,7 +1517,6 @@ class MessengerService : Service() {
                         return
                     }
 
-                    // ДОБАВЬ КОНВЕРТАЦИЮ:
                     val fixedKey = senderKey.replace('-', '+').replace('_', '/')
 
                     if (!CryptoManager.verify(encryptedData, signature, fixedKey)) {
@@ -1613,10 +1537,8 @@ class MessengerService : Service() {
                 if (json.has("identity_key") && !json.isNull("identity_key")) {
                     val identityKey = json.getString("identity_key")
 
-                    // Конвертация URL-safe Base64
                     val fixedIdentityKey = identityKey.replace('-', '+').replace('_', '/')
 
-                    // Сохраняем identity key
                     publicKeys[fromUser] = fixedIdentityKey
                     ChatStorage.saveContactPublicKey(this@MessengerService, fromUser, fixedIdentityKey)
 
@@ -1651,8 +1573,6 @@ class MessengerService : Service() {
                     try {
                         val rawBundle = SessionKeyManager.parsePrekeyBundle(bundleJsonRaw)
 
-                        // Нормализуем ВСЕ ключи bundle: URL-safe Base64 → стандартный Base64
-                        // (сервер хранит стандартный, но на всякий случай конвертируем всё)
                         fun String.toStdB64() = replace('-', '+').replace('_', '/')
                         val bundle = rawBundle.copy(
                             identityKey    = rawBundle.identityKey.toStdB64(),
@@ -1686,7 +1606,7 @@ class MessengerService : Service() {
                         }
                     } catch (e: SecurityException) {
                         Log.e(TAG, "X3DH FAIL с $from: ${e.message}")
-                        // Fallback на legacy шифрование — не теряем сообщения
+
                         pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
                             if (text.startsWith("__voice__|")) {
                                 val parts = text.removePrefix("__voice__|").split("|", limit = 3)
@@ -1701,7 +1621,7 @@ class MessengerService : Service() {
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "prekey_bundle_response error: ${e.message}")
-                        // Fallback на legacy шифрование — не теряем сообщения
+
                         pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
                             if (text.startsWith("__voice__|")) {
                                 val parts = text.removePrefix("__voice__|").split("|", limit = 3)
@@ -1716,7 +1636,7 @@ class MessengerService : Service() {
                         }
                     }
                 }
-                // Флашим видеокружки, ожидавшие ключ этого контакта
+
                 flushPendingVideoCircles(from)
             }
 
@@ -1728,7 +1648,7 @@ class MessengerService : Service() {
                 val signature = json.optString("signature", null)
                 val messageId = json.optString("id", null)
                 try {
-                    // ИСПРАВЬ: Конвертируй и сохрани sender_ik
+
                     val fixedSenderIk = senderIk.replace('-', '+').replace('_', '/')
                     publicKeys[from] = fixedSenderIk
                     ChatStorage.saveContactPublicKey(this@MessengerService, from, fixedSenderIk)
@@ -1738,7 +1658,7 @@ class MessengerService : Service() {
                     }
                     Log.d(TAG, "Публичный ключ из session_init сохранён: $from")
 
-                    val senderKey = publicKeys[from]!!  // Теперь гарантированно есть
+                    val senderKey = publicKeys[from]!!
 
                     if (signature == null) {
                         Log.e(TAG, "session_init без подписи от $from")
@@ -1752,18 +1672,18 @@ class MessengerService : Service() {
                     val sessionHeader = json.getJSONObject("session_header")
                     val decryptedText = CryptoManager.decryptWithForwardSecrecy(from, encryptedText, sessionHeader)
                     handleIncomingDecryptedMessage(from, decryptedText, messageId, json)
-                    // Первое сообщение от нового контакта — отправляем им наши токены
+
                     if (AnonTokenManager.getContactTokens(this@MessengerService, from).isEmpty() &&
                         AnonTokenManager.getMyTokens(this@MessengerService).isNotEmpty()) {
                         scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
                     }
-                    // Если были pending сообщения к from (например, после session_reset) — отправляем
+
                     pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
                         scope.launch(Dispatchers.IO) { sendWithForwardSecrecy(from, text, msgId) }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "session_init error: ${e.message}")
-                    // Не смогли установить сессию — просим отправителя начать заново.
+
                     requestPrekeyBundle(from)
                     sendAnonOrDirect(from, JSONObject().apply {
                         put("type", "session_reset")
@@ -1778,7 +1698,7 @@ class MessengerService : Service() {
                 val protocolVersion = json.optInt("protocol_version", 1)
                 if (messageId != null) {
                     val nowMs = System.currentTimeMillis()
-                    // Периодическая очистка протухших записей
+
                     if (receivedMessageIds.size > 200) {
                         receivedMessageIds.entries.removeIf { nowMs - it.value > REPLAY_WINDOW_MS }
                     }
@@ -1804,9 +1724,7 @@ class MessengerService : Service() {
                                 val fallback = CryptoManager.decrypt(encryptedText)
                                 handleIncomingDecryptedMessage(from, fallback, messageId, json)
                             } catch (e: Exception) {
-                                // Сессия утеряна (переустановка, очистка данных).
-                                // Уведомляем отправителя сбросить сессию — иначе он будет
-                                // бесконечно слать сообщения старым ключом, и они будут дропаться.
+
                                 requestPrekeyBundle(from)
                                 sendAnonOrDirect(from, JSONObject().apply {
                                     put("type", "session_reset")
@@ -1820,7 +1738,7 @@ class MessengerService : Service() {
                         CryptoManager.decrypt(encryptedText)
                     }
                     handleIncomingDecryptedMessage(from, decryptedText, messageId, json)
-                    // Отправляем токены только если их совсем нет (первый контакт)
+
                     if (AnonTokenManager.getContactTokens(this@MessengerService, from).isEmpty()) {
                         scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
                     }
@@ -1828,7 +1746,7 @@ class MessengerService : Service() {
                     Log.e(TAG, "Ошибка расшифровки от $from: ${e.message}")
                     SessionKeyManager.deleteSession(from)
                     requestPrekeyBundle(from)
-                    // Сигнализируем отправителю, что нужно сбросить сессию
+
                     sendAnonOrDirect(from, JSONObject().apply {
                         put("type", "session_reset")
                         put("to", from)
@@ -1871,17 +1789,14 @@ class MessengerService : Service() {
                         return
                     }
 
-                    // Расшифровываем групповой ключ
                     val groupKey = GroupManager.decryptGroupKey(encryptedGroupKey)
 
-                    // Проверяем, не состоим ли уже в группе
                     val existingGroup = GroupManager.getGroup(this@MessengerService, groupId)
                     if (existingGroup != null) {
                         Log.d(TAG, "Уже состоим в группе $groupName")
                         return
                     }
 
-                    // Создаём группу локально
                     val group = Group(
                         id = groupId,
                         name = groupName,
@@ -1894,7 +1809,6 @@ class MessengerService : Service() {
 
                     GroupManager.saveGroup(this@MessengerService, group)
 
-                    // Отправляем уведомление создателю что приняли приглашение
                     val inviteSignature = CryptoManager.sign("$groupId:$username")
                     sendAnonOrDirect(from, JSONObject().apply {
                         put("type", "group_invite_accepted")
@@ -1926,7 +1840,7 @@ class MessengerService : Service() {
                 val signature = json.optString("signature", null)
 
                 try {
-                    // Replay protection: отбрасываем уже обработанные message_id
+
                     if (!processedGroupMessageIds.add(messageId)) {
                         Log.w(TAG, "group_message replay отклонён: $messageId")
                         return
@@ -1954,7 +1868,6 @@ class MessengerService : Service() {
                         return
                     }
 
-                    // Расшифровываем групповым ключом
                     val decryptedText = GroupManager.decryptGroupMessage(encryptedText, group.groupKey!!)
 
                     val groupMessage = GroupMessage(
@@ -2001,12 +1914,12 @@ class MessengerService : Service() {
                 try {
                     val group = GroupManager.getGroup(this@MessengerService, groupId)
                     if (group != null) {
-                        // Проверяем, что отправитель — администратор группы
+
                         if (from == null || !GroupManager.isAdmin(this@MessengerService, groupId, from)) {
                             Log.e(TAG, "group_member_removed от не-администратора $from — отклонено")
                             return
                         }
-                        // Проверяем подпись администратора
+
                         val adminKey = publicKeys[from]
                             ?: ChatStorage.getContactPublicKey(this@MessengerService, from)
                         if (removeSignature == null || adminKey == null ||
@@ -2016,7 +1929,6 @@ class MessengerService : Service() {
                         }
                         GroupManager.removeMember(this@MessengerService, groupId, removedMember)
 
-                        // Системное сообщение о удалении
                         val sysMessage = GroupMessage(
                             id = UUID.randomUUID().toString(),
                             groupId = groupId,
@@ -2059,16 +1971,13 @@ class MessengerService : Service() {
                         return
                     }
 
-                    // Проверяем что отправитель является администратором группы
                     if (!GroupManager.isAdmin(this@MessengerService, groupId, from)) {
                         Log.e(TAG, "group_key_rotation от не-администратора $from в группе $groupId")
                         return
                     }
 
-                    // Расшифровываем новый групповой ключ
                     val newGroupKey = GroupManager.decryptGroupKey(encryptedNewKey)
 
-                    // Обновляем группу с новым ключом
                     val group = GroupManager.getGroup(this@MessengerService, groupId)
                     if (group != null) {
                         val updatedGroup = group.copy(groupKey = newGroupKey)
@@ -2076,7 +1985,6 @@ class MessengerService : Service() {
 
                         Log.d(TAG, "Групповой ключ обновлён для группы $groupId")
 
-                        // Системное сообщение
                         val sysMessage = GroupMessage(
                             id = UUID.randomUUID().toString(),
                             groupId = groupId,
@@ -2104,7 +2012,7 @@ class MessengerService : Service() {
                 val inviteSignature = json.optString("signature", null)
 
                 try {
-                    // Проверяем подпись нового участника: предотвращает добавление шпиона сервером
+
                     val memberPublicKey = publicKeys[newMember]
                         ?: ChatStorage.getContactPublicKey(this@MessengerService, newMember)
                     if (inviteSignature == null || memberPublicKey == null ||
@@ -2113,10 +2021,8 @@ class MessengerService : Service() {
                         return
                     }
 
-                    // Добавляем участника локально
                     GroupManager.addMember(this@MessengerService, groupId, newMember)
 
-                    // Системное сообщение
                     val sysMessage = GroupMessage(
                         id = UUID.randomUUID().toString(),
                         groupId = groupId,
@@ -2136,7 +2042,6 @@ class MessengerService : Service() {
                 }
             }
 
-            // ─── Channel Created (response after channel_create) ──────────────
             "channel_created" -> {
                 try {
                     val channelId = json.getString("channel_id")
@@ -2167,7 +2072,6 @@ class MessengerService : Service() {
                 }
             }
 
-            // ─── Channel Update (new post from admin) ─────────────────────────
             "channel_update" -> {
                 try {
                     val channelId = json.getString("channel_id")
@@ -2207,7 +2111,6 @@ class MessengerService : Service() {
                 }
             }
 
-            // ─── Channel Info (response to channel_get_info) ──────────────────
             "channel_info" -> {
                 try {
                     val channelId = json.getString("channel_id")
@@ -2237,7 +2140,6 @@ class MessengerService : Service() {
                 }
             }
 
-            // ─── Channel Post Deleted ─────────────────────────────────────────
             "channel_post_deleted" -> {
                 try {
                     val channelId = json.getString("channel_id")
@@ -2249,7 +2151,6 @@ class MessengerService : Service() {
                 }
             }
 
-            // ─── Channel Info Updated (response to channel_update_info) ───────
             "channel_info_updated" -> {
                 try {
                     val channelId = json.getString("channel_id")
@@ -2270,7 +2171,6 @@ class MessengerService : Service() {
                 }
             }
 
-            // ─── Channel Deleted ──────────────────────────────────────────────
             "channel_deleted" -> {
                 try {
                     val channelId = json.getString("channel_id")
@@ -2284,7 +2184,6 @@ class MessengerService : Service() {
                 }
             }
 
-            // ─── Channel Post Pinned ──────────────────────────────────────────
             "channel_pinned" -> {
                 try {
                     val channelId = json.getString("channel_id")
@@ -2302,7 +2201,6 @@ class MessengerService : Service() {
                 }
             }
 
-            // ─── Call Signaling ───────────────────────────────────────────────
             "call_offer" -> {
                 try {
                     val from    = json.getString("from")
@@ -2313,7 +2211,7 @@ class MessengerService : Service() {
                     val gId     = json.optString("group_id", "")
                     CallManager.init(this@MessengerService)
                     CallManager.handleOffer(from, sdp, callId, isVideo, isGroup, gId)
-                    // Показываем уведомление с full-screen intent
+
                     val peerName = ChatStorage.getContactName(this@MessengerService, from).ifBlank { from }
                     startService(Intent(this@MessengerService, CallService::class.java).apply {
                         action = CallService.ACTION_INCOMING
@@ -2426,7 +2324,7 @@ class MessengerService : Service() {
                 }
             }
 
-            "call_ringing" -> { /* UI может показать "Звонит..." */ }
+            "call_ringing" -> {  }
 
             "status" -> {
                 val status = json.optString("status", "")
@@ -2446,15 +2344,14 @@ class MessengerService : Service() {
                 MessageQueue.remove(this@MessengerService, id)
             }
 
-            // ── Анонимная доставка по токену ──────────────────────────────────
             "anon_delivery" -> {
                 try {
                     val payload = json.getJSONObject("payload")
-                    // Потребляем токен — он одноразовый
+
                     payload.optString("_anon_token").takeIf { it.isNotBlank() }?.let {
                         AnonTokenManager.consumeMyToken(this@MessengerService, it)
                     }
-                    // Переиспользуем существующий диспетчер
+
                     handleMessage(payload)
                 } catch (e: Exception) {
                     Log.e(TAG, "anon_delivery error: ${e.message}")
@@ -2463,11 +2360,9 @@ class MessengerService : Service() {
         }
     }
 
-    // ─── Отправка ─────────────────────────────────────────────────────────────
-
     fun send(to: String, text: String, replyToId: String? = null): String {
         if (isConnected) {
-            // Если у контакта есть mailboxTag (v3 инвайт) и нет ещё сессии — используем mailbox
+
             val mailboxTag = AnonTokenManager.getContactMailboxTag(this, to)
             val hasContactTokens = AnonTokenManager.getContactTokens(this, to).isNotEmpty()
             if (mailboxTag != null && !hasContactTokens && !SessionKeyManager.hasSession(to)) {
@@ -2477,7 +2372,7 @@ class MessengerService : Service() {
                     sendViaMailbox(to, text, publicKey, mailboxTag, id)
                     return id
                 }
-                // Ключ не найден — очищаем mailboxTag и идём обычным путём
+
                 AnonTokenManager.clearContactMailboxTag(this, to)
             }
             return sendWithForwardSecrecy(to, text, replyToId = replyToId)
@@ -2521,7 +2416,7 @@ class MessengerService : Service() {
                             put("type", "message")
                         }
                     }
-                    // Анонимная доставка: используем токен если есть (даже для session_init)
+
                     val anonToken = AnonTokenManager.consumeNextContactToken(this@MessengerService, to)
 
                     if (anonToken != null) {
@@ -2531,7 +2426,7 @@ class MessengerService : Service() {
                             put("payload", packet)
                         }
                         sendWs(addPadding(anonPacket).toString())
-                        // Запрашиваем пополнение пула токенов если кончаются
+
                         if (AnonTokenManager.needsRefill(this@MessengerService, to)) {
                             scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
                         }
@@ -2696,12 +2591,10 @@ class MessengerService : Service() {
         }
     }
 
-    // Сбросить счётчик уведомлений для чата (при открытии чата)
     fun clearNotifLines(key: String) {
         notifLines.remove(key)
     }
 
-    // Удалить сообщение у всех
     fun sendDeleteMessage(to: String, messageId: String) {
         if (!isConnected) return
         scope.launch(Dispatchers.IO) {
@@ -2715,7 +2608,6 @@ class MessengerService : Service() {
         }
     }
 
-    // Удалить сообщение в группе у всех участников
     fun sendGroupDeleteMessage(groupId: String, messageId: String, members: List<String>) {
         if (!isConnected) return
         scope.launch(Dispatchers.IO) {
@@ -2731,7 +2623,6 @@ class MessengerService : Service() {
         }
     }
 
-    // Отправить настройку таймера исчезающих сообщений (0 = выкл)
     fun sendDisappearTimer(to: String, seconds: Long) {
         if (!isConnected) return
         scope.launch(Dispatchers.IO) {
@@ -2767,15 +2658,12 @@ class MessengerService : Service() {
             try {
                 Log.d(TAG, "Отправка изображения (${chunks.size} чанков)")
 
-                // Объединяем Base64 чанки в байты
                 val base64Data = chunks.joinToString("")
                 val imageBytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
 
-                // Шифруем изображение целиком
                 val encryptedFileData = CryptoManager.encryptFile(imageBytes, cachedKey)
                 val packedData = CryptoManager.packEncryptedFile(encryptedFileData)
 
-                // Разбиваем на крупные чанки — меньше RTT-задержек
                 val encryptedChunks = packedData.chunked(120_000)
 
                 Log.d(TAG, "Изображение зашифровано: ${encryptedChunks.size} чанков")
@@ -2812,8 +2700,6 @@ class MessengerService : Service() {
             }
         }
     }
-
-    // ─── Отправка зашифрованного файла ────────────────────────────────────────
 
     fun sendFile(to: String, fileName: String, chunks: List<String>, fileId: String) {
         if (!isConnected) {
@@ -2889,15 +2775,6 @@ class MessengerService : Service() {
         }
     }
 
-    // ─── Отправка видеокружка ─────────────────────────────────────────────────
-
-    /**
-     * Отправляет видеокружок.
-     * [videoBytes] — НЕЗАШИФРОВАННЫЕ байты MP4.
-     * [encFilePath] — путь к локальному .enc файлу (для офлайн-очереди); "" = не ставить в очередь.
-     * Шифрование для получателя выполняется здесь (CryptoManager.encryptFile).
-     * Локальное хранение (SecureFileStorage) выполняется в ChatScreen отдельно.
-     */
     fun sendVideoCircle(to: String, videoId: String, videoBytes: ByteArray, duration: Int, encFilePath: String = "") {
         if (!isConnected) {
             if (encFilePath.isNotEmpty()) {
@@ -2935,13 +2812,11 @@ class MessengerService : Service() {
                 Log.d(TAG, "Отправка видеокружка: $videoId, duration=$duration, size=${videoBytes.size}")
                 val encryptedFileData = CryptoManager.encryptFile(videoBytes, cachedKey)
                 val packedData = CryptoManager.packEncryptedFile(encryptedFileData)
-                // Крупные чанки → меньше кусков → меньше RTT-задержек
+
                 val encryptedChunks = packedData.chunked(120_000)
 
                 Log.d(TAG, "Видеокружок зашифрован: ${encryptedChunks.size} чанков")
 
-                // Отправляем пачками по 5 без ожидания ACK на каждый чанк.
-                // TCP flow control сам регулирует скорость; сервер собирает по chunk_index.
                 val batchSize = 5
                 encryptedChunks.chunked(batchSize).forEachIndexed { batchIdx, batch ->
                     if (cancelledTransfers.contains(videoId)) return@forEachIndexed
@@ -2961,7 +2836,7 @@ class MessengerService : Service() {
                             put("encrypted", true)
                         })
                     }
-                    delay(30) // небольшая пауза между пачками чтобы не перегружать сокет
+                    delay(30)
                 }
 
                 Log.d(TAG, "✅ Видеокружок $videoId отправлен: ${encryptedChunks.size} чанков")
@@ -2976,12 +2851,6 @@ class MessengerService : Service() {
         }
     }
 
-    // ─── Флаш офлайн-очереди видеокружков ────────────────────────────────────
-    /**
-     * Отправляет накопленные в очереди видеокружки.
-     * [forContact] — если задан, флашит только для этого контакта (после получения prekey bundle).
-     * null — флашит всё (при reconnect).
-     */
     private fun flushPendingVideoCircles(forContact: String? = null) {
         val toFlush = synchronized(pendingVideoCircles) {
             if (forContact != null) {
@@ -3005,7 +2874,7 @@ class MessengerService : Service() {
                         return@forEach
                     }
                     val plainBytes = SecureFileStorage.read(this@MessengerService, file)
-                    // encFilePath = "" чтобы не зациклиться при повторном фейле
+
                     sendVideoCircle(pending.to, pending.videoId, plainBytes, pending.duration)
                 } catch (e: Exception) {
                     Log.e(TAG, "flushPendingVideoCircles error: ${e.message}")
@@ -3014,7 +2883,6 @@ class MessengerService : Service() {
         }
     }
 
-// ─── Обработка входящих зашифрованных файлов ──────────────────────────────
     fun flushPendingReactions() {
         val iterator = pendingReactions.iterator()
         while (iterator.hasNext()) {
@@ -3023,8 +2891,6 @@ class MessengerService : Service() {
             iterator.remove()
         }
     }
-
-    // ─── Вспомогательные ─────────────────────────────────────────────────────
 
     private fun publishPrekeyBundle() {
         scope.launch(Dispatchers.IO) {
@@ -3052,8 +2918,7 @@ class MessengerService : Service() {
     private suspend fun sendAnonTokensTo(contact: String) {
         val tokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
         if (tokens.isEmpty()) return
-        // Токены отправляем ТОЛЬКО через анонимный маршрут (одноразовый токен контакта).
-        // Прямая fingerprint-отправка раскрывает граф связей — не делаем это никогда.
+
         val anonToken = AnonTokenManager.consumeNextContactToken(this@MessengerService, contact)
         if (anonToken == null) {
             Log.d(TAG, "sendAnonTokensTo: нет токенов для $contact, ждём mailbox-обмена")
@@ -3083,7 +2948,7 @@ class MessengerService : Service() {
             put("payload", payload)
         }
         sendWs(addPadding(anonPacket).toString())
-        // Обновляем подписку на сервере с актуальным пулом токенов
+
         val allMyTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
         sendWs(JSONObject().apply {
             put("type", "subscribe_tokens")
@@ -3098,7 +2963,7 @@ class MessengerService : Service() {
                 val arr = org.json.JSONArray(decryptedText.removePrefix("__beacon_tokens__:"))
                 val tokens = (0 until arr.length()).map { arr.getString(it) }
                 AnonTokenManager.addContactTokens(this@MessengerService, from, tokens)
-                // Токены получены — mailbox больше не нужен для этого контакта
+
                 AnonTokenManager.clearContactMailboxTag(this@MessengerService, from)
                 ChatStorage.addContact(this@MessengerService, from)
                 Log.d(TAG, "Получены анонимные токены от $from: ${tokens.size} шт.")
@@ -3126,7 +2991,7 @@ class MessengerService : Service() {
             ChatStorage.StoredMessage(id = messageId ?: UUID.randomUUID().toString(), text = decryptedText, isOwn = false)
         )
         ChatStorage.addContact(this@MessengerService, from)
-        // Notify sender that the message reached this device
+
         if (messageId != null) {
             sendAnonOrDirect(from, JSONObject().apply {
                 put("type", "delivered")
@@ -3157,9 +3022,6 @@ class MessengerService : Service() {
         }
     }
 
-    // ─── Anonymous Mailbox ────────────────────────────────────────────────────
-
-    /** Опрашивает сервер: мои настоящие теги + MBOX_FAKE_COUNT фейковых (сервер не знает какой настоящий). */
     private fun pollMailbox() {
         val tags = AnonTokenManager.buildFetchTagList(this)
         if (tags.isEmpty()) return
@@ -3173,17 +3035,12 @@ class MessengerService : Service() {
         }
     }
 
-    /**
-     * Отправляет первое сообщение контакту через mailbox вместо fingerprint-маршрутизации.
-     * Шифруем {from, text, tokens} публичным ключом получателя, кладём по его mailboxTag.
-     * Сервер не знает кто отправитель и кто получатель.
-     */
     fun sendViaMailbox(to: String, text: String, publicKey: String, mailboxTag: String, messageId: String? = null) {
         val id = messageId ?: java.util.UUID.randomUUID().toString()
         MessageQueue.remove(this, id)
         scope.launch(Dispatchers.IO) {
             try {
-                // Внутри блоба: from (fingerprint), text, наши токены — всё шифруется ключом получателя
+
                 val myTokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
                 val inner = JSONObject().apply {
                     put("from", username)
@@ -3203,7 +3060,6 @@ class MessengerService : Service() {
         }
     }
 
-    /** Обрабатывает ответ сервера на mailbox_fetch. */
     private suspend fun handleMailboxResult(json: org.json.JSONObject) {
         val blobsMap = json.optJSONObject("blobs") ?: return
         blobsMap.keys().forEach { tag ->
@@ -3224,9 +3080,9 @@ class MessengerService : Service() {
                             scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
                         }
                     }
-                    // Убираем этот тег из опроса — сообщение получено
+
                     AnonTokenManager.removeMyMailboxTag(this@MessengerService, tag)
-                    // Сохраняем сообщение и добавляем контакт
+
                     ChatStorage.addContact(this@MessengerService, from)
                     if (!text.startsWith("__beacon_")) {
                         val storedId = msgId.ifEmpty { java.util.UUID.randomUUID().toString() }
@@ -3239,15 +3095,13 @@ class MessengerService : Service() {
                         withContext(Dispatchers.Main) { onMessageReceived?.invoke(from, text) }
                     }
                 } catch (e: Exception) {
-                    // Блоб не для нас — тихо пропускаем
+
                 }
             }
         }
     }
 
     fun isOnline() = isConnected
-
-    // ─── Уведомления ─────────────────────────────────────────────────────────
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -3262,7 +3116,6 @@ class MessengerService : Service() {
             }
             nm.createNotificationChannel(channel)
 
-            // Тихий канал для foreground-уведомления сервиса (без звука и вибрации)
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID_SERVICE,
                 "B-CON Service",
@@ -3309,9 +3162,8 @@ class MessengerService : Service() {
     private fun showMessageNotification(from: String, text: String) {
         val fromName = ChatStorage.getContactName(this, from)
         val hideContent = UserStorage.getHideNotificationContent(this)
-        val notifId = (from.hashCode() and 0x7FFFFFFF) + 1000  // +1000 чтобы не пересекаться с NOTIFICATION_ID
+        val notifId = (from.hashCode() and 0x7FFFFFFF) + 1000
 
-        // Накапливаем строки для InboxStyle (только если контент не скрыт)
         if (!hideContent) {
             val lines = notifLines.getOrPut("dm_$from") { mutableListOf() }
             lines.add(text)
@@ -3340,7 +3192,6 @@ class MessengerService : Service() {
             .setVisibility(if (hideContent) NotificationCompat.VISIBILITY_PRIVATE else NotificationCompat.VISIBILITY_PUBLIC)
             .setGroup("beacon_dm_$from")
 
-        // InboxStyle — показываем все накопленные сообщения если их больше 1
         if (!hideContent) {
             val lines = notifLines["dm_$from"] ?: mutableListOf()
             if (lines.size > 1) {
@@ -3385,9 +3236,8 @@ class MessengerService : Service() {
         val hideContent = UserStorage.getHideNotificationContent(this)
         val group = GroupManager.getGroup(this, groupId)
         val groupName = group?.name ?: s.notifGroupFallback
-        val notifId = (groupId.hashCode() and 0x7FFFFFFF) + 2000  // +2000 чтобы не пересекаться
+        val notifId = (groupId.hashCode() and 0x7FFFFFFF) + 2000
 
-        // Накапливаем строки для InboxStyle
         if (!hideContent) {
             val lines = notifLines.getOrPut("group_$groupId") { mutableListOf() }
             lines.add("$senderName: $text")
@@ -3416,7 +3266,6 @@ class MessengerService : Service() {
             .setVisibility(if (hideContent) NotificationCompat.VISIBILITY_PRIVATE else NotificationCompat.VISIBILITY_PUBLIC)
             .setGroup("beacon_group_$groupId")
 
-        // InboxStyle — показываем участников и их сообщения
         if (!hideContent) {
             val lines = notifLines["group_$groupId"] ?: mutableListOf()
             if (lines.size > 1) {
@@ -3472,11 +3321,7 @@ class MessengerService : Service() {
             .addAction(android.R.drawable.ic_delete, s.notifEmergencyAction, emergencyPending)
             .build()
     }
-    // ─── Групповые чаты ───────────────────────────────────────────────────────
 
-    /**
-     * Создать группу и отправить приглашения
-     */
     fun createGroup(
         groupId: String,
         groupName: String,
@@ -3498,11 +3343,10 @@ class MessengerService : Service() {
                         }
 
                     if (memberPublicKey != null) {
-                        // Шифруем групповой ключ для каждого участника
+
                         val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, memberPublicKey)
                         val signature = CryptoManager.sign(encryptedGroupKey)
 
-                        // Отправляем приглашение
                         sendAnonOrDirect(memberId, JSONObject().apply {
                             put("type", "group_create")
                             put("from", username)
@@ -3525,9 +3369,6 @@ class MessengerService : Service() {
         }
     }
 
-    /**
-     * Отправить сообщение в группу
-     */
     fun sendGroupMessage(
         groupId: String,
         messageId: String,
@@ -3544,7 +3385,6 @@ class MessengerService : Service() {
                 val signature = CryptoManager.sign(encryptedText)
                 val senderName = UserStorage.getUsername(this@MessengerService)
 
-                // Отправляем сообщение всем участникам группы
                 members.filter { it != username }.forEach { memberId ->
                     sendAnonOrDirect(memberId, JSONObject().apply {
                         put("type", "group_message")
@@ -3565,9 +3405,6 @@ class MessengerService : Service() {
         }
     }
 
-    /**
-     * Отправить реакцию на сообщение в группе всем участникам
-     */
     fun sendGroupReaction(
         groupId: String,
         messageId: String,
@@ -3595,9 +3432,6 @@ class MessengerService : Service() {
         }
     }
 
-    /**
-     * Добавить участника в группу
-     */
     fun addGroupMember(
         groupId: String,
         groupName: String,
@@ -3640,9 +3474,6 @@ class MessengerService : Service() {
         }
     }
 
-    /**
-     * Уведомить об удалении участника
-     */
     fun notifyMemberRemoved(groupId: String, removedMemberId: String, members: List<String>) {
         if (!isConnected) return
 
@@ -3665,9 +3496,6 @@ class MessengerService : Service() {
         }
     }
 
-    /**
-     * Ротация группового ключа (при удалении участника)
-     */
     fun rotateGroupKey(
         groupId: String,
         newGroupKey: ByteArray,
@@ -3702,9 +3530,7 @@ class MessengerService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "rotateGroupKey error: ${e.message}", e)
             }
-            /**
-             * Уведомление о приглашении в группу
-             */
+
             fun showGroupInviteNotification(groupName: String, inviterUserId: String) {
                 val inviterName = ChatStorage.getContactName(this@MessengerService, inviterUserId)
                 val intent = Intent(this@MessengerService, MainActivity::class.java)

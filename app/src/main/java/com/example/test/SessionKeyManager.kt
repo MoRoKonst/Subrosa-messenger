@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.util.Base64
@@ -19,30 +19,11 @@ object SessionKeyManager {
     private const val PREFS_NAME = "session_keys"
     private const val SPK_ROTATION_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000L
 
-    // ─── Протокол Double Ratchet (v3) ───────────────────────────────────────
-    //
-    // Реализован полный Double Ratchet (Signal Protocol):
-    //   - X3DH для установки начального shared secret
-    //   - Symmetric Ratchet: HMAC-SHA256 цепочка ключей сообщений
-    //   - DH Ratchet: при каждом обмене генерируется новая EC-пара,
-    //     публичный ключ передаётся в session_header {"dh": "..."}.
-    //     ECDH(старый_priv, новый_pub_собеседника) → KDF_RK → новые chain keys.
-    //     "Break-in recovery": компрометация ChainKey самовосстанавливается после
-    //     следующего DH-шага.
-    //
-    // Совместимость:
-    //   - v2 session_header (без поля "dh"): Symmetric Ratchet (legacy)
-    //   - v3 session_header (с полем "dh"): Double Ratchet
-    //
-    // v3-сессии создаются при x3dh_header с полем "dh_ratchet_pub".
-    // Для v3-сессий needsRatchetRotation() всегда false — DH ratchet достаточен.
-    private const val RATCHET_ROTATION_THRESHOLD = 50   // для v2-сессий; v3 не ротирует
-    private const val RATCHET_ROTATION_TIME_MS = 12 * 60 * 60 * 1000L  // для v2-сессий
+    private const val RATCHET_ROTATION_THRESHOLD = 50
+    private const val RATCHET_ROTATION_TIME_MS = 12 * 60 * 60 * 1000L
     private const val MAX_SKIPPED_KEYS = 100
-    private const val SKIPPED_KEY_TTL_MS = 7 * 24 * 60 * 60 * 1000L  // 7 days
-    private const val SPK_GRACE_PERIOD_MS = 14 * 24 * 60 * 60 * 1000L  // 14 days
-
-    // ─── Структуры данных ────────────────────────────────────────────────────
+    private const val SKIPPED_KEY_TTL_MS = 7 * 24 * 60 * 60 * 1000L
+    private const val SPK_GRACE_PERIOD_MS = 14 * 24 * 60 * 60 * 1000L
 
     data class PrekeyBundle(
         val identityKey: String,
@@ -61,31 +42,23 @@ object SessionKeyManager {
         val sessionId: String,
         val createdAt: Long,
         val lastRatchetAt: Long,
-        // ── DH Ratchet (v3) ─────────────────────────────────────────────────
-        // Пустой ByteArray = v2-сессия (DH ratchet не активен)
+
         val rootKey: ByteArray = ByteArray(0),
-        val sendRatchetPriv: ByteArray = ByteArray(0),  // PKCS8 текущей ratchet-пары
-        val sendRatchetPub: ByteArray = ByteArray(0),   // X509  текущей ratchet-пары
-        val recvRatchetPub: ByteArray? = null,           // X509 последнего ключа собеседника
-        // ── Буфер пропущенных ключей ────────────────────────────────────────
-        // v2: ключ = "$counter"
-        // v3: ключ = "$senderDhPubB64:$counter"  (привязка к DH-эпохе)
+        val sendRatchetPriv: ByteArray = ByteArray(0),
+        val sendRatchetPub: ByteArray = ByteArray(0),
+        val recvRatchetPub: ByteArray? = null,
+
         val skippedKeys: Map<String, ByteArray> = emptyMap(),
         val skippedKeyTimestamps: Map<String, Long> = emptyMap()
     )
 
-    // Результат nextSendKey — включает DH ratchet public key для v3
     data class SendKeyResult(
         val messageKey: ByteArray,
         val counter: Int,
         val sessionId: String,
-        val dhRatchetPubB64: String?  // null для v2-сессий
+        val dhRatchetPubB64: String?
     )
 
-    // ─── In-memory хранилище ─────────────────────────────────────────────────
-
-    // ConcurrentHashMap: nextSendKey() вызывается из UI-потока, nextRecvKey() — из WebSocket-потока.
-    // Обычный HashMap приводит к ConcurrentModificationException или потере обновлений chain key.
     private val sessions = java.util.concurrent.ConcurrentHashMap<String, SessionState>()
     private val secureRandom = SecureRandom()
     private var currentSpk: KeyPair? = null
@@ -94,25 +67,20 @@ object SessionKeyManager {
     private var previousSpk: KeyPair? = null
     private var previousSpkId: Int = -1
     private var previousSpkCreatedAt: Long = 0L
-    // ConcurrentHashMap — consumeOpk() может вызываться с WebRTC-треда одновременно с refillOpkPool()
+
     private val opkPool = java.util.concurrent.ConcurrentHashMap<Int, KeyPair>()
-    // AtomicInteger: opkIdCounter++ используется в refillOpkPool и может вызваться с разных потоков.
-    // Не атомарный int → дублирующиеся OPK ID при гонке.
+
     private val opkIdCounter = java.util.concurrent.atomic.AtomicInteger(0)
     private var appContext: Context? = null
-
-    // ─── Инициализация ───────────────────────────────────────────────────────
 
     fun initialize(context: Context) {
         appContext = context.applicationContext
         generateOrRotateSpk(context)
-        loadOpkPool(context)               // Restore persisted OPKs first
-        refillOpkPool(context, targetCount = 10)  // Then top up to target size
-        loadAllSessions()                  // Восстанавливаем сессии после перезапуска
+        loadOpkPool(context)
+        refillOpkPool(context, targetCount = 10)
+        loadAllSessions()
         Log.d(TAG, "SessionKeyManager инициализирован. SPK id=$currentSpkId, OPK pool=${opkPool.size}, sessions=${sessions.size}")
     }
-
-    // ─── Signed Prekey (SPK) ─────────────────────────────────────────────────
 
     private fun generateOrRotateSpk(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -125,7 +93,7 @@ object SessionKeyManager {
                 (now - savedCreatedAt) > SPK_ROTATION_INTERVAL_MS
 
         if (needsRotation) {
-            // Сохраняем старый SPK как предыдущий перед ротацией (grace period для входящих сессий)
+
             if (savedSpkId >= 0) {
                 val oldPrivB64 = encPrefs.getString("spk_private_key_${savedSpkId}", null)
                 val oldPubB64 = prefs.getString("spk_public_${savedSpkId}", null)
@@ -155,7 +123,7 @@ object SessionKeyManager {
             currentSpk = generateEcKeyPair()
             currentSpkId = (savedSpkId + 1).coerceAtLeast(0)
             spkCreatedAt = now
-            // Save private key in encrypted storage
+
             encPrefs.edit()
                 .putString(
                     "spk_private_key_${currentSpkId}",
@@ -172,7 +140,7 @@ object SessionKeyManager {
                 .apply()
             Log.d(TAG, "SPK ротирован: id=$currentSpkId")
         } else {
-            // Restore saved SPK key pair — do NOT generate a new one
+
             val privateKeyB64 = encPrefs.getString("spk_private_key_${savedSpkId}", null)
             val publicKeyB64 = prefs.getString("spk_public_${savedSpkId}", null)
             if (privateKeyB64 != null && publicKeyB64 != null) {
@@ -185,7 +153,7 @@ object SessionKeyManager {
                 )
                 currentSpk = KeyPair(publicKey, privateKey)
             } else {
-                // Saved key not found (first upgrade from old version) — generate and save
+
                 currentSpk = generateEcKeyPair()
                 encPrefs.edit()
                     .putString(
@@ -203,7 +171,7 @@ object SessionKeyManager {
             currentSpkId = savedSpkId
             spkCreatedAt = savedCreatedAt
             Log.d(TAG, "SPK восстановлен: id=$currentSpkId")
-            // Восстанавливаем предыдущий SPK если в пределах grace period
+
             val prevSpkId = prefs.getInt("prev_spk_id", -1)
             val prevCreatedAt = prefs.getLong("prev_spk_created_at", 0L)
             if (prevSpkId >= 0 && (now - prevCreatedAt) < SPK_GRACE_PERIOD_MS) {
@@ -226,8 +194,6 @@ object SessionKeyManager {
             }
         }
     }
-
-    // ─── One-Time Prekeys (OPK) ──────────────────────────────────────────────
 
     private fun loadOpkPool(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -292,8 +258,6 @@ object SessionKeyManager {
         return kp
     }
 
-    // ─── Prekey Bundle ───────────────────────────────────────────────────────
-
     fun getLocalPrekeyBundle(): PrekeyBundle {
         val spk = currentSpk ?: throw IllegalStateException("SPK не инициализирован")
         val spkPublicB64 = Base64.encodeToString(spk.public.encoded, Base64.NO_WRAP)
@@ -333,8 +297,6 @@ object SessionKeyManager {
         val bundle = getLocalPrekeyBundle()
         return prekeyBundleToJson(bundle)
     }
-
-    // ─── X3DH — отправитель ──────────────────────────────────────────────────
 
     fun initiateSession(
         contactId: String,
@@ -381,15 +343,11 @@ object SessionKeyManager {
             }
 
             dhMaterial = if (dh4 != null) dh1!! + dh2!! + dh3!! + dh4!! else dh1!! + dh2!! + dh3!!
-            // Соль = байты эфемерного публичного ключа — привязывает PRK к этой сессии
+
             sessionKey = hkdf(dhMaterial, "BeaconX3DH".toByteArray(), 64, salt = ephemeralKp.public.encoded)
 
-            // ── v3: DH Ratchet инициализация (Alice) ────────────────────────────
-            // SK[0:32] как начальный rootKey.
-            // Alice делает первый DH-шаг: ECDH(ratchetKP.priv, Bob.SPK) → KDF_RK → sendChainKey.
-            // Bob при receiveSession() вычисляет тот же DH симметрично → его recvChainKey == наш sendChainKey.
             rootKey0 = sessionKey.copyOfRange(0, 32)
-            val recvChainKey = sessionKey.copyOfRange(32, 64)  // резерв; заменится на первом DH-шаге receive
+            val recvChainKey = sessionKey.copyOfRange(32, 64)
             val ratchetKP = generateEcKeyPair()
             dhR = ecdh(ratchetKP.private, spkRecipient)
             val (rootKey1, sendChainKey) = kdfRk(rootKey0, dhR)
@@ -409,7 +367,7 @@ object SessionKeyManager {
                 rootKey         = rootKey1,
                 sendRatchetPriv = ratchetKP.private.encoded,
                 sendRatchetPub  = ratchetKP.public.encoded,
-                recvRatchetPub  = spkRecipient.encoded  // Bob's SPK — начальный recv ratchet pub
+                recvRatchetPub  = spkRecipient.encoded
             )
             sessions[contactId] = state
             saveSession(state)
@@ -434,8 +392,6 @@ object SessionKeyManager {
             dhR?.let { SecureMemory.wipe(it) }
         }
     }
-
-    // ─── X3DH — получатель ───────────────────────────────────────────────────
 
     fun receiveSession(
         contactId: String,
@@ -484,14 +440,11 @@ object SessionKeyManager {
             }
 
             dhMaterial = if (dh4 != null) dh1!! + dh2!! + dh3!! + dh4!! else dh1!! + dh2!! + dh3!!
-            // Соль = байты эфемерного публичного ключа — та же соль что использовал отправитель
+
             sessionKey = hkdf(dhMaterial, "BeaconX3DH".toByteArray(), 64, salt = ephemeralPublic.encoded)
 
             val now = System.currentTimeMillis()
 
-            // ── v3: DH Ratchet инициализация (Bob) ──────────────────────────────
-            // Если x3dhHeader содержит "dh_ratchet_pub" — Alice поддерживает v3.
-            // Bob симметрично вычисляет то же ECDH что Alice и сразу инициализирует обе цепочки.
             val aliceRatchetPubB64 = if (x3dhHeader.has("dh_ratchet_pub"))
                 x3dhHeader.getString("dh_ratchet_pub") else null
 
@@ -500,13 +453,10 @@ object SessionKeyManager {
                 val aliceRatchetPub = loadPublicKey(aliceRatchetPubB64)
                 rootKey0 = sessionKey.copyOfRange(0, 32)
 
-                // Шаг 1: ECDH(Bob.SPK.priv, Alice.ratchetPub) == ECDH(Alice.ratchetPriv, Bob.SPK)
-                // → Bob.recvChainKey == Alice.sendChainKey (симметрия ECDH гарантирует корректность)
                 dhOut1 = ecdh(spk.private, aliceRatchetPub)
                 val (rk1, recvChainKey) = kdfRk(rootKey0, dhOut1)
                 rootKey1 = rk1
 
-                // Шаг 2: Bob генерирует свою ratchet-пару → sendChainKey
                 val bobRatchetKP = generateEcKeyPair()
                 dhOut2 = ecdh(bobRatchetKP.private, aliceRatchetPub)
                 val (rootKey2, sendChainKey) = kdfRk(rootKey1, dhOut2)
@@ -526,7 +476,7 @@ object SessionKeyManager {
                     recvRatchetPub  = aliceRatchetPub.encoded
                 )
             } else {
-                // v2: симметричный ratchet (старые клиенты)
+
                 val recvChainKey = sessionKey.copyOfRange(0, 32)
                 val sendChainKey = sessionKey.copyOfRange(32, 64)
                 state = SessionState(
@@ -558,8 +508,6 @@ object SessionKeyManager {
         }
     }
 
-    // ─── Symmetric Ratchet ───────────────────────────────────────────────────
-
     fun nextSendKey(contactId: String): SendKeyResult = synchronized(this) {
         val state = sessions[contactId]
             ?: throw IllegalStateException("Нет сессии с $contactId. Нужен X3DH.")
@@ -581,29 +529,15 @@ object SessionKeyManager {
         SecureMemory.wipe(state.sendChainKey)
         saveSession(newState)
 
-        // v3: включаем текущий ratchet public key в результат
         val dhPub = if (isDHRatchetActive(state))
             Base64.encodeToString(state.sendRatchetPub, Base64.NO_WRAP) else null
         return SendKeyResult(messageKey, counter, state.sessionId, dhPub)
     }
 
-    /**
-     * Получить MessageKey для входящего сообщения.
-     *
-     * [dhKeyB64] — DH ratchet public key из session_header.dh (null для v2-сессий).
-     *
-     * Логика:
-     * 1. TTL-очистка просроченных skipped keys
-     * 2. Если v3 и пришёл новый DH-ключ → DH Ratchet Step (новые chain keys, счётчики → 0)
-     * 3. counter в skippedKeys → пакет пришёл с опозданием, ключ уже сохранён
-     * 4. counter > recvCounter → gap, вычисляем пропущенные ключи
-     * 5. counter == recvCounter → нормальный порядок
-     */
     fun nextRecvKey(contactId: String, expectedCounter: Int, dhKeyB64: String? = null): ByteArray = synchronized(this) {
         var state = sessions[contactId]
             ?: throw IllegalStateException("Нет сессии с $contactId")
 
-        // ── TTL-очистка просроченных пропущенных ключей ──────────────────────
         val now = System.currentTimeMillis()
         val expired = state.skippedKeyTimestamps.filter { now - it.value > SKIPPED_KEY_TTL_MS }.keys
         if (expired.isNotEmpty()) {
@@ -616,15 +550,10 @@ object SessionKeyManager {
             saveSession(state)
         }
 
-        // ── Определяем DH-эпоху и нужен ли DH-шаг ───────────────────────────
         val inDHRatchet = dhKeyB64 != null && isDHRatchetActive(state)
         val currentDhPubB64 = state.recvRatchetPub?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
         val isDHStep = inDHRatchet && dhKeyB64 != currentDhPubB64
 
-        // Prefix для ключей в skippedKeys:
-        // v2: "" → ключ = "$counter"
-        // v3 та же эпоха: "$dhKeyB64:" → ключ = "$dhKeyB64:$counter"
-        // v3 новая эпоха (заполнение gap из старой): "$currentDhPubB64:"
         val epochPrefix = when {
             !inDHRatchet      -> ""
             !isDHStep         -> "$dhKeyB64:"
@@ -632,7 +561,6 @@ object SessionKeyManager {
         }
         val lookupKey = "$epochPrefix$expectedCounter"
 
-        // ── Случай 1: ключ уже в буфере пропущенных ─────────────────────────
         state.skippedKeys[lookupKey]?.let { skippedKey ->
             val newSkipped = state.skippedKeys.toMutableMap().also { it.remove(lookupKey) }
             val newTs = state.skippedKeyTimestamps.toMutableMap().also { it.remove(lookupKey) }
@@ -643,11 +571,9 @@ object SessionKeyManager {
             return skippedKey
         }
 
-        // ── Случай 2: gap — counter > recvCounter ────────────────────────────
         if (expectedCounter > state.recvCounter) {
             val gap = expectedCounter - state.recvCounter
-            // Проверяем суммарный размер ДО заполнения, чтобы атакующий не мог
-            // раздуть буфер накопленными старыми ключами + большим gap.
+
             if (gap > MAX_SKIPPED_KEYS || state.skippedKeys.size + gap > MAX_SKIPPED_KEYS) {
                 throw SecurityException("Слишком большой разрыв счётчика: gap=$gap, лимит=$MAX_SKIPPED_KEYS")
             }
@@ -657,7 +583,6 @@ object SessionKeyManager {
             val newTs = state.skippedKeyTimestamps.toMutableMap()
             val skipTs = System.currentTimeMillis()
 
-            // Заполняем gap ключами из ТЕКУЩЕЙ эпохи (до DH-шага)
             for (i in state.recvCounter until expectedCounter) {
                 newSkipped["$epochPrefix$i"] = ratchetStep(chainKey)
                 newTs["$epochPrefix$i"] = skipTs
@@ -666,7 +591,6 @@ object SessionKeyManager {
                 chainKey = next
             }
 
-            // Вытесняем по времени добавления (LRU) — не по строковому ключу
             if (newSkipped.size > MAX_SKIPPED_KEYS) {
                 val toEvict = newSkipped.keys
                     .sortedBy { k -> newTs[k] ?: 0L }
@@ -679,8 +603,7 @@ object SessionKeyManager {
             }
 
             if (isDHStep) {
-                // Применяем DH-шаг ПОСЛЕ заполнения gap из старой эпохи.
-                // Сначала сохраняем промежуточное состояние с заполненным gap.
+
                 val preStep = state.copy(
                     recvChainKey = chainKey,
                     recvCounter  = expectedCounter,
@@ -689,9 +612,9 @@ object SessionKeyManager {
                 )
                 SecureMemory.wipe(state.recvChainKey)
                 state = performDHRatchetStep(preStep, dhKeyB64!!)
-                SecureMemory.wipe(chainKey)  // preStep.recvChainKey == chainKey — вайпим после DH-шага
+                SecureMemory.wipe(chainKey)
                 sessions[contactId] = state
-                // После DH-шага счётчики сброшены в 0; берём ключ с позиции 0 новой цепочки
+
                 val messageKey  = ratchetStep(state.recvChainKey)
                 val nextChainKey = ratchetAdvance(state.recvChainKey)
                 SecureMemory.wipe(state.recvChainKey)
@@ -701,7 +624,6 @@ object SessionKeyManager {
                 return messageKey
             }
 
-            // Нет DH-шага — обычный gap в той же эпохе
             val messageKey   = ratchetStep(chainKey)
             val nextChainKey = ratchetAdvance(chainKey)
             SecureMemory.wipe(chainKey)
@@ -718,9 +640,8 @@ object SessionKeyManager {
             return messageKey
         }
 
-        // ── Случай 3: нормальный порядок ────────────────────────────────────
         if (isDHStep) {
-            // Нормальный порядок, но новый DH-ключ → DH-шаг перед симметричным
+
             val oldRecvCK = state.recvChainKey
             state = performDHRatchetStep(state, dhKeyB64!!)
             SecureMemory.wipe(oldRecvCK)
@@ -749,8 +670,7 @@ object SessionKeyManager {
     }
 
     private fun needsRatchetRotation(state: SessionState): Boolean {
-        // v3-сессии: DH ratchet обеспечивает break-in recovery на каждом обмене,
-        // периодический X3DH re-keying не требуется.
+
         if (isDHRatchetActive(state)) return false
         val now = System.currentTimeMillis()
         return state.sendCounter >= RATCHET_ROTATION_THRESHOLD ||
@@ -765,7 +685,7 @@ object SessionKeyManager {
             SecureMemory.wipe(it.sendChainKey)
             SecureMemory.wipe(it.recvChainKey)
             it.skippedKeys.values.forEach { k -> SecureMemory.wipe(k) }
-            // v3: обнуляем DH ratchet ключи
+
             if (isDHRatchetActive(it)) {
                 SecureMemory.wipe(it.rootKey)
                 SecureMemory.wipe(it.sendRatchetPriv)
@@ -781,7 +701,7 @@ object SessionKeyManager {
             SecureMemory.wipe(it.sendChainKey)
             SecureMemory.wipe(it.recvChainKey)
             it.skippedKeys.values.forEach { k -> SecureMemory.wipe(k) }
-            // v3: обнуляем DH ratchet ключи
+
             if (isDHRatchetActive(it)) {
                 SecureMemory.wipe(it.rootKey)
                 SecureMemory.wipe(it.sendRatchetPriv)
@@ -792,7 +712,7 @@ object SessionKeyManager {
         sessions.clear()
         opkPool.clear()
         currentSpk = null
-        // Удаляем все персистированные сессии из хранилища
+
         appContext?.let { ctx ->
             try {
                 val encPrefs = EncryptedStorage.getEncryptedPrefs(ctx, "${PREFS_NAME}_sessions")
@@ -804,8 +724,6 @@ object SessionKeyManager {
             }
         }
     }
-
-    // ─── Шифрование/расшифровка ───────────────────────────────────────────────
 
     fun encryptWithSession(contactId: String, plaintext: String): Pair<String, JSONObject> {
         val result = nextSendKey(contactId)
@@ -842,12 +760,10 @@ object SessionKeyManager {
         }
     }
 
-    // ─── AES-GCM ─────────────────────────────────────────────────────────────
-
     private fun aesGcmEncrypt(plaintext: ByteArray, key: ByteArray): ByteArray {
         val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
         val secretKey = javax.crypto.spec.SecretKeySpec(key, 0, 32, "AES")
-        // Явная генерация IV через SecureRandom — не полагаемся на провайдер по умолчанию
+
         val iv = ByteArray(12).also { secureRandom.nextBytes(it) }
         cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
         val ciphertext = cipher.doFinal(plaintext)
@@ -866,10 +782,6 @@ object SessionKeyManager {
         )
         return cipher.doFinal(ciphertext)
     }
-
-    // ─── HKDF (RFC 5869) ─────────────────────────────────────────────────────
-    // salt по умолчанию = нули (RFC допускает), но для X3DH передаём эфемерный публичный ключ —
-    // это привязывает PRK к конкретной сессии и устраняет нулевую соль.
 
     private fun hkdf(ikm: ByteArray, info: ByteArray, outputLen: Int, salt: ByteArray = ByteArray(32)): ByteArray {
         val prk = run {
@@ -903,13 +815,9 @@ object SessionKeyManager {
         }
     }
 
-    // ─── DH Ratchet — вспомогательные ────────────────────────────────────────
-
     private fun isDHRatchetActive(state: SessionState) =
         state.rootKey.isNotEmpty() && state.sendRatchetPriv.isNotEmpty()
 
-    // KDF_RK(rootKey, dhOutput) → (newRootKey, chainKey)
-    // HKDF с rootKey как солью, DH output как IKM, "BeaconDHRatchet" как info.
     private fun kdfRk(rootKey: ByteArray, dhOutput: ByteArray): Pair<ByteArray, ByteArray> {
         val out = hkdf(dhOutput, "BeaconDHRatchet".toByteArray(), 64, salt = rootKey)
         val newRoot  = out.copyOfRange(0, 32)
@@ -918,13 +826,8 @@ object SessionKeyManager {
         return Pair(newRoot, chainKey)
     }
 
-    // DH Ratchet Step: вызывается когда получен новый DH-ключ от собеседника.
-    // 1. ECDH(наш старый ratchet priv, новый pub) → обновляем rootKey + recvChainKey
-    // 2. Генерируем новую ratchet-пару
-    // 3. ECDH(новый priv, тот же новый pub) → обновляем rootKey + sendChainKey
-    // Счётчики сбрасываются в 0 (новая DH-эпоха).
     private fun performDHRatchetStep(state: SessionState, newDhPubB64: String): SessionState {
-        val newDhPub = loadPublicKey(newDhPubB64)  // validateECPoint() включён в loadPublicKey
+        val newDhPub = loadPublicKey(newDhPubB64)
         val privKey = KeyFactory.getInstance("EC")
             .generatePrivate(PKCS8EncodedKeySpec(state.sendRatchetPriv))
 
@@ -959,8 +862,6 @@ object SessionKeyManager {
         }
     }
 
-    // ─── Вспомогательные ─────────────────────────────────────────────────────
-
     private fun generateEcKeyPair(): KeyPair {
         val keyPairGen = KeyPairGenerator.getInstance("EC")
         keyPairGen.initialize(ECGenParameterSpec("secp256r1"))
@@ -982,11 +883,9 @@ object SessionKeyManager {
     }
 
     private fun loadPublicKey(keyString: String): PublicKey {
-        // Delegates to CryptoManager which calls validateECPoint() — prevents Invalid Curve Attack
+
         return CryptoManager.loadPublicKey(keyString)
     }
-
-    // ─── Персистентность сессий ───────────────────────────────────────────────
 
     private fun saveSession(state: SessionState) {
         val ctx = appContext ?: return
@@ -1009,7 +908,7 @@ object SessionKeyManager {
                 put("lastRatchetAt",state.lastRatchetAt)
                 put("skippedKeys",  skippedKeysJson)
                 put("skippedKeyTimestamps", skippedTsJson)
-                // ── DH Ratchet v3 ──────────────────────────────────────────
+
                 if (isDHRatchetActive(state)) {
                     put("rootKey",         Base64.encodeToString(state.rootKey,         Base64.NO_WRAP))
                     put("sendRatchetPriv", Base64.encodeToString(state.sendRatchetPriv, Base64.NO_WRAP))
@@ -1034,9 +933,6 @@ object SessionKeyManager {
                 try {
                     val json = JSONObject(jsonStr)
 
-                    // skippedKeys: Map<String, ByteArray>
-                    // Миграция v2: ключи были Int ("5"), теперь String ("5" или "dhPub:5").
-                    // JSON хранит числа как строки, поэтому k уже строка — всё совместимо.
                     val skJson = json.optJSONObject("skippedKeys") ?: JSONObject()
                     val skippedKeys = mutableMapOf<String, ByteArray>()
                     skJson.keys().forEach { k ->
@@ -1046,7 +942,6 @@ object SessionKeyManager {
                     val skippedTs = mutableMapOf<String, Long>()
                     tsJson.keys().forEach { k -> skippedTs[k] = tsJson.getLong(k) }
 
-                    // ── DH Ratchet v3 (опционально — отсутствуют в v2-сессиях) ──
                     val rootKey = if (json.has("rootKey"))
                         Base64.decode(json.getString("rootKey"), Base64.NO_WRAP) else ByteArray(0)
                     val sendRatchetPriv = if (json.has("sendRatchetPriv"))
@@ -1091,8 +986,6 @@ object SessionKeyManager {
             Log.e(TAG, "Ошибка удаления сессии из хранилища: ${e.message}")
         }
     }
-
-    // ─── Исключения ──────────────────────────────────────────────────────────
 
     class SessionRotationRequired(val contactId: String) :
         Exception("Сессия с $contactId требует ротации (достигнут лимит ratchet)")

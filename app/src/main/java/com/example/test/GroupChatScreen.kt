@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -49,11 +49,6 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.absoluteValue
 
-// ─── Вспомогательные форматы текста ──────────────────────────────────────────
-// В памяти: "VOICE_FILE:path:duration"  (никогда не сохраняется)
-// В хранилище: "VOICE:duration:base64"
-// В памяти: "GEO_DISPLAY" — отображается как "📍 Геопозиция"
-
 private fun GroupMessage.isVoice() = text.startsWith("VOICE_FILE:")
 private fun GroupMessage.isGeo() = text == "📍 Геопозиция"
 private fun GroupMessage.isSystem() = senderId == "system"
@@ -69,7 +64,6 @@ private fun GroupMessage.voiceDuration(): Int {
     return text.split(":").getOrNull(2)?.toIntOrNull() ?: 0
 }
 
-/** Конвертирует хранимый формат VOICE: → отображаемый VOICE_FILE: */
 private fun GroupMessage.toDisplay(context: Context): GroupMessage {
     if (!text.startsWith("VOICE:")) return this
     return try {
@@ -82,8 +76,6 @@ private fun GroupMessage.toDisplay(context: Context): GroupMessage {
         this
     }
 }
-
-// ─── Экран группового чата ───────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -128,7 +120,6 @@ fun GroupChatScreen(
         }
     }
 
-    // ─── Загрузка группы ─────────────────────────────────────────────────────
     LaunchedEffect(groupId) {
         group = GroupManager.getGroup(context, groupId)
     }
@@ -140,7 +131,6 @@ fun GroupChatScreen(
         return
     }
 
-    // ─── Загрузка истории (с декодингом голосовых) ───────────────────────────
     LaunchedEffect(groupId) {
         val history = withContext(Dispatchers.IO) {
             GroupManager.loadGroupMessages(context, userId, groupId)
@@ -150,7 +140,6 @@ fun GroupChatScreen(
         if (messages.isNotEmpty()) listState.scrollToItem(messages.size - 1)
     }
 
-    // ─── Подключение сервиса ─────────────────────────────────────────────────
     val connection = remember {
         object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName, binder: IBinder) {
@@ -219,10 +208,8 @@ fun GroupChatScreen(
         }
     }
 
-    // ─── UI ──────────────────────────────────────────────────────────────────
     Column(modifier = Modifier.fillMaxSize().imePadding()) {
 
-        // TopBar
         TopAppBar(
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -259,11 +246,11 @@ fun GroupChatScreen(
                 }
             },
             actions = {
-                // Групповой аудиозвонок
+
                 IconButton(onClick = { onStartGroupCall?.invoke(false) }) {
                     Text("📞", fontSize = 20.sp)
                 }
-                // Групповой видеозвонок
+
                 IconButton(onClick = { onStartGroupCall?.invoke(true) }) {
                     Text("🎥", fontSize = 20.sp)
                 }
@@ -274,7 +261,6 @@ fun GroupChatScreen(
             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF091a66))
         )
 
-        // Список сообщений
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
@@ -299,7 +285,6 @@ fun GroupChatScreen(
             }
         }
 
-        // ─── Контекстное меню (долгое нажатие) ───────────────────────────────────
         if (contextMenuMessage != null) {
             val ctxMsg = contextMenuMessage!!
             AlertDialog(
@@ -308,17 +293,16 @@ fun GroupChatScreen(
                 title = null,
                 text = {
                     Column {
-                        // Ответить — переход в режим ответа (через inputText)
+
                         TextButton(onClick = {
                             if (!ctxMsg.isVoice() && !ctxMsg.isSystem()) {
                                 isEditMode = false
                                 inputText = ""
-                                // Показываем превью ответа через editingMessageId
-                                // TODO: можно добавить replyTo в GroupMessage в следующей итерации
+
                             }
                             contextMenuMessage = null
                         }) { Text(s.groupChatReply, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
-                        // Копировать текст
+
                         if (!ctxMsg.isVoice() && !ctxMsg.isSystem() && ctxMsg.text.isNotEmpty()) {
                             TextButton(onClick = {
                                 val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -334,14 +318,14 @@ fun GroupChatScreen(
                                 }
                             }) { Text(s.groupChatCopy, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
                         }
-                        // Реакция
+
                         if (!ctxMsg.isSystem()) {
                             TextButton(onClick = {
                                 showReactionPicker = ctxMsg
                                 contextMenuMessage = null
                             }) { Text(s.groupChatReactionLabel, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
                         }
-                        // Редактировать (только свои текстовые)
+
                         if (ctxMsg.isOwn && !ctxMsg.isVoice() && !ctxMsg.isSystem()) {
                             TextButton(onClick = {
                                 isEditMode = true
@@ -350,7 +334,7 @@ fun GroupChatScreen(
                                 contextMenuMessage = null
                             }) { Text(s.groupChatEditAction, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
                         }
-                        // Удалить у себя
+
                         TextButton(onClick = {
                             val idx = messages.indexOfFirst { it.id == ctxMsg.id }
                             if (idx != -1) messages.removeAt(idx)
@@ -359,7 +343,7 @@ fun GroupChatScreen(
                             }
                             contextMenuMessage = null
                         }) { Text(s.groupChatDeleteOwn, color = Color(0xFFFF6B6B), fontFamily = JetBrainsMono, fontSize = 16.sp) }
-                        // Удалить у всех (только свои)
+
                         if (ctxMsg.isOwn) {
                             TextButton(onClick = {
                                 val idx = messages.indexOfFirst { it.id == ctxMsg.id }
@@ -377,7 +361,6 @@ fun GroupChatScreen(
             )
         }
 
-        // Диалог реакций
         if (showReactionPicker != null) {
             AlertDialog(
                 onDismissRequest = { showReactionPicker = null },
@@ -402,7 +385,7 @@ fun GroupChatScreen(
                                         scope.launch(Dispatchers.IO) {
                                             GroupManager.saveGroupMessage(context, userId, updated)
                                         }
-                                        // Отправляем реакцию всем участникам группы
+
                                         messengerService?.sendGroupReaction(
                                             groupId = groupId,
                                             messageId = target.id,
@@ -421,7 +404,6 @@ fun GroupChatScreen(
             )
         }
 
-        // Баннер режима редактирования
         if (isEditMode) {
             Row(
                 modifier = Modifier
@@ -447,7 +429,6 @@ fun GroupChatScreen(
             }
         }
 
-        // ─── Панель ввода ─────────────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -457,7 +438,7 @@ fun GroupChatScreen(
                 .imePadding(),
             verticalAlignment = Alignment.Bottom
         ) {
-            // Прикрепить
+
             var showAttachMenu by remember { mutableStateOf(false) }
             IconButton(onClick = { showAttachMenu = true }) {
                 Text("📎", fontSize = 24.sp)
@@ -502,7 +483,6 @@ fun GroupChatScreen(
                 )
             }
 
-            // Поле ввода
             Box(modifier = Modifier.weight(1f).padding(horizontal = 4.dp)) {
                 androidx.compose.foundation.Canvas(modifier = Modifier.matchParentSize()) {
                     drawRoundRect(
@@ -538,7 +518,6 @@ fun GroupChatScreen(
                 )
             }
 
-            // Микрофон
             WaveformMicButton(
                 isRecording = isRecording,
                 onClick = {
@@ -606,7 +585,6 @@ fun GroupChatScreen(
                 size = 52
             )
 
-            // Кнопка отправки
             PortholeSendButton(
                 enabled = inputText.isNotEmpty(),
                 onClick = {
@@ -660,8 +638,6 @@ fun GroupChatScreen(
         }
     }
 }
-
-// ─── Отправка геопозиции ─────────────────────────────────────────────────────
 
 private fun sendGeoMessage(
     context: Context,
@@ -727,8 +703,6 @@ private fun sendGeoMessage(
     }
 }
 
-// ─── Пузырь группового сообщения ─────────────────────────────────────────────
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GroupMessageBubble(
@@ -770,7 +744,7 @@ fun GroupMessageBubble(
             .padding(horizontal = 4.dp, vertical = 2.dp),
         horizontalAlignment = if (isOwn || isSystem) Alignment.End else Alignment.Start
     ) {
-        // Имя отправителя + аватар (только чужие, не системные)
+
         if (!isOwn && !isSystem) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -829,7 +803,6 @@ fun GroupMessageBubble(
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
 
-                    // Голосовое сообщение
                     if (isVoice && voiceFile != null) {
                         Row(
                             modifier = Modifier
@@ -858,7 +831,7 @@ fun GroupMessageBubble(
                             )
                         }
                     } else {
-                        // Текст
+
                         Text(
                             text = msg.text,
                             fontSize = if (isSystem) 13.sp else 16.sp,
@@ -868,7 +841,6 @@ fun GroupMessageBubble(
                         )
                     }
 
-                    // Время
                     Text(
                         text = timeStr,
                         fontSize = 10.sp,
@@ -880,7 +852,6 @@ fun GroupMessageBubble(
                 }
             }
 
-            // Реакции
             if (msg.reactions.isNotEmpty()) {
                 Row(
                     modifier = Modifier
@@ -899,7 +870,6 @@ fun GroupMessageBubble(
             }
         }
 
-        // Отступ снизу с учётом реакций
         Spacer(modifier = Modifier.height(if (msg.reactions.isNotEmpty()) 14.dp else 2.dp))
     }
 }

@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -18,8 +18,8 @@ object CryptoManager {
 
     private const val KEY_ALIAS        = "messenger_ec_key"
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-    private const val SW_KEY_PREFS     = "beacon_sw_keys"       // legacy plaintext (только для чтения при миграции)
-    private const val SW_KEY_PREFS_ENC = "beacon_ec_keys_enc"   // новое зашифрованное хранилище (другое имя файла!)
+    private const val SW_KEY_PREFS     = "beacon_sw_keys"
+    private const val SW_KEY_PREFS_ENC = "beacon_ec_keys_enc"
     private const val SW_PRIV_KEY      = "ec_priv"
     private const val SW_PUB_KEY       = "ec_pub"
 
@@ -29,24 +29,17 @@ object CryptoManager {
         appContext = context.applicationContext
     }
 
-    // Всегда используем software ключ — надёжно на всех версиях Android.
-    // EC ключ хранится в EncryptedSharedPreferences (защищён KeyStore AES-256).
     private fun useKeyStore() = false
-
-    // ─── Software ключ (для Android < 12) ────────────────────────────────────
 
     private fun getSoftwareKeyPair(): java.security.KeyPair {
         val ctx = appContext ?: throw IllegalStateException("CryptoManager.init() не вызван")
 
-        // ── Шаг 1: Каноническое зашифрованное хранилище (beacon_ec_keys_enc) ──
-        // Файл с отдельным именем — никогда не пересекается с legacy-файлом,
-        // поэтому EncryptedStorage не может случайно удалить старый ключ.
         val encPrefs   = EncryptedStorage.getEncryptedPrefs(ctx, SW_KEY_PREFS_ENC)
         val privStored = encPrefs.getString(SW_PRIV_KEY, null)
         val pubB64     = encPrefs.getString(SW_PUB_KEY,  null)
         if (privStored != null && pubB64 != null) {
             val privBytes = StorageKeyManager.unwrapBytes(privStored)
-            // Eager migration: если ключ ещё не обёрнут SMK, а SMK уже доступен — обернуть сразу
+
             if (!privStored.startsWith(StorageKeyManager.SMK_PREFIX) && StorageKeyManager.isUnlocked) {
                 encPrefs.edit().putString(SW_PRIV_KEY, StorageKeyManager.wrapBytes(privBytes)).commit()
             }
@@ -57,8 +50,6 @@ object CryptoManager {
             )
         }
 
-        // ── Шаг 2: Миграция из предыдущего зашифрованного хранилища (beacon_sw_keys enc) ──
-        // Пользователи которые обновились до промежуточной версии имеют ключ здесь.
         try {
             val prevEncPrefs = EncryptedStorage.getEncryptedPrefs(ctx, SW_KEY_PREFS)
             val prevPriv = prevEncPrefs.getString(SW_PRIV_KEY, null)
@@ -77,8 +68,6 @@ object CryptoManager {
             android.util.Log.w("CryptoManager", "Шаг 2 миграции недоступен: ${e.message}")
         }
 
-        // ── Шаг 3: Миграция из оригинального незашифрованного хранилища ──
-        // Пользователи первой версии приложения хранили ключ здесь открытым текстом.
         val legacyPrefs = ctx.getSharedPreferences(SW_KEY_PREFS, android.content.Context.MODE_PRIVATE)
         val legacyPriv  = legacyPrefs.getString(SW_PRIV_KEY, null)
         val legacyPub   = legacyPrefs.getString(SW_PUB_KEY,  null)
@@ -93,7 +82,6 @@ object CryptoManager {
             )
         }
 
-        // ── Шаг 4: Генерация новых ключей (первый запуск) ──
         val kpg = java.security.KeyPairGenerator.getInstance("EC")
         kpg.initialize(java.security.spec.ECGenParameterSpec("secp256r1"))
         val kp = kpg.generateKeyPair()
@@ -104,17 +92,15 @@ object CryptoManager {
         encPrefs.edit()
             .putString(SW_PRIV_KEY, privToStore)
             .putString(SW_PUB_KEY,  Base64.encodeToString(kp.public.encoded, Base64.NO_WRAP))
-            .commit() // commit() вместо apply() — ключи должны быть записаны до возврата,
-                      // иначе краш до завершения async-записи даст новый ключ при следующем запуске
+            .commit()
+
         android.util.Log.d("CryptoManager", "Software EC ключи сгенерированы")
         return kp
     }
 
-    // ─── Генерация / проверка ключей ──────────────────────────────────────────
-
     fun generateKeyPair() {
         if (!useKeyStore()) {
-            getSoftwareKeyPair() // создаёт если не существует
+            getSoftwareKeyPair()
             return
         }
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
@@ -146,15 +132,15 @@ object CryptoManager {
             keyStore.containsAlias(KEY_ALIAS)
         } else {
             val ctx = appContext ?: return false
-            // Каноническое хранилище
+
             if (EncryptedStorage.getEncryptedPrefs(ctx, SW_KEY_PREFS_ENC)
                     .getString(SW_PRIV_KEY, null) != null) return true
-            // Промежуточное зашифрованное (до переименования)
+
             try {
                 if (EncryptedStorage.getEncryptedPrefs(ctx, SW_KEY_PREFS)
                         .getString(SW_PRIV_KEY, null) != null) return true
             } catch (_: Exception) {}
-            // Legacy незашифрованное
+
             ctx.getSharedPreferences(SW_KEY_PREFS, android.content.Context.MODE_PRIVATE)
                 .getString(SW_PRIV_KEY, null) != null
         }
@@ -191,11 +177,6 @@ object CryptoManager {
             getSoftwareKeyPair().private
         }
     }
-
-    // ─── Режим 1: Ephemeral ECDH (fallback / legacy) ──────────────────────────
-    //
-    // АУДИТ #1: Static-Ephemeral ECDH — без PFS.
-    // Используется только как fallback. Основной чат — encryptWithForwardSecrecy.
 
     fun encrypt(plaintext: String, recipientPublicKeyStr: String): String {
         val ephemeralKeyPair = generateEphemeralKeyPair()
@@ -244,12 +225,6 @@ object CryptoManager {
         }
     }
 
-    // ─── АУДИТ #2: Проверка точки на кривой secp256r1 ────────────────────────
-    //
-    // Invalid Curve Attack: злоумышленник присылает точку не на кривой,
-    // чтобы вычислить закрытый ключ из shared secret.
-    // Проверяем: точка не в бесконечности, координаты в поле, уравнение y²=x³+ax+b (mod p).
-
     private fun validateECPoint(publicKey: java.security.PublicKey) {
         val ecKey = publicKey as? ECPublicKey
             ?: throw SecurityException("Ключ не является EC ключом")
@@ -271,7 +246,6 @@ object CryptoManager {
             throw SecurityException("Invalid Curve Attack: y вне поля")
         }
 
-        // y² = x³ + ax + b (mod p)
         val a = params.curve.a
         val b = params.curve.b
         val lhs = y.modPow(java.math.BigInteger.valueOf(2), p)
@@ -285,8 +259,6 @@ object CryptoManager {
         }
     }
 
-    // ─── HKDF-деривация AES ключа ────────────────────────────────────────────
-
     private fun deriveAesKey(sharedSecret: ByteArray, info: String): ByteArray {
         val mac = javax.crypto.Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec("BeaconHKDF".toByteArray(Charsets.UTF_8), "HmacSHA256"))
@@ -298,11 +270,6 @@ object CryptoManager {
         SecureMemory.wipe(prk)
         return okm.copyOfRange(0, 32)
     }
-
-    // ─── Режим 2: Session-based шифрование (Forward Secrecy) ─────────────────
-    //
-    // АУДИТ #1: Основной режим — всегда использовать для чата.
-    // Каждое сообщение шифруется эфемерными ключами через Ratchet.
 
     fun encryptWithForwardSecrecy(
         contactId: String,
@@ -318,8 +285,6 @@ object CryptoManager {
     ): String {
         return SessionKeyManager.decryptWithSession(contactId, ciphertextB64, header)
     }
-
-    // ─── Подписи ──────────────────────────────────────────────────────────────
 
     fun sign(message: String): String {
         val signature = Signature.getInstance("SHA256withECDSA")
@@ -346,12 +311,6 @@ object CryptoManager {
         return Base64.encodeToString(signature.sign(), Base64.NO_WRAP)
     }
 
-    /**
-     * Подписывает чанк с привязкой к transferId и chunkIndex.
-     * Предотвращает DoS-атаку переупорядочивания чанков из разных передач:
-     * даже если данные чанка совпадают, подпись с другим контекстом не пройдёт верификацию.
-     * Формат подписываемых данных: [transferId bytes][4-byte big-endian chunkIndex][chunkData bytes]
-     */
     fun signChunk(chunkData: String, transferId: String, chunkIndex: Int): String {
         val sig = Signature.getInstance("SHA256withECDSA")
         sig.initSign(getPrivateKey())
@@ -384,8 +343,6 @@ object CryptoManager {
         }
     }
 
-    // ─── Вспомогательные ─────────────────────────────────────────────────────
-
     private fun generateEphemeralKeyPair(): java.security.KeyPair {
         val keyPairGen = java.security.KeyPairGenerator.getInstance("EC")
         keyPairGen.initialize(java.security.spec.ECGenParameterSpec("secp256r1"))
@@ -402,7 +359,6 @@ object CryptoManager {
         return keyAgreement.generateSecret()
     }
 
-    // АУДИТ #2: validateECPoint вызывается здесь — защита для всех вызовов loadPublicKey
     fun loadPublicKey(keyString: String): java.security.PublicKey {
         val keyBytes = Base64.decode(keyString, Base64.NO_WRAP)
         val keyFactory = java.security.KeyFactory.getInstance("EC")
@@ -411,41 +367,33 @@ object CryptoManager {
         return publicKey
     }
 
-    // ─── Рандомный паддинг ────────────────────────────────────────────────────
-    //
-    // Длина паддинга: случайно от 16 до 256 байт.
-    // Наблюдатель видит пакеты разного размера и не может определить
-    // тип сообщения (короткий текст, команда, голос) по длине трафика.
-    //
-    // Формат: [1 байт — длина паддинга][N байт случайного мусора][данные]
-
     private val secureRandom = java.security.SecureRandom()
 
     private fun addPadding(data: ByteArray): ByteArray {
-        val padLen = 128 + secureRandom.nextInt(385) // 128..512 байт
+        val padLen = 128 + secureRandom.nextInt(385)
         val pad = ByteArray(padLen).also { secureRandom.nextBytes(it) }
-        val result = ByteArray(2 + padLen + data.size)  // <- 2 байта для длины
-        result[0] = (padLen shr 8).toByte()  // <- Старший байт
-        result[1] = (padLen and 0xFF).toByte()  // <- Младший байт
-        System.arraycopy(pad, 0, result, 2, padLen)  // <- Со смещением 2
+        val result = ByteArray(2 + padLen + data.size)
+        result[0] = (padLen shr 8).toByte()
+        result[1] = (padLen and 0xFF).toByte()
+        System.arraycopy(pad, 0, result, 2, padLen)
         System.arraycopy(data, 0, result, 2 + padLen, data.size)
         return result
     }
 
     private fun removePadding(data: ByteArray): ByteArray {
         if (data.size < 2) throw IllegalArgumentException("Пакет слишком короткий")
-        val padLen = ((data[0].toInt() and 0xFF) shl 8) or (data[1].toInt() and 0xFF)  // <- 2 байта
+        val padLen = ((data[0].toInt() and 0xFF) shl 8) or (data[1].toInt() and 0xFF)
 
-        if (data.size < 2 + padLen) {  // <- 2 + padLen
+        if (data.size < 2 + padLen) {
             throw IllegalArgumentException("Паддинг повреждён: padLen=$padLen size=${data.size}")
         }
 
-        val result = data.copyOfRange(2 + padLen, data.size)  // <- Со смещением 2
+        val result = data.copyOfRange(2 + padLen, data.size)
         return result
     }
 
     private fun aesEncrypt(plaintext: String, key: ByteArray): ByteArray {
-        val iv = ByteArray(12).also { secureRandom.nextBytes(it) }  // явный SecureRandom, не полагаемся на провайдера
+        val iv = ByteArray(12).also { secureRandom.nextBytes(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         val secretKey = SecretKeySpec(key, 0, 32, "AES")
         cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
@@ -476,15 +424,15 @@ object CryptoManager {
                 }
             } else {
                 val ctx = appContext ?: return
-                // Каноническое зашифрованное хранилище
+
                 EncryptedStorage.getEncryptedPrefs(ctx, SW_KEY_PREFS_ENC)
                     .edit().remove(SW_PRIV_KEY).remove(SW_PUB_KEY).apply()
-                // Промежуточное (до переименования)
+
                 try {
                     EncryptedStorage.getEncryptedPrefs(ctx, SW_KEY_PREFS)
                         .edit().remove(SW_PRIV_KEY).remove(SW_PUB_KEY).apply()
                 } catch (_: Exception) {}
-                // Legacy незашифрованный
+
                 ctx.getSharedPreferences(SW_KEY_PREFS, android.content.Context.MODE_PRIVATE)
                     .edit().clear().apply()
             }
@@ -492,11 +440,7 @@ object CryptoManager {
             android.util.Log.e("CryptoManager", "Ошибка удаления ключей: ${e.message}")
         }
     }
-    // ─── Шифрование файлов ────────────────────────────────────────────────────
 
-    /**
-     * Данные зашифрованного файла
-     */
     data class EncryptedFileData(
         val encryptedData: ByteArray,
         val iv: ByteArray,
@@ -520,15 +464,12 @@ object CryptoManager {
         }
     }
 
-    /**
-     * Шифрует файл для отправки контакту.
-     */
     fun encryptFile(fileData: ByteArray, recipientPublicKeyStr: String): EncryptedFileData {
         val ephemeralKeyPair = generateEphemeralKeyPair()
         val sharedSecret = ecdh(ephemeralKeyPair.private, loadPublicKey(recipientPublicKeyStr))
         val aesKey = deriveAesKey(sharedSecret, "BeaconFileEncryption")
 
-        val iv = ByteArray(12).also { secureRandom.nextBytes(it) }  // явный SecureRandom
+        val iv = ByteArray(12).also { secureRandom.nextBytes(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         val secretKey = SecretKeySpec(aesKey, 0, 32, "AES")
         cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
@@ -549,9 +490,6 @@ object CryptoManager {
         )
     }
 
-    /**
-     * Расшифровывает полученный файл.
-     */
     fun decryptFile(encryptedFileData: EncryptedFileData): ByteArray {
         val ephemeralPublicKey = loadPublicKey(
             Base64.encodeToString(encryptedFileData.ephemeralPublicKey, Base64.NO_WRAP)
@@ -574,11 +512,8 @@ object CryptoManager {
         return originalData
     }
 
-    /**
-     * Паддинг для файлов (скрывает точный размер).
-     */
     private fun addFilePadding(data: ByteArray): ByteArray {
-        val padLen = 1024 + secureRandom.nextInt(3072) // 1-4KB
+        val padLen = 1024 + secureRandom.nextInt(3072)
         val pad = ByteArray(padLen).also { secureRandom.nextBytes(it) }
 
         val result = ByteArray(4 + padLen + data.size)
@@ -607,9 +542,6 @@ object CryptoManager {
         return data.copyOfRange(4 + padLen, data.size)
     }
 
-    /**
-     * Упаковка зашифрованного файла в Base64.
-     */
     fun packEncryptedFile(encryptedFileData: EncryptedFileData): String {
         val ephemeralKeyLen = encryptedFileData.ephemeralPublicKey.size
         val ivLen = encryptedFileData.iv.size
@@ -636,9 +568,6 @@ object CryptoManager {
         return Base64.encodeToString(packed, Base64.NO_WRAP)
     }
 
-    /**
-     * Распаковка полученного зашифрованного файла.
-     */
     fun unpackEncryptedFile(packedB64: String): EncryptedFileData {
         val packed = Base64.decode(packedB64, Base64.NO_WRAP)
 
@@ -673,11 +602,7 @@ object CryptoManager {
             ephemeralPublicKey = ephemeralPublicKey
         )
     }
-    // ─── ТЕСТЫ БЕЗОПАСНОСТИ ──────────────────────────────────────────────────
 
-    /**
-     * Полная диагностика KeyStore
-     */
     fun runSecurityDiagnostics(context: android.content.Context, onLine: ((String) -> Unit)? = null): String {
         val report = StringBuilder()
         fun emit(line: String = "") { report.append(line).append('\n'); onLine?.invoke(line) }
@@ -685,12 +610,10 @@ object CryptoManager {
         emit("🔐 ДИАГНОСТИКА БЕЗОПАСНОСТИ KEYSTORE")
         emit("═══════════════════════════════════════\n")
 
-        // ВАЖНО: Убеждаемся что ключи существуют перед всеми тестами
         if (!hasKeys()) {
             generateKeyPair()
         }
 
-        // Тест 1: Проверка существования ключей
         emit("📋 ТЕСТ 1: Проверка существования ключей")
         val hasKeysInitial = hasKeys()
         emit("  Ключи существуют: $hasKeysInitial")
@@ -702,12 +625,11 @@ object CryptoManager {
         }
         emit()
 
-        // Тест 2: Защита от повторной генерации
         emit("📋 ТЕСТ 2: Защита от повторной генерации")
         val publicKey1 = getPublicKeyString()
         emit("  Публичный ключ (до): ${publicKey1.take(50)}...")
 
-        generateKeyPair() // Попытка пересоздать
+        generateKeyPair()
         val publicKey2 = getPublicKeyString()
         emit("  Публичный ключ (после): ${publicKey2.take(50)}...")
 
@@ -718,11 +640,9 @@ object CryptoManager {
         }
         emit()
 
-        // Тест 3: Удаление и восстановление
         emit("📋 ТЕСТ 3: Удаление и восстановление")
         val keyBeforeDelete = getPublicKeyString()
 
-        // ⚠️ Сохраняем реальные ключи аккаунта — тест НЕ должен менять fingerprint
         val ctx3 = appContext
         val encPrefs3 = ctx3?.let { EncryptedStorage.getEncryptedPrefs(it, SW_KEY_PREFS_ENC) }
         val savedPrivB64 = encPrefs3?.getString(SW_PRIV_KEY, null)
@@ -752,7 +672,6 @@ object CryptoManager {
             emit("  ❌ ПРОВАЛ: Не удалось восстановить ключи")
         }
 
-        // 🔄 Восстанавливаем оригинальные ключи аккаунта (чтобы fingerprint не изменился)
         if (savedPrivB64 != null && savedPubB64 != null && encPrefs3 != null) {
             encPrefs3.edit()
                 .putString(SW_PRIV_KEY, savedPrivB64)
@@ -762,7 +681,6 @@ object CryptoManager {
         }
         emit()
 
-        // Тест 4: Проверка хранилища ключей (software EC в EncryptedSharedPreferences)
         emit("📋 ТЕСТ 4: Проверка хранилища ключей")
         try {
             val ctx4 = appContext ?: throw IllegalStateException("CryptoManager.init() не вызван")
@@ -792,7 +710,6 @@ object CryptoManager {
                     emit("  Кривая: ${if (ok) "secp256r1 (P-256) ✅" else curveName}")
                 }
 
-                // Проверяем согласованность пары: подписываем приватным → верифицируем публичным
                 val testBytes = "key_pair_consistency_check".toByteArray()
                 val sig4 = Signature.getInstance("SHA256withECDSA").apply {
                     initSign(privKey); update(testBytes)
@@ -815,11 +732,10 @@ object CryptoManager {
         }
         emit()
 
-        // Тест 5: Шифрование/расшифровка (ПОСЛЕ теста 3 - используем НОВЫЕ ключи)
         emit("📋 ТЕСТ 5: Шифрование и расшифровка")
         try {
             val testMessage = "Секретное сообщение 🔐"
-            val currentPublicKey = getPublicKeyString() // Получаем актуальный ключ
+            val currentPublicKey = getPublicKeyString()
 
             emit("  Оригинал: '$testMessage'")
             emit("  Длина оригинала: ${testMessage.length} символов")
@@ -841,7 +757,7 @@ object CryptoManager {
                 emit("  ❌ ПРОВАЛ: Сообщение не совпадает")
                 emit("  Ожидалось: '$testMessage'")
                 emit("  Получено:  '$decrypted'")
-                // Посимвольное сравнение
+
                 for (i in 0 until maxOf(testMessage.length, decrypted.length)) {
                     val orig = testMessage.getOrNull(i)
                     val dec = decrypted.getOrNull(i)
@@ -856,7 +772,6 @@ object CryptoManager {
         }
         emit()
 
-        // Тест 6: Подпись и верификация
         emit("📋 ТЕСТ 6: Подпись и верификация")
         try {
             val testMessage = "Тестовое сообщение для подписи"
@@ -885,7 +800,6 @@ object CryptoManager {
         }
         emit()
 
-        // Тест 7: Invalid Curve Attack (информационный)
         emit("📋 ТЕСТ 7: Защита от Invalid Curve Attack")
         emit("  ℹ️ Информационный тест")
         emit("  ✅ Защита реализована в методе validateECPoint()")
@@ -897,7 +811,6 @@ object CryptoManager {
         emit("  ✅ Некорректные точки отклоняются с SecurityException")
         emit()
 
-        // Тест 8: Шифрование файлов
         emit("📋 ТЕСТ 8: Шифрование файлов")
         try {
             val testData = "Содержимое тестового файла 📄".toByteArray()
@@ -921,7 +834,6 @@ object CryptoManager {
         }
         emit()
 
-        // Итоговый отчёт
         emit("═══════════════════════════════════════")
         emit("📊 ИТОГОВЫЙ СТАТУС")
         emit("═══════════════════════════════════════")
@@ -934,9 +846,6 @@ object CryptoManager {
         return report.toString()
     }
 
-    /**
-     * Получить emoji fingerprint для визуальной верификации
-     */
     fun getFingerprintEmoji(): String {
         return try {
             val publicKeyBytes = Base64.decode(getPublicKeyString(), Base64.NO_WRAP)
@@ -949,7 +858,6 @@ object CryptoManager {
         }
     }
 
-    // Emoji для fingerprint
     private val EMOJI_SET = listOf(
         "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼",
         "🐨","🐯","🦁","🐮","🐷","🐸","🐵","🐔",
@@ -960,9 +868,7 @@ object CryptoManager {
         "🐳","🐋","🦈","🐊","🐅","🐆","🦓","🦍",
         "🦧","🐘","🦛","🦏","🐪","🐫","🦒","🦘"
     )
-    /**
-     * СТРЕСС-ТЕСТЫ - проверяем что тесты реально ловят ошибки
-     */
+
     fun runStressTests(context: android.content.Context, onLine: ((String) -> Unit)? = null): String {
         val report = StringBuilder()
         fun emit(line: String = "") { report.append(line).append('\n'); onLine?.invoke(line) }
@@ -970,7 +876,6 @@ object CryptoManager {
         emit("💣 СТРЕСС-ТЕСТЫ (ДОЛЖНЫ ПРОВАЛИТЬСЯ)")
         emit("═══════════════════════════════════════\n")
 
-        // Тест 1: Попытка расшифровать мусор
         emit("📋 НЕГАТИВНЫЙ ТЕСТ 1: Расшифровка мусора")
         try {
             val garbage = "AAAAAAAAAAAAAAAAAAAAAA=="
@@ -982,7 +887,6 @@ object CryptoManager {
         }
         emit()
 
-        // Тест 2: Подделка подписи
         emit("📋 НЕГАТИВНЫЙ ТЕСТ 2: Подделка подписи")
         try {
             val message = "Оригинальное сообщение"
@@ -1001,14 +905,12 @@ object CryptoManager {
         }
         emit()
 
-        // Тест 3: Модификация зашифрованных данных
         emit("📋 НЕГАТИВНЫЙ ТЕСТ 3: Изменение зашифрованного текста")
         try {
             val originalMessage = "Важное сообщение"
             val publicKey = getPublicKeyString()
             val encrypted = encrypt(originalMessage, publicKey)
 
-            // Меняем один байт в зашифрованном тексте
             val corrupted = encrypted.toCharArray()
             corrupted[corrupted.size / 2] = 'X'
             val corruptedString = String(corrupted)
@@ -1026,10 +928,9 @@ object CryptoManager {
         }
         emit()
 
-        // Тест 4: Проверка что ключи действительно меняются при удалении
         emit("📋 НЕГАТИВНЫЙ ТЕСТ 4: Смена ключей после удаления")
         try {
-            // ⚠️ Сохраняем реальные ключи — тест НЕ должен менять fingerprint аккаунта
+
             val encPrefsStress4 = EncryptedStorage.getEncryptedPrefs(context, SW_KEY_PREFS_ENC)
             val savedPrivStress4 = encPrefsStress4.getString(SW_PRIV_KEY, null)
             val savedPubStress4  = encPrefsStress4.getString(SW_PUB_KEY,  null)
@@ -1038,10 +939,8 @@ object CryptoManager {
             val testMessage = "Тест"
             val encrypted1 = encrypt(testMessage, key1)
 
-            // Удаляем ключи
             deleteKeys()
 
-            // Генерируем новые (временные)
             generateKeyPair()
             val key2 = getPublicKeyString()
 
@@ -1050,7 +949,6 @@ object CryptoManager {
             } else {
                 emit("  ✅ ОЖИДАЕМО: Новые ключи отличаются")
 
-                // Проверяем что старое сообщение нельзя расшифровать новым ключом
                 try {
                     decrypt(encrypted1)
                     emit("  ❌ БАГ: Старое сообщение расшифровалось новым ключом!")
@@ -1059,7 +957,6 @@ object CryptoManager {
                 }
             }
 
-            // 🔄 Восстанавливаем оригинальные ключи аккаунта (fingerprint не меняется)
             if (savedPrivStress4 != null && savedPubStress4 != null) {
                 encPrefsStress4.edit()
                     .putString(SW_PRIV_KEY, savedPrivStress4)
@@ -1072,7 +969,6 @@ object CryptoManager {
         }
         emit()
 
-        // Тест 5: Файл с изменённым IV
         emit("📋 НЕГАТИВНЫЙ ТЕСТ 5: Подмена IV в зашифрованном файле")
         try {
             val testData = "Секретный файл".toByteArray()
@@ -1080,7 +976,6 @@ object CryptoManager {
 
             val encrypted = encryptFile(testData, publicKey)
 
-            // Подменяем IV
             val fakeIV = ByteArray(12) { 0xFF.toByte() }
             val corrupted = EncryptedFileData(
                 encryptedData = encrypted.encryptedData,
@@ -1092,7 +987,6 @@ object CryptoManager {
                 val result = decryptFile(corrupted)
                 val resultText = String(result)
 
-                // Проверяем получили ли мы корректные данные
                 if (resultText == "Секретный файл") {
                     emit("  ❌ КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: Файл с подменённым IV расшифровался корректно!")
                 } else {
@@ -1112,13 +1006,11 @@ object CryptoManager {
         }
         emit()
 
-        /// Тест 6: Replay Attack - повторная отправка старого сообщения
         emit("📋 НЕГАТИВНЫЙ ТЕСТ 6: Информационный - Replay Attack")
         emit("  ℹ️ Защита от Replay реализована на уровне MessengerService")
         emit("     (receivedMessageIds кеш последних 100 ID)")
         emit()
 
-        // Тест 7: Invalid Curve Attack
         emit("📋 ТЕСТ 7: Защита от Invalid Curve Attack")
         emit("  ℹ️ Информационный тест")
         emit("  ✅ Защита реализована в методе validateECPoint()")
@@ -1130,7 +1022,6 @@ object CryptoManager {
         emit("  ✅ Некорректные точки отклоняются с SecurityException")
         emit()
 
-        // Тест 8: Проверка паддинга
         emit("📋 НЕГАТИВНЫЙ ТЕСТ 8: Паддинг работает?")
         try {
             val short = "Hi"
@@ -1146,7 +1037,6 @@ object CryptoManager {
             emit("  Длинное сообщение: $sizeLong байт")
             emit("  Разница: ${sizeLong - sizeShort} байт")
 
-            // Проверяем что паддинг добавляется
             if (sizeShort > short.length + 100) {
                 emit("  ✅ Паддинг работает (размер больше исходного)")
             } else {
@@ -1167,13 +1057,6 @@ object CryptoManager {
         return report.toString()
     }
 
-    /**
-     * РАСШИРЕННЫЕ ТЕСТЫ: покрывают слои, не проверяемые базовой диагностикой:
-     * - HKDF (KDF-деривация)
-     * - AES-GCM примитив напрямую (без ECIES обёртки)
-     * - GroupManager: генерация/распределение/шифрование
-     * - SessionKeyManager: X3DH + симметричный ratchet + out-of-order доставка
-     */
     fun runAdvancedTests(context: android.content.Context, onLine: ((String) -> Unit)? = null): String {
         val report = StringBuilder()
         fun emit(line: String = "") { report.append(line).append('\n'); onLine?.invoke(line) }
@@ -1181,7 +1064,6 @@ object CryptoManager {
         emit("🔬 РАСШИРЕННЫЕ ТЕСТЫ (SESSION + GROUP)")
         emit("═══════════════════════════════════════\n")
 
-        // ── Тест 9: HKDF детерминизм и дифференциация ────────────────────────
         emit("📋 ТЕСТ 9: HKDF (KDF-деривация)")
         try {
             val testSecret = ByteArray(32) { (it * 7 + 3).toByte() }
@@ -1214,7 +1096,6 @@ object CryptoManager {
         }
         emit()
 
-        // ── Тест 10: AES-GCM примитив ────────────────────────────────────────
         emit("📋 ТЕСТ 10: AES-GCM примитив (прямой вызов)")
         try {
             val aesKey = ByteArray(32).also { secureRandom.nextBytes(it) }
@@ -1226,7 +1107,7 @@ object CryptoManager {
             } else {
                 emit("  ❌ ПРОВАЛ: round-trip не совпадает")
             }
-            // GCM tamper detection
+
             val tampered = encrypted.copyOf()
             tampered[tampered.size / 2] = (tampered[tampered.size / 2].toInt() xor 0xFF).toByte()
             try {
@@ -1235,7 +1116,7 @@ object CryptoManager {
             } catch (_: Exception) {
                 emit("  ✅ GCM тампер-детект: модификация обнаружена")
             }
-            // Разные ключи → разный результат
+
             val aesKey2 = ByteArray(32).also { secureRandom.nextBytes(it) }
             val encrypted2 = aesEncrypt(plaintext, aesKey2)
             if (!encrypted.contentEquals(encrypted2)) {
@@ -1243,12 +1124,12 @@ object CryptoManager {
             } else {
                 emit("  ❌ ПРОВАЛ: разные ключи дали одинаковый шифртекст!")
             }
-            // Проверяем паддинг: размер шифртекста должен скрывать длину оригинала
+
             val shortPlain = "Hi"
             val longPlain = "A".repeat(200)
             val encShort = aesEncrypt(shortPlain, aesKey)
             val encLong = aesEncrypt(longPlain, aesKey)
-            // Паддинг 128-512 байт → оба не должны точно отражать длину
+
             if (encShort.size > shortPlain.length + 100 && encLong.size > longPlain.length + 100) {
                 emit("  ✅ Паддинг добавлен: размер не раскрывает длину сообщения")
             } else {
@@ -1259,7 +1140,6 @@ object CryptoManager {
         }
         emit()
 
-        // ── Тест 11: GroupManager — генерация и распределение ключа ──────────
         emit("📋 ТЕСТ 11: Группы — генерация и распределение ключа")
         try {
             val groupKey = GroupManager.generateGroupKey()
@@ -1269,18 +1149,18 @@ object CryptoManager {
             } else {
                 emit("  ❌ ПРОВАЛ: неверная длина группового ключа!")
             }
-            // Два вызова → разные ключи
+
             val groupKey2 = GroupManager.generateGroupKey()
             if (!groupKey.contentEquals(groupKey2)) {
                 emit("  ✅ Генератор случаен: два ключа отличаются")
             } else {
                 emit("  ❌ ПРОВАЛ: два ключа одинаковы (не случайные)!")
             }
-            // Шифрование ключа для участника
+
             val myPublicKey = getPublicKeyString()
             val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, myPublicKey)
             emit("  Зашифрованный групповой ключ: ${encryptedGroupKey.take(40)}...")
-            // Расшифровка
+
             val decryptedGroupKey = GroupManager.decryptGroupKey(encryptedGroupKey)
             if (groupKey.contentEquals(decryptedGroupKey)) {
                 emit("  ✅ Распределение ключа: encrypt → decrypt совпадают")
@@ -1292,14 +1172,13 @@ object CryptoManager {
         }
         emit()
 
-        // ── Тест 12: GroupManager — шифрование сообщений ─────────────────────
         emit("📋 ТЕСТ 12: Группы — шифрование/расшифровка сообщений")
         try {
             val groupKey = GroupManager.generateGroupKey()
             val messages = listOf(
                 "Привет группе! 👋",
                 "Тест с эмодзи 🔐🛡️",
-                "A".repeat(500)  // длинное сообщение
+                "A".repeat(500)
             )
             var allOk = true
             for (msg in messages) {
@@ -1312,7 +1191,7 @@ object CryptoManager {
             } else {
                 emit("  ❌ ПРОВАЛ: одно или несколько сообщений не совпали")
             }
-            // Проверяем что IV случайный (два шифртекста одного сообщения различны)
+
             val groupKey2 = GroupManager.generateGroupKey()
             val enc1 = GroupManager.encryptGroupMessage("Same message", groupKey2)
             val enc2 = GroupManager.encryptGroupMessage("Same message", groupKey2)
@@ -1321,7 +1200,7 @@ object CryptoManager {
             } else {
                 emit("  ❌ ПРОВАЛ: IV не случаен — два шифртекста совпадают!")
             }
-            // GCM tamper detection
+
             val enc = GroupManager.encryptGroupMessage("Secret", groupKey)
             val decoded = android.util.Base64.decode(enc, android.util.Base64.NO_WRAP)
             decoded[decoded.size / 2] = (decoded[decoded.size / 2].toInt() xor 0xFF).toByte()
@@ -1332,7 +1211,7 @@ object CryptoManager {
             } catch (_: Exception) {
                 emit("  ✅ GCM тампер-детект: модификация группового сообщения обнаружена")
             }
-            // Неверный ключ → не расшифруется
+
             val wrongKey = GroupManager.generateGroupKey()
             val encMsg = GroupManager.encryptGroupMessage("Private", groupKey)
             try {
@@ -1346,14 +1225,12 @@ object CryptoManager {
         }
         emit()
 
-        // ── Тесты 13–16: SessionKeyManager (X3DH + Ratchet) ─────────────────
         val aliceId = "_test_alice_${System.currentTimeMillis()}"
         val bobId   = "_test_bob_${System.currentTimeMillis()}"
         try {
-            // Инициализируем если нужно
+
             SessionKeyManager.initialize(context)
 
-            // ── Тест 13: X3DH инициация сессии ────────────────────────────────
             emit("📋 ТЕСТ 13: X3DH — инициация сессии")
             val bobBundleJson = SessionKeyManager.generatePrekeyBundle()
             val bobBundle     = SessionKeyManager.parsePrekeyBundle(bobBundleJson)
@@ -1368,7 +1245,6 @@ object CryptoManager {
             }
             emit()
 
-            // ── Тест 14: Encrypt/Decrypt round-trip ───────────────────────────
             emit("📋 ТЕСТ 14: Session — шифрование/расшифровка")
             val testMessages = listOf("Hello Bob 🔐", "Второе сообщение", "Third msg!")
             var sessionRoundTripOk = true
@@ -1382,7 +1258,7 @@ object CryptoManager {
             } else {
                 emit("  ❌ ПРОВАЛ: round-trip не совпадает")
             }
-            // Bob → Alice
+
             val (ctB, hdrB) = SessionKeyManager.encryptWithSession(bobId, "Reply from Bob")
             val decB = SessionKeyManager.decryptWithSession(aliceId, ctB, hdrB)
             if (decB == "Reply from Bob") {
@@ -1390,7 +1266,7 @@ object CryptoManager {
             } else {
                 emit("  ❌ ПРОВАЛ: Bob→Alice не работает")
             }
-            // Разные ключи на каждое сообщение (шифртексты должны различаться)
+
             val (ct1, hdr1) = SessionKeyManager.encryptWithSession(aliceId, "Same")
             val (ct2, hdr2) = SessionKeyManager.encryptWithSession(aliceId, "Same")
             if (ct1 != ct2) {
@@ -1398,21 +1274,20 @@ object CryptoManager {
             } else {
                 emit("  ❌ ПРОВАЛ: ratchet не продвигается!")
             }
-            // Синхронизируем Bob — он должен получить ct1/ct2, чтобы счётчики совпали перед тестом 15
+
             SessionKeyManager.decryptWithSession(bobId, ct1, hdr1)
             SessionKeyManager.decryptWithSession(bobId, ct2, hdr2)
             emit()
 
-            // ── Тест 15: Out-of-order доставка (skipped keys) ─────────────────
             emit("📋 ТЕСТ 15: Session — out-of-order доставка")
-            // Alice шифрует 3 сообщения, Bob получает в порядке: 0, 2, 1
+
             val msgs = listOf("Out0", "Out1", "Out2")
             val encrypted15 = msgs.map { SessionKeyManager.encryptWithSession(aliceId, it) }
-            // Доставляем 0 → OK
+
             val dec0 = SessionKeyManager.decryptWithSession(bobId, encrypted15[0].first, encrypted15[0].second)
-            // Пропускаем 1, доставляем 2 → должно буфернуть ключ от msg1
+
             val dec2 = SessionKeyManager.decryptWithSession(bobId, encrypted15[2].first, encrypted15[2].second)
-            // Доставляем 1 из буфера skipped keys
+
             val dec1 = SessionKeyManager.decryptWithSession(bobId, encrypted15[1].first, encrypted15[1].second)
             if (dec0 == "Out0" && dec1 == "Out1" && dec2 == "Out2") {
                 emit("  ✅ Out-of-order: все 3 сообщения расшифрованы корректно")
@@ -1422,14 +1297,12 @@ object CryptoManager {
             }
             emit()
 
-            // ── Тест 16: Изоляция сессий ──────────────────────────────────────
             emit("📋 ТЕСТ 16: Session — изоляция (неверный контакт)")
             val (ctIso, hdrIso) = SessionKeyManager.encryptWithSession(aliceId, "Secret")
-            // Попытка расшифровать с неверным contactId (другой receive chain)
+
             try {
                 val fakeDecrypt = SessionKeyManager.decryptWithSession(aliceId, ctIso, hdrIso)
-                // Alice пытается расшифровать своё собственное сообщение — своим receive chain
-                // Это должно либо выбросить исключение, либо дать мусор
+
                 emit("  ⚠️ Чтение своего шифртекста своим ключом: '$fakeDecrypt'")
                 emit("  ℹ️ (Alice отправляла sendChain, читает recvChain — ожидаем мусор)")
             } catch (_: Exception) {
@@ -1439,7 +1312,7 @@ object CryptoManager {
         } catch (e: Exception) {
             emit("  ❌ ОШИБКА в сессионных тестах: ${e.message}")
         } finally {
-            // Всегда чистим тестовые сессии
+
             SessionKeyManager.deleteSession(aliceId)
             SessionKeyManager.deleteSession(bobId)
         }
@@ -1456,8 +1329,4 @@ object CryptoManager {
     }
 
 }
-
-
-
-
 

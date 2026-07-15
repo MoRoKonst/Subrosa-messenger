@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -27,7 +27,6 @@ import androidx.compose.ui.unit.sp
 import kotlin.math.absoluteValue
 import com.bcon.messenger.ui.theme.LocalBeaconColors
 
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
@@ -52,7 +51,6 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
     }
     val isCreator = remember(group) { group?.createdBy == userId }
 
-    // Подключение к сервису
     val connection = remember {
         object : android.content.ServiceConnection {
             override fun onServiceConnected(name: android.content.ComponentName, binder: android.os.IBinder) {
@@ -110,7 +108,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Аватар и название группы
+
             item {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -162,7 +160,6 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                 }
             }
 
-            // Описание группы
             item {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -210,7 +207,6 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                 }
             }
 
-            // Участники
             item {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -300,7 +296,6 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                                     }
                                 }
 
-                                // Действия с участником
                                 if (isAdmin && memberId != userId && !isMemberCreator) {
                                     var showMemberMenu by remember { mutableStateOf(false) }
 
@@ -326,17 +321,15 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                                         DropdownMenuItem(
                                             text = { Text(s.groupInfoRemoveMember, color = Color.Red) },
                                             onClick = {
-                                                // Удаляем участника
+
                                                 GroupManager.removeMember(context, groupId, memberId)
 
-                                                // Уведомляем через сервис
                                                 messengerService?.notifyMemberRemoved(
                                                     groupId,
                                                     memberId,
                                                     group!!.members
                                                 )
 
-                                                // Ротируем ключ
                                                 val newGroupKey = GroupManager.generateGroupKey()
                                                 val updatedGroup = group!!.copy(groupKey = newGroupKey)
                                                 GroupManager.saveGroup(context, updatedGroup)
@@ -359,10 +352,9 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                 }
             }
 
-            // Действия
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Покинуть группу
+
                     if (!isCreator) {
                         OutlinedButton(
                             onClick = { showLeaveDialog = true },
@@ -378,7 +370,6 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                         }
                     }
 
-                    // Удалить группу (только создатель)
                     if (isCreator) {
                         OutlinedButton(
                             onClick = { showDeleteDialog = true },
@@ -398,8 +389,6 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
         }
     }
 
-    // Диалог добавления участника
-    // Диалог добавления участника по инвайт-коду
     if (showAddMemberDialog) {
         var inviteCode by remember { mutableStateOf("") }
 
@@ -441,25 +430,23 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                 TextButton(
                     onClick = {
                         if (inviteCode.isNotBlank()) {
-                            // Парсим инвайт-код
+
                             val parts = inviteCode.trim().split("&")
                             val userId = parts.firstOrNull()?.trim() ?: ""
                             val publicKey = parts.find { it.startsWith("pk=") }
                                 ?.removePrefix("pk=")?.trim()
 
                             if (userId.isNotEmpty() && publicKey != null) {
-                                // Проверяем что участник ещё не в группе
+
                                 if (!group!!.members.contains(userId)) {
-                                    // Сохраняем контакт если его нет
+
                                     if (!ChatStorage.getContacts(context).contains(userId)) {
                                         ChatStorage.addContact(context, userId)
                                         ChatStorage.saveContactPublicKey(context, userId, publicKey)
                                     }
 
-                                    // Добавляем в группу
                                     GroupManager.addMember(context, groupId, userId)
 
-                                    // Отправляем приглашение через сервис
                                     messengerService?.addGroupMember(
                                         groupId = groupId,
                                         groupName = group!!.name,
@@ -471,7 +458,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                                     group = GroupManager.getGroup(context, groupId)
                                     showAddMemberDialog = false
                                 } else {
-                                    // Участник уже в группе
+
                                     android.widget.Toast.makeText(
                                         context,
                                         s.groupInfoAlreadyMember,
@@ -479,7 +466,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                                     ).show()
                                 }
                             } else {
-                                // Неверный формат инвайт-кода
+
                                 android.widget.Toast.makeText(
                                     context,
                                     s.groupInfoBadInvite,
@@ -501,7 +488,6 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
         )
     }
 
-    // Диалог выхода из группы
     if (showLeaveDialog) {
         AlertDialog(
             onDismissRequest = { showLeaveDialog = false },
@@ -516,17 +502,15 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
             },
             confirmButton = {
                 TextButton(onClick = {
-                    // Удаляем себя из группы
+
                     GroupManager.removeMember(context, groupId, userId)
 
-                    // Уведомляем других участников
                     messengerService?.notifyMemberRemoved(
                         groupId,
                         userId,
                         group!!.members
                     )
 
-                    // Обновляем список чатов
                     MainActivity.chatListVersion.value = System.currentTimeMillis()
 
                     showLeaveDialog = false
@@ -543,7 +527,6 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
         )
     }
 
-    // Диалог выбора эмодзи-аватара
     if (showEmojiPickerDialog) {
         val emojiList = listOf(
             "👥","💬","🎮","📚","💼","🎵","🏠","🌍",
@@ -586,7 +569,6 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
         )
     }
 
-    // Диалог редактирования описания
     if (showEditDescDialog) {
         AlertDialog(
             onDismissRequest = { showEditDescDialog = false },
@@ -629,7 +611,6 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
         )
     }
 
-    // Диалог удаления группы
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
@@ -645,7 +626,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     GroupManager.deleteGroup(context, groupId)
-                    // Обновляем список чатов
+
                     MainActivity.chatListVersion.value = System.currentTimeMillis()
                     showDeleteDialog = false
                     onBack()

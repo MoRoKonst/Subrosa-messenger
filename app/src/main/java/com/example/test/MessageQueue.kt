@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import org.json.JSONArray
@@ -29,13 +29,12 @@ object MessageQueue {
         val list = mutableListOf<QueuedMessage>()
 
         val now = System.currentTimeMillis()
-        val maxAge = 7 * 24 * 60 * 60 * 1000L // 7 дней
+        val maxAge = 7 * 24 * 60 * 60 * 1000L
 
         for (i in 0 until array.length()) {
             val obj = array.getJSONObject(i)
             val timestamp = obj.getLong("timestamp")
 
-            // Автоудаление старых сообщений
             if (now - timestamp > maxAge) {
                 continue
             }
@@ -48,7 +47,6 @@ object MessageQueue {
             ))
         }
 
-        // Если были удалены старые — сохраняем обновлённую очередь
         if (list.size != array.length()) {
             save(context, list)
         }

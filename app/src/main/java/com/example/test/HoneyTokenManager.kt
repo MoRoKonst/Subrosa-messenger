@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.util.Base64
@@ -6,16 +6,10 @@ import java.io.File
 import java.security.MessageDigest
 import java.security.SecureRandom
 
-/**
- * Файл-приманка (honeytoken): выглядит как кэш сессии, но никогда не
- * используется реальным кодом. Если содержимое изменилось — кто-то
- * вмешался в хранилище (Frida, ADB backup + restore, физический доступ).
- */
 object HoneyTokenManager {
 
     private const val HONEY_FILE = "session_cache.dat"
 
-    /** Вызывать в onCreate. Создаёт файл при первом запуске. */
     fun init(context: Context) {
         val file = File(context.filesDir, HONEY_FILE)
         if (!file.exists()) {
@@ -25,18 +19,14 @@ object HoneyTokenManager {
         }
     }
 
-    /**
-     * Возвращает true если файл не тронут.
-     * false = файл изменён или удалён → угроза.
-     */
     fun checkIntegrity(context: Context): Boolean {
         return try {
             val file = File(context.filesDir, HONEY_FILE)
             if (!file.exists()) return false
             val expected = UserStorage.getHoneyHash(context)
-            if (expected.isEmpty()) return true  // hash not yet saved → skip
+            if (expected.isEmpty()) return true
             sha256hex(file.readBytes()) == expected
-        } catch (_: Exception) { true }  // на ошибку чтения не паниковать
+        } catch (_: Exception) { true }
     }
 
     private fun generateFakeData(): ByteArray {

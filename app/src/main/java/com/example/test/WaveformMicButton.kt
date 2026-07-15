@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -45,7 +45,6 @@ fun WaveformMicButton(
         currentWaveColor = if (isRecording) Color(0xFFFF4444) else Color(0xFF6B9FD4)
     }
 
-    // Бегущая фаза — бесконечно
     LaunchedEffect(Unit) {
         while (true) {
             phase.animateTo(
@@ -55,7 +54,6 @@ fun WaveformMicButton(
         }
     }
 
-    // Пульсация в покое
     LaunchedEffect(isRecording) {
         if (!isRecording) {
             while (!isRecording) {
@@ -65,7 +63,6 @@ fun WaveformMicButton(
         }
     }
 
-    // Громкость с микрофона
     LaunchedEffect(isRecording) {
         if (isRecording) {
             launch(Dispatchers.IO) {
@@ -109,7 +106,6 @@ fun WaveformMicButton(
         }
     }
 
-    // Плавное изменение амплитуды
     LaunchedEffect(amplitude) {
         smoothAmplitude.animateTo(amplitude, tween(80, easing = LinearEasing))
     }
@@ -147,7 +143,6 @@ fun WaveformMicButton(
             val center = Offset(w / 2f, h / 2f)
             val radius = minOf(w, h) / 2f
 
-            // Пульсирующее кольцо при записи
             if (isRecording) {
                 drawCircle(
                     color = Color(0xFFFF4444).copy(alpha = (1f - (ringScale.value - 1f) / 0.28f) * 0.3f),
@@ -156,7 +151,6 @@ fun WaveformMicButton(
                 )
             }
 
-            // Фоновый круг
             drawCircle(color = bgColor, radius = radius * 0.88f, center = center)
 
             val centerY = h / 2f
@@ -164,7 +158,6 @@ fun WaveformMicButton(
             val freq = 2.5f
             val phaseRad = phase.value * 2f * PI.toFloat()
 
-            // Основная волна
             val path1 = Path()
             for (x in 0..w.toInt()) {
                 val y = centerY - maxAmp * sin(x * freq * 2f * PI.toFloat() / w + phaseRad)
@@ -172,7 +165,6 @@ fun WaveformMicButton(
             }
             drawPath(path1, animatedWaveColor, style = Stroke(3.5.dp.toPx(), cap = StrokeCap.Round))
 
-            // Вторая волна (тень)
             val path2 = Path()
             for (x in 0..w.toInt()) {
                 val y = centerY - maxAmp * 0.5f * sin(x * freq * 2f * PI.toFloat() / w + phaseRad + PI.toFloat())

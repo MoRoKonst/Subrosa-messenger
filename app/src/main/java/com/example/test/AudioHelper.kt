@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.media.MediaRecorder
@@ -13,7 +13,6 @@ object AudioHelper {
     private var player: MediaPlayer? = null
     private val tempPlaybackFiles = mutableListOf<File>()
 
-    /** Начать запись — пишет в незашифрованный temp файл в cacheDir */
     fun startRecording(context: Context): File {
         val outputFile = File(context.cacheDir, "voice_rec_temp.3gp")
         if (outputFile.exists()) outputFile.delete()
@@ -30,7 +29,6 @@ object AudioHelper {
         return outputFile
     }
 
-    /** Остановить запись (файл остаётся в cacheDir как temp) */
     fun stopRecording(): File? {
         return try {
             recorder?.apply {
@@ -45,16 +43,11 @@ object AudioHelper {
         }
     }
 
-    /** Прочитать файл как Base64 (используется для отправки — читает незашифрованный temp) */
     fun encodeToBase64(file: File): String {
         val bytes = file.readBytes()
         return Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
 
-    /**
-     * Сохранить принятое голосовое сообщение зашифрованным.
-     * Возвращает .enc файл в filesDir.
-     */
     fun decodeAndSave(context: Context, base64: String, voiceId: String): File {
         val bytes = Base64.decode(base64, Base64.NO_WRAP)
         val encFile = File(context.filesDir, "voice_$voiceId.3gp.enc")
@@ -62,11 +55,6 @@ object AudioHelper {
         return encFile
     }
 
-    /**
-     * Воспроизвести голосовое сообщение.
-     * Если файл .enc — расшифровывает во temp и играет оттуда.
-     * Temp файл удаляется по завершении или при stopAudio().
-     */
     fun playAudio(context: Context, file: File?, onComplete: () -> Unit) {
         if (file == null) return
         stopAudio()

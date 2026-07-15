@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import java.util.UUID
 import android.content.Context
@@ -11,7 +11,6 @@ object ChatStorage {
 
     private const val PREFS_NAME = "chat_storage_encrypted"
 
-    // Модель сохранённого сообщения
     data class StoredMessage(
         val id: String = UUID.randomUUID().toString(),
         val text: String,
@@ -26,14 +25,13 @@ object ChatStorage {
         val fileName: String? = null,
         val isDelivered: Boolean = false,
         val isRead: Boolean = false,
-        val replyToId: String? = null,     // ID цитируемого сообщения
-        val expiresAt: Long = 0L,          // 0 = не истекает; иначе unix-ms
+        val replyToId: String? = null,
+        val expiresAt: Long = 0L,
         val videoPath: String? = null,
         val videoDuration: Int = 0,
         val isFailed: Boolean = false
     )
 
-    // Ключ для хранения чата с конкретным собеседником
     private fun chatKey(myUserId: String, recipientUserId: String): String {
         val pair = listOf(myUserId, recipientUserId).sorted()
         val key = "chat_${pair[0]}_${pair[1]}"
@@ -48,7 +46,6 @@ object ChatStorage {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val array = loadJsonArray(prefs, chatKey(myUserId, recipientUserId))
         val list = mutableListOf<StoredMessage>()
-
 
         for (i in 0 until array.length()) {
             val obj = array.getJSONObject(i)
@@ -71,7 +68,7 @@ object ChatStorage {
             }
 
             val expiresAt = obj.optLong("expires_at", 0L)
-            // Пропускаем истёкшие сообщения
+
             if (expiresAt > 0L && System.currentTimeMillis() > expiresAt) continue
 
             list.add(
@@ -113,11 +110,10 @@ object ChatStorage {
 
         var updated = false
 
-        // Ищем существующее сообщение
         for (i in 0 until array.length()) {
             val obj = array.getJSONObject(i)
             if (obj.optString("id") == message.id) {
-                // Обновляем реакции
+
                 val reactionsJson = JSONObject()
                 message.reactions.forEach { (user, emoji) ->
                     reactionsJson.put(user, emoji)
@@ -173,9 +169,6 @@ object ChatStorage {
         saveJsonArray(prefs, key, array)
         }
 
-
-
-    // Список всех собеседников
     fun getContacts(context: Context): MutableList<String> {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val json = prefs.getString("contacts", "[]") ?: "[]"
@@ -187,7 +180,6 @@ object ChatStorage {
         return list
     }
 
-    // Добавить контакт
     fun addContact(context: Context, username: String) {
         val contacts = getContacts(context)
         if (!contacts.contains(username)) {
@@ -200,7 +192,6 @@ object ChatStorage {
         }
     }
 
-    // Удалить контакт из списка без удаления истории сообщений
     fun removeContact(context: Context, contactId: String) {
         val contacts = getContacts(context)
         if (contacts.remove(contactId)) {
@@ -212,11 +203,10 @@ object ChatStorage {
         }
     }
 
-    // Последнее сообщение в чате (для превью в списке)
     fun getLastMessage(context: Context, username: String, recipient: String): StoredMessage? {
         return loadMessages(context, username, recipient).lastOrNull()
     }
-    // ─── Черновики сообщений ──────────────────────────────────────────────────
+
     fun saveDraft(context: Context, myUserId: String, recipientUserId: String, text: String) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val key = "draft_${chatKey(myUserId, recipientUserId)}"
@@ -228,18 +218,17 @@ object ChatStorage {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getString("draft_${chatKey(myUserId, recipientUserId)}", "") ?: ""
 
-    // Удалить весь чат с собеседником
     fun deleteChat(context: Context, username: String, recipient: String) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
-        // Удаляем историю сообщений
+
         prefs.edit().remove(chatKey(username, recipient)).apply()
-        // Удаляем из списка контактов
+
         val contacts = getContacts(context)
         contacts.remove(recipient)
         val array = org.json.JSONArray(contacts)
         prefs.edit().putString("contacts", array.toString()).apply()
     }
-    // Удалить одно сообщение из локального хранилища
+
     fun deleteMessage(context: Context, myUserId: String, recipientUserId: String, messageId: String) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val key = chatKey(myUserId, recipientUserId)
@@ -252,7 +241,6 @@ object ChatStorage {
         saveJsonArray(prefs, key, newArray)
     }
 
-    // ─── Таймер исчезающих сообщений (секунды, 0 = выкл) ─────────────────────
     fun getDisappearTimer(context: Context, myUserId: String, recipientUserId: String): Long {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         return prefs.getLong("disappear_${chatKey(myUserId, recipientUserId)}", 0L)
@@ -270,7 +258,7 @@ object ChatStorage {
             val obj = array.getJSONObject(i)
             if (obj.optString("id") == messageId) {
                 obj.put("is_delivered", true)
-                obj.put("is_failed", false)   // снимаем «недоставлено», если подтверждение пришло позже
+                obj.put("is_failed", false)
                 break
             }
         }
@@ -291,7 +279,6 @@ object ChatStorage {
         saveJsonArray(prefs, key, array)
     }
 
-    /** Помечает все ВХОДЯЩИЕ сообщения как прочитанные (вызывается при открытии чата). */
     fun markIncomingAsRead(context: Context, myUserId: String, contactId: String) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val key   = chatKey(myUserId, contactId)
@@ -307,7 +294,6 @@ object ChatStorage {
         if (anyUpdated) saveJsonArray(prefs, key, array)
     }
 
-    /** Помечает ВСЕ собственные сообщения как прочитанные. */
     fun markRead(context: Context, myUserId: String, recipientUserId: String, messageId: String) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val key   = chatKey(myUserId, recipientUserId)
@@ -315,7 +301,7 @@ object ChatStorage {
         var anyUpdated = false
         for (i in 0 until array.length()) {
             val obj = array.getJSONObject(i)
-            // Поле хранится как "isOwn" (не "is_own")
+
             if (obj.optBoolean("isOwn", false) && !obj.optBoolean("is_read", false)) {
                 obj.put("is_read", true)
                 obj.put("is_delivered", true)
@@ -325,7 +311,6 @@ object ChatStorage {
         if (anyUpdated) saveJsonArray(prefs, key, array)
     }
 
-    // Сохранить имя контакта по его ID
     fun saveContactName(context: Context, contactId: String, name: String?) {
         if (name.isNullOrBlank()) return
 
@@ -333,33 +318,27 @@ object ChatStorage {
         prefs.edit().putString("name_$contactId", name).apply()
     }
 
-    // Получить имя контакта по ID
     fun getContactName(context: Context, contactId: String): String {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         return prefs.getString("name_$contactId", null)?.takeIf { it.isNotBlank() }
-            ?: contactId.substringBefore("_") // Если нет имени — берём из ID
+            ?: contactId.substringBefore("_")
     }
-    // Сохранить публичный ключ контакта
+
     fun saveContactPublicKey(context: Context, contactId: String, publicKey: String) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         prefs.edit().putString("key_$contactId", publicKey).apply()
     }
 
-    // Получить публичный ключ контакта
     fun getContactPublicKey(context: Context, contactId: String): String? {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         return prefs.getString("key_$contactId", null)
     }
 
-    // ─── Аватары контактов ────────────────────────────────────────────────────
-
-    /** Сохраняет base64-аватар для контакта (JPEG 128×128). */
     fun saveContactAvatar(context: Context, contactId: String, base64: String) {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .edit().putString("avatar_$contactId", base64).apply()
     }
 
-    /** Возвращает сохранённый base64-аватар контакта или null. */
     fun getContactAvatar(context: Context, contactId: String): String? {
         return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getString("avatar_$contactId", null)
@@ -374,13 +353,11 @@ object ChatStorage {
         val key = chatKey(myUserId, recipientUserId)
         val array = loadJsonArray(prefs, key)
 
-        // Собираем существующие ID чтобы не дублировать
         val existingIds = mutableSetOf<String>()
         for (i in 0 until array.length()) {
             existingIds.add(array.getJSONObject(i).optString("id"))
         }
 
-        // Добавляем только новые
         newMessages.forEach { message ->
             if (!existingIds.contains(message.id)) {
                 array.put(JSONObject().apply {
@@ -399,23 +376,16 @@ object ChatStorage {
             }
         }
 
-        // Одна запись на весь чат — вместо N записей
         saveJsonArray(prefs, key, array)
     }
 
-    // ─── SMK helpers ─────────────────────────────────────────────────────────
-
-    /**
-     * Читает JSON-массив сообщений из prefs, прозрачно расшифровывая если обёрнут SMK.
-     * Legacy значения (без prefix "smk1:") возвращаются как есть.
-     */
     private fun loadJsonArray(prefs: SharedPreferences, key: String): JSONArray {
         val raw = prefs.getString(key, "[]") ?: "[]"
         val jsonStr = if (raw.startsWith(StorageKeyManager.SMK_PREFIX)) {
             val blob = Base64.decode(raw.removePrefix(StorageKeyManager.SMK_PREFIX), Base64.NO_WRAP)
             String(StorageKeyManager.decrypt(blob), Charsets.UTF_8)
         } else {
-            // Legacy plaintext — eager re-wrap если SMK уже разблокирован
+
             if (raw != "[]" && StorageKeyManager.isUnlocked) {
                 try {
                     val wrapped = StorageKeyManager.SMK_PREFIX + Base64.encodeToString(
@@ -430,12 +400,8 @@ object ChatStorage {
         return JSONArray(jsonStr)
     }
 
-    /**
-     * Сохраняет JSON-массив сообщений в prefs, шифруя SMK.
-     * Если SMK залочен — не пишем plaintext, пропускаем запись.
-     */
     private fun saveJsonArray(prefs: SharedPreferences, key: String, array: JSONArray) {
-        if (!StorageKeyManager.isUnlocked) return  // никогда не пишем plaintext
+        if (!StorageKeyManager.isUnlocked) return
         val toStore = StorageKeyManager.SMK_PREFIX + Base64.encodeToString(
             StorageKeyManager.encrypt(array.toString().toByteArray(Charsets.UTF_8)),
             Base64.NO_WRAP

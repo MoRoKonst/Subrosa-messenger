@@ -1,16 +1,7 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.compose.runtime.compositionLocalOf
 
-// ─── AppStrings split across 8 interfaces ─────────────────────────────────────
-//
-// Kotlin data class с 323 параметрами вызывает VerifyError на Android ART,
-// потому что DEX-верификатор ограничивает число регистров аргументов (~68).
-// Решение: разбиваем строки на 8 интерфейсов; data class AppStrings делегирует
-// каждый интерфейс отдельному параметру — итого 9 параметров в конструкторе.
-// Все вызовы вида `s.cancel`, `s.loginGreeting(name)` и т.д. работают как прежде.
-
-// ─── Part 1: Common + Login ───────────────────────────────────────────────────
 interface IStr1 {
     val cancel: String; val back: String; val save: String; val add: String
     val delete: String; val create: String; val next: String; val write: String
@@ -27,7 +18,6 @@ interface IStr1 {
     val loginNotMeText: String; val loginNotMeConfirm: String
 }
 
-// ─── Part 2: Register + Chats ─────────────────────────────────────────────────
 interface IStr2 {
     val registerTitle: String; val registerSubtitle: String
     val registerUsername: String; val registerUsernamePlaceholder: String
@@ -53,7 +43,6 @@ interface IStr2 {
     val chatsSupportWrite: String
 }
 
-// ─── Part 3: Profile + Backup ─────────────────────────────────────────────────
 interface IStr3 {
     val profileTitle: String; val profileFingerprint: String
     val profileFingerprintHint: String; val profileInviteCode: String
@@ -89,7 +78,6 @@ interface IStr3 {
     val backupErrEnterForDecrypt: String
 }
 
-// ─── Part 4: Servers + Group Info + Create Group ──────────────────────────────
 interface IStr4 {
     val serversTitle: String; val serversAdd: String
     val serversSwitch: String; val serversSwitching: String
@@ -116,7 +104,6 @@ interface IStr4 {
     val createGroupButton: String; val createGroupAvatarTitle: String
 }
 
-// ─── Part 5: Channel Feed + Calls + Diagnostics ───────────────────────────────
 interface IStr5 {
     val channelDefault: String; val channelCopyLink: String
     val channelUnsubscribe: String; val channelPostPlaceholder: String
@@ -144,7 +131,6 @@ interface IStr5 {
     val diagRunning: String; val diagBasic: String; val diagStress: String; val diagAdvanced: String
 }
 
-// ─── Part 6: Chat Screen ──────────────────────────────────────────────────────
 interface IStr6 {
     val chatSearchPlaceholder: String; val chatOnline: String; val chatOffline: String
     val chatKeyWarningTitle: String; val chatKeyWarningText: String
@@ -183,7 +169,6 @@ interface IStr6 {
     val chatSavePhoto: String; val chatPhotoSaved: String
 }
 
-// ─── Part 7: MainActivity / TorManager / MessengerService / Notifications ──────
 interface IStr7 {
     val torConnecting: String; val torIpHidden: String; val torConnected: String
     val torStartingOrbot: String; val torConnectingNetwork: String
@@ -223,7 +208,6 @@ interface IStr7 {
     val alertUrlLabel: String; val alertUrlHint: String; val alertUrlSave: String
 }
 
-// ─── Part 8: Group Chat Screen ────────────────────────────────────────────────
 interface IStr8 {
     val groupChatNoMessages: String; val groupChatMessageHint: String
     val groupChatEditHint: String; val groupChatInfo: String
@@ -254,7 +238,6 @@ interface IStr9 {
     val calcDisguiseLabel: String; val calcDisguiseSubtitle: String
 }
 
-// ─── Основной класс: 10 параметров, делегирует доступ 9 интерфейсам ───────────
 data class AppStrings(
     val langCode: String,
     private val p1: IStr1,
@@ -268,8 +251,6 @@ data class AppStrings(
     private val p9: IStr9,
 ) : IStr1 by p1, IStr2 by p2, IStr3 by p3, IStr4 by p4,
     IStr5 by p5, IStr6 by p6, IStr7 by p7, IStr8 by p8, IStr9 by p9
-
-// ─── Русский (по умолчанию) ───────────────────────────────────────────────────
 
 private val ru1 = object : IStr1 {
     override val cancel = "Отмена"
@@ -718,8 +699,6 @@ private val ru9 = object : IStr9 {
 
 val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9)
 
-// ─── English ──────────────────────────────────────────────────────────────────
-
 private val en1 = object : IStr1 {
     override val cancel = "Cancel"
     override val back = "Back"
@@ -1167,5 +1146,4 @@ private val en9 = object : IStr9 {
 
 val enStrings = AppStrings("en", en1, en2, en3, en4, en5, en6, en7, en8, en9)
 
-// ─── CompositionLocal ─────────────────────────────────────────────────────────
 val LocalStrings = compositionLocalOf<AppStrings> { ruStrings }

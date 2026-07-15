@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -65,24 +65,19 @@ fun ChannelFeedScreen(
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Feature 1: context menu for long-press on post
     var contextMenuPost by remember { mutableStateOf<ChannelPost?>(null) }
 
-    // Feature 2+3: edit/delete channel dialog
     var showEditChannelDialog by remember { mutableStateOf(false) }
     var editName   by remember { mutableStateOf("") }
     var editDesc   by remember { mutableStateOf("") }
     var editAvatar by remember { mutableStateOf("📢") }
     var showDeleteChannelConfirm by remember { mutableStateOf(false) }
 
-    // Feature 5: pull-to-refresh
     var isRefreshing by remember { mutableStateOf(false) }
 
-    // Feature 7: forward post
     var forwardPost by remember { mutableStateOf<ChannelPost?>(null) }
     var contacts by remember { mutableStateOf(listOf<Pair<String, String>>()) }
 
-    // Feature 8: search
     var searchMode by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
 
@@ -134,7 +129,6 @@ fun ChannelFeedScreen(
         }
     }
 
-    // Initial load + request fresh info from server (subscriber count, pinned post)
     LaunchedEffect(Unit) {
         loadData()
         context.startService(
@@ -144,7 +138,6 @@ fun ChannelFeedScreen(
         )
     }
 
-    // Feature 5+6: react to ChannelManager updates (from server responses)
     val channelUpdateTick by ChannelManager.channelUpdateEvents.collectAsState()
     LaunchedEffect(channelUpdateTick) {
         if (channelUpdateTick > 0L) loadData()
@@ -162,7 +155,7 @@ fun ChannelFeedScreen(
             TopAppBar(
                 title = {
                     if (searchMode) {
-                        // Feature 8: search field replaces title
+
                         BasicTextField(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },
@@ -198,7 +191,7 @@ fun ChannelFeedScreen(
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
-                                // Feature 6: subscriber count, fallback to description
+
                                 val subCount = ch?.subscriberCount ?: -1
                                 when {
                                     subCount >= 0 ->
@@ -229,14 +222,14 @@ fun ChannelFeedScreen(
                     }
                 },
                 actions = {
-                    // Feature 8: search toggle
+
                     if (!searchMode) {
                         IconButton(onClick = { searchMode = true }) {
                             Icon(Icons.Default.Search, contentDescription = null, tint = Color.White)
                         }
                     }
                     if (ch?.isAdmin == true && !searchMode) {
-                        // Feature 4 (admin): mute toggle
+
                         IconButton(onClick = {
                             scope.launch(Dispatchers.IO) {
                                 val updated = ch.copy(isMuted = !ch.isMuted)
@@ -246,7 +239,7 @@ fun ChannelFeedScreen(
                         }) {
                             Text(if (ch.isMuted) "🔕" else "🔔", fontSize = 20.sp)
                         }
-                        // Copy subscribe link
+
                         TextButton(onClick = {
                             val link = ChannelManager.generateSubscribeLink(channelId, ch.name, ch.avatar)
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -255,7 +248,7 @@ fun ChannelFeedScreen(
                         }) {
                             Text(s.channelCopyLink, color = c.accent, fontSize = 13.sp, fontFamily = JetBrainsMono)
                         }
-                        // Feature 2+3: edit channel
+
                         IconButton(onClick = {
                             editName   = ch.name
                             editDesc   = ch.description
@@ -265,7 +258,7 @@ fun ChannelFeedScreen(
                             Icon(Icons.Default.MoreVert, contentDescription = null, tint = Color.White)
                         }
                     } else if (ch != null && !ch.isAdmin && !searchMode) {
-                        // Feature 4 (subscriber): mute toggle
+
                         IconButton(onClick = {
                             scope.launch(Dispatchers.IO) {
                                 val updated = ch.copy(isMuted = !ch.isMuted)
@@ -275,7 +268,7 @@ fun ChannelFeedScreen(
                         }) {
                             Text(if (ch.isMuted) "🔕" else "🔔", fontSize = 20.sp)
                         }
-                        // Unsubscribe
+
                         TextButton(onClick = {
                             scope.launch(Dispatchers.IO) {
                                 context.startService(
@@ -367,7 +360,7 @@ fun ChannelFeedScreen(
         },
         containerColor = c.inputBg
     ) { padding ->
-        // Feature 5: pull-to-refresh wraps the entire content area
+
         PullToRefreshBox(
             isRefreshing = isRefreshing,
             onRefresh = {
@@ -390,7 +383,7 @@ fun ChannelFeedScreen(
                 .background(bgGradient)
                 .padding(padding)
         ) {
-            // Feature 8: filter posts by search query
+
             val displayedPosts = if (searchMode && searchQuery.isNotBlank())
                 posts.filter { it.text.contains(searchQuery, ignoreCase = true) }
             else posts
@@ -426,7 +419,7 @@ fun ChannelFeedScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Feature 9: pinned post shown at top
+
                     val pinnedId = ch?.pinnedPostId
                     val pinnedPost = if (pinnedId != null) posts.find { it.id == pinnedId } else null
                     if (pinnedPost != null && !searchMode) {
@@ -454,7 +447,6 @@ fun ChannelFeedScreen(
                         }
                     }
 
-                    // Regular posts (exclude pinned from chronological list to avoid duplicate)
                     val chronoPosts = if (pinnedId != null && !searchMode)
                         displayedPosts.filter { it.id != pinnedId }
                     else displayedPosts
@@ -475,7 +467,6 @@ fun ChannelFeedScreen(
         }
     }
 
-    // ─── Feature 1 + 7 + 9: Long-press context menu ───────────────────────────
     val ctxPost = contextMenuPost
     if (ctxPost != null) {
         AlertDialog(
@@ -484,7 +475,7 @@ fun ChannelFeedScreen(
             title = null,
             text = {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    // Feature 7: Forward
+
                     TextButton(
                         onClick = {
                             contextMenuPost = null
@@ -503,7 +494,7 @@ fun ChannelFeedScreen(
                         Text(s.channelForwardPost, color = c.textPrimary, fontFamily = JetBrainsMono, modifier = Modifier.fillMaxWidth())
                     }
                     if (ch?.isAdmin == true) {
-                        // Feature 9: Pin / Unpin
+
                         val isPinned = ch.pinnedPostId == ctxPost.id
                         TextButton(
                             onClick = {
@@ -531,7 +522,7 @@ fun ChannelFeedScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
-                        // Feature 1: Delete post
+
                         TextButton(
                             onClick = {
                                 val postId = ctxPost.id
@@ -565,7 +556,6 @@ fun ChannelFeedScreen(
         )
     }
 
-    // ─── Feature 7: Forward dialog ────────────────────────────────────────────
     if (forwardPost != null) {
         AlertDialog(
             onDismissRequest = { forwardPost = null },
@@ -608,7 +598,6 @@ fun ChannelFeedScreen(
         )
     }
 
-    // ─── Feature 2+3: Edit / Delete channel dialog ────────────────────────────
     if (showEditChannelDialog && ch != null) {
         AlertDialog(
             onDismissRequest = { showEditChannelDialog = false; showDeleteChannelConfirm = false },
@@ -662,7 +651,7 @@ fun ChannelFeedScreen(
                         )
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    // Feature 3: delete channel
+
                     TextButton(
                         onClick = { showDeleteChannelConfirm = true },
                         modifier = Modifier.fillMaxWidth()
@@ -706,7 +695,6 @@ fun ChannelFeedScreen(
             }
         )
 
-        // Feature 3: delete confirmation
         if (showDeleteChannelConfirm) {
             AlertDialog(
                 onDismissRequest = { showDeleteChannelConfirm = false },
@@ -811,8 +799,6 @@ fun ChannelPostCard(
         }
     }
 }
-
-// ─── Subscribe Preview Dialog ─────────────────────────────────────────────────
 
 @Composable
 fun ChannelSubscribeDialog(

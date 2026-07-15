@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.net.ConnectivityManager
@@ -20,7 +20,7 @@ object IntrusionDetector {
         val threats: List<ThreatType>,
         val ts: Long = System.currentTimeMillis()
     ) {
-        /** PROXY + USER_CA вместе = явный MITM-перехват трафика */
+
         fun isCritical() = threats.containsAll(listOf(ThreatType.PROXY, ThreatType.USER_CA))
         fun isEmpty() = threats.isEmpty()
     }
@@ -35,13 +35,11 @@ object IntrusionDetector {
         return ScanResult(threats)
     }
 
-    /** Системный HTTP-прокси: признак Burp Suite / Charles Proxy */
     private fun isProxyConfigured(): Boolean {
         val host = System.getProperty("http.proxyHost")
         return !host.isNullOrBlank() && host != "null"
     }
 
-    /** Наличие пользовательских CA-сертификатов в хранилище системы */
     private fun hasUserCACerts(): Boolean {
         return try {
             val ks = KeyStore.getInstance("AndroidCAStore")
@@ -54,7 +52,6 @@ object IntrusionDetector {
         } catch (_: Exception) { false }
     }
 
-    /** Активное VPN-подключение */
     private fun isVPNActive(context: Context): Boolean {
         return try {
             val cm = context.getSystemService(ConnectivityManager::class.java)
@@ -65,11 +62,9 @@ object IntrusionDetector {
         } catch (_: Exception) { false }
     }
 
-    /** ADB включён */
     private fun isADBEnabled(context: Context): Boolean =
         Settings.Global.getInt(context.contentResolver, Settings.Global.ADB_ENABLED, 0) != 0
 
-    /** Режим разработчика */
     private fun isDeveloperOptionsEnabled(context: Context): Boolean =
         Settings.Global.getInt(
             context.contentResolver,

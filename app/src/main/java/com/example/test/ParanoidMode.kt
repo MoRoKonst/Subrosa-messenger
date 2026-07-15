@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.util.Log
@@ -26,7 +26,6 @@ object ParanoidMode {
     private val _stealthMode = MutableStateFlow(false)
     val stealthMode = _stealthMode.asStateFlow()
 
-    /** Активируется при нажатии кнопки паники из уведомления на lock screen. */
     private val _panicModeNotif = MutableStateFlow(false)
     val panicModeNotif = _panicModeNotif.asStateFlow()
 
@@ -37,33 +36,24 @@ object ParanoidMode {
     private val _lastIdsResult = MutableStateFlow<IntrusionDetector.ScanResult?>(null)
     val lastIdsResult = _lastIdsResult.asStateFlow()
 
-    /** Загрузить сохранённое состояние из зашифрованных настроек. */
     fun init(context: Context) {
         _enabled.value = UserStorage.getParanoidMode(context)
     }
 
-    /** Включить / выключить режим и сохранить. При включении — сбросить logcat. */
     fun setEnabled(context: Context, enabled: Boolean) {
         UserStorage.setParanoidMode(context, enabled)
         _enabled.value = enabled
         if (enabled) clearLogs()
     }
 
-    /** Очистить буфер logcat текущего процесса. */
     fun clearLogs() {
         try { Runtime.getRuntime().exec("logcat -c") } catch (_: Exception) {}
     }
 
-    /** Обновить результат последнего IDS-сканирования. */
     fun updateIdsResult(result: IntrusionDetector.ScanResult) {
         _lastIdsResult.value = result
     }
 
-    /**
-     * Критическая угроза обнаружена.
-     * Если "Wipe при взломе" включён — уничтожаем данные.
-     * Иначе — stealth mode (показать DecoyScreen).
-     */
     fun handleThreat(context: Context, result: IntrusionDetector.ScanResult, honeyTampered: Boolean) {
         clearLogs()
         val desc = buildString {
@@ -80,13 +70,12 @@ object ParanoidMode {
             } catch (_: Exception) {
                 WipeManager.Level.HARD
             }
-            WipeManager.wipe(context, level)   // не возвращается
+            WipeManager.wipe(context, level)
         } else {
             _stealthMode.value = true
         }
     }
 
-    /** Fire-and-forget HTTP POST на опционально настроенный alert-URL. */
     private fun sendAlert(context: Context, threats: String) {
         val url = UserStorage.getAlertUrl(context)
         if (url.isBlank()) return
@@ -109,11 +98,6 @@ object ParanoidMode {
     }
 }
 
-/**
- * Обёртка над android.util.Log.
- * В Paranoid Mode подавляет уровни D / I / W — в логи не попадает ничего
- * кроме ошибок уровня ERROR.
- */
 object BLog {
     fun d(tag: String, msg: String) { if (!ParanoidMode.isEnabled) Log.d(tag, msg) }
     fun i(tag: String, msg: String) { if (!ParanoidMode.isEnabled) Log.i(tag, msg) }

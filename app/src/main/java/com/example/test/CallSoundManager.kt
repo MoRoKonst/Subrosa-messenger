@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.media.AudioAttributes
@@ -9,12 +9,6 @@ import android.media.RingtoneManager
 import android.util.Log
 import kotlin.math.*
 
-/**
- * Звуки звонка:
- *  - startRingtone()  — системный рингтон (входящий, петля)
- *  - startRingback()  — программные гудки (исходящий, петля: 1 с тон / 4 с тишина)
- *  - stopAll()        — остановить всё (вызывается при любом изменении состояния звонка)
- */
 object CallSoundManager {
 
     private const val TAG         = "CallSoundManager"
@@ -24,9 +18,6 @@ object CallSoundManager {
     @Volatile private var ringbackThread: Thread?      = null
     @Volatile private var ringbackRunning = false
 
-    // ─── Входящий вызов ──────────────────────────────────────────────────────
-
-    /** Воспроизводит системный рингтон в петле (MediaPlayer — работает с API 16). */
     fun startRingtone(context: Context) {
         stopAll()
         try {
@@ -49,17 +40,11 @@ object CallSoundManager {
         }
     }
 
-    // ─── Исходящий вызов ─────────────────────────────────────────────────────
-
-    /**
-     * Воспроизводит гудки исходящего вызова в отдельном потоке.
-     * Паттерн: 1 с (440 + 480 Гц микс) → 4 с тишина → повтор.
-     */
     fun startRingback() {
         stopAll()
         ringbackRunning = true
         ringbackThread = Thread {
-            val tone      = buildRingbackTone(SAMPLE_RATE)   // 1 секунда
+            val tone      = buildRingbackTone(SAMPLE_RATE)
             val silenceMs = 4_000L
 
             while (ringbackRunning) {
@@ -72,8 +57,6 @@ object CallSoundManager {
         Log.d(TAG, "Ringback запущен")
     }
 
-    // ─── Остановить всё ──────────────────────────────────────────────────────
-
     fun stopAll() {
         ringbackRunning = false
         ringbackThread?.interrupt()
@@ -83,12 +66,6 @@ object CallSoundManager {
         ringtonePlayer = null
     }
 
-    // ─── Internal ────────────────────────────────────────────────────────────
-
-    /**
-     * Микс 440 Гц + 480 Гц — стандартный тон гудка.
-     * Fade-in/out 5% длины для плавного звучания.
-     */
     private fun buildRingbackTone(samples: Int): ShortArray {
         val fade = (samples * 0.05f).toInt().coerceAtLeast(1)
         return ShortArray(samples) { i ->
@@ -101,7 +78,6 @@ object CallSoundManager {
         }
     }
 
-    /** Воспроизводит буфер один раз (AudioTrack MODE_STATIC). */
     private fun playOnce(buf: ShortArray) {
         var track: AudioTrack? = null
         try {

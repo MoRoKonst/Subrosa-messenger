@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -36,15 +36,9 @@ fun IncomingCallScreen(
     val s = LocalStrings.current
     val haptic = LocalHapticFeedback.current
 
-    // Флаг: пользователь явно принял или отклонил звонок.
-    // Если экран уничтожен без действия (системная «Назад», смерть Activity) —
-    // сбрасываем состояние CallManager, чтобы следующий входящий звонок не
-    // получал ответ «busy» из-за оставшегося pendingOffer/callId.
     var userActed by remember { mutableStateOf(false) }
     DisposableEffect(Unit) {
-        // Автозакрытие: звонящий отменил вызов до того, как мы ответили.
-        // Регистрируем синхронно (до onDispose), чтобы не пропустить call_end,
-        // пришедший в ~1-кадровый зазор до выполнения LaunchedEffect.
+
         CallManager.onCallEnded = { _ ->
             context.startService(Intent(context, CallService::class.java).apply {
                 action = CallService.ACTION_END
@@ -56,20 +50,16 @@ fun IncomingCallScreen(
             CallManager.onIncomingCall = null
             CallManager.onCallEnded = null
             if (!userActed && CallManager.callId.isNotEmpty()) {
-                // declineCall() — уведомляем звонящего об отказе/пропуске.
-                // release() здесь недостаточно: оно чистит локальное состояние,
-                // но не отправляет call_decline серверу, из-за чего абонент A
-                // зависает в «Вызов…» на 30–45 с до ICE timeout.
+
                 CallManager.declineCall()
             }
         }
     }
 
-    // Запрос разрешения камеры при принятии видеозвонка
     val cameraPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        // Принимаем звонок — если камера не разрешена, acceptCall всё равно создаст аудиотрек
+
         if (!granted) android.widget.Toast.makeText(
             context, s.incomingNoCameraPermission, android.widget.Toast.LENGTH_SHORT
         ).show()
@@ -78,7 +68,6 @@ fun IncomingCallScreen(
         onAccept()
     }
 
-    // Плавная пульсация — InfiniteTransition вместо бинарного flip
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseAlphaOuter by infiniteTransition.animateFloat(
         initialValue = 0.05f, targetValue = 0.18f,
@@ -117,7 +106,6 @@ fun IncomingCallScreen(
         ) {
             Spacer(modifier = Modifier.height(48.dp))
 
-            // Тип звонка
             Text(
                 callTypeText,
                 color = c.accent,
@@ -126,7 +114,6 @@ fun IncomingCallScreen(
                 letterSpacing = 2.sp
             )
 
-            // Аватар с плавной пульсацией
             Box(contentAlignment = Alignment.Center) {
                 Surface(
                     shape = CircleShape,
@@ -155,7 +142,6 @@ fun IncomingCallScreen(
                 }
             }
 
-            // Имя
             Text(
                 peerName,
                 color = Color.White,
@@ -164,7 +150,6 @@ fun IncomingCallScreen(
                 fontWeight = FontWeight.SemiBold
             )
 
-            // Подсказка
             Text(
                 if (isGroup) s.incomingGroupCallHint else s.incomingCallHint,
                 color = c.textPrimary.copy(alpha = 0.5f),
@@ -174,12 +159,11 @@ fun IncomingCallScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Кнопки
             Row(
                 horizontalArrangement = Arrangement.spacedBy(72.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Отклонить
+
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Surface(
                         shape = CircleShape,
@@ -205,7 +189,6 @@ fun IncomingCallScreen(
                     Text(s.incomingDecline, color = c.textPrimary.copy(alpha = 0.7f), fontFamily = JetBrainsMono, fontSize = 12.sp)
                 }
 
-                // Принять
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Surface(
                         shape = CircleShape,

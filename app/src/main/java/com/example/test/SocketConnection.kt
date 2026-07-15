@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import kotlinx.coroutines.*
@@ -36,7 +36,7 @@ class SocketConnection(
             try {
                 socket?.close()
                 socket = Socket()
-                socket!!.connect(java.net.InetSocketAddress(host, port), 5000) // таймаут 5 секунд
+                socket!!.connect(java.net.InetSocketAddress(host, port), 5000)
                 writer = PrintWriter(socket!!.getOutputStream(), true)
                 reader = BufferedReader(InputStreamReader(socket!!.getInputStream()))
 
@@ -113,7 +113,7 @@ class SocketConnection(
                     val json = JSONObject(line)
                     when (json.getString("type")) {
                         "ping" -> {
-                            // Отвечаем на ping сервера
+
                             scope.launch(Dispatchers.IO) {
                                 writer?.println(JSONObject().apply {
                                     put("type", "pong")

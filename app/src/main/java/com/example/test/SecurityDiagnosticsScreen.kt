@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -45,14 +45,12 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
     var isIdsRunning by remember { mutableStateOf(false) }
     var alertUrl by remember { mutableStateOf(UserStorage.getAlertUrl(context)) }
 
-    // Auto-scroll terminal to bottom on new line
     LaunchedEffect(testLines.size) {
         if (testLines.isNotEmpty()) {
             listState.animateScrollToItem(testLines.size - 1)
         }
     }
 
-    // Blinking cursor animation
     val infiniteTransition = rememberInfiniteTransition(label = "cursor")
     val cursorAlpha by infiniteTransition.animateFloat(
         initialValue = 0.15f, targetValue = 1f,
@@ -60,7 +58,6 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
         label = "cursorAlpha"
     )
 
-    // Only show: test headers, result lines (✅/❌/⚠), summary notes
     fun shouldShow(line: String): Boolean {
         val t = line.trim()
         return t.isEmpty() ||
@@ -71,7 +68,6 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
             "Если видишь" in t || "Покрыто:" in t
     }
 
-    // Streams a test suite line by line with a small visual delay
     fun runSuite(block: (onLine: (String) -> Unit) -> Unit) {
         if (isRunning) return
         isRunning = true
@@ -93,7 +89,6 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
         }
     }
 
-    // ── Paranoid mode confirm dialog ───────────────────────────────────────────
     if (showParanoidConfirm) {
         AlertDialog(
             onDismissRequest = { showParanoidConfirm = false },
@@ -132,14 +127,14 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                 .background(Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd)))
                 .padding(padding)
         ) {
-            // ── Controls ───────────────────────────────────────────────────────
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Paranoid Mode row
+
                 val paranoid by ParanoidMode.flow.collectAsState()
                 Card(
                     colors = CardDefaults.cardColors(
@@ -190,7 +185,6 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                // IDS row
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = if (lastIdsResult?.isCritical() == true) Color(0xFF2D1A00) else c.card
@@ -234,7 +228,6 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                // Alert URL compact row
                 Card(colors = CardDefaults.cardColors(containerColor = c.card)) {
                     Row(
                         modifier = Modifier
@@ -268,7 +261,6 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                // 3 test buttons
                 Button(
                     onClick = { runSuite { cb -> CryptoManager.runSecurityDiagnostics(context, cb) } },
                     enabled = !isRunning,
@@ -291,7 +283,6 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                 ) { Text(if (isRunning) s.diagRunning else s.diagAdvanced, fontSize = 14.sp) }
             }
 
-            // ── Terminal output ────────────────────────────────────────────────
             Surface(
                 modifier = Modifier
                     .weight(1f)

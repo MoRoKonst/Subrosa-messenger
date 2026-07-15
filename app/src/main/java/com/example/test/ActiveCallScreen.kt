@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.content.Intent
@@ -34,7 +34,7 @@ import org.webrtc.VideoTrack
 
 @Composable
 fun ActiveCallScreen(
-    peerId: String,            // для 1-to-1: userId; для группы: пустая строка
+    peerId: String,
     isVideo: Boolean,
     isGroup: Boolean,
     onHangUp: () -> Unit
@@ -43,7 +43,6 @@ fun ActiveCallScreen(
     val context = LocalContext.current
     val s = LocalStrings.current
 
-    // Таймер длительности
     var seconds by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) { delay(1000); seconds++ }
@@ -53,14 +52,11 @@ fun ActiveCallScreen(
     var isCamOff      by remember { mutableStateOf(false) }
     var isSpeaker     by remember { mutableStateOf(CallManager.isVideoCall) }
     var isFrontCamera by remember { mutableStateOf(true) }
-    // Speaker view: userId участника в главном окне (null = первый подключившийся)
+
     var mainPeerId    by remember { mutableStateOf<String?>(null) }
-    // Локальный видеотрек как Compose-state: обновляется через callback когда трек готов.
-    // Нельзя читать CallManager.localVideoTrack напрямую — это обычный var,
-    // изменения которого не триггерят рекомпоновку.
+
     var localVideoTrack by remember { mutableStateOf(CallManager.localVideoTrack) }
 
-    // Proximity sensor: гасить экран когда телефон у уха (только аудиозвонок)
     val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
     val proximityLock = remember {
         powerManager.newWakeLock(
@@ -75,19 +71,13 @@ fun ActiveCallScreen(
         }
     }
 
-    // Удалённые видеопотоки (для группы — несколько)
     val remoteVideoTracks = remember { mutableStateMapOf<String, VideoTrack>() }
 
-    // Участники группового звонка
     val groupPeers = remember { mutableStateListOf<String>().also {
         if (isGroup) it.addAll(CallManager.peerConnections.keys)
         else if (peerId.isNotEmpty()) it.add(peerId)
     }}
 
-    // Колбэки регистрируются в DisposableEffect (синхронно, не в корутине),
-    // чтобы избежать гонки: IncomingCallScreen.onDispose обнуляет onCallEnded,
-    // и если call_end придёт до того, как LaunchedEffect выполнится (~1 фрейм),
-    // onHangUp() не был бы вызван и экран завис бы навсегда.
     DisposableEffect(Unit) {
         CallManager.onCallEnded = { _ ->
             context.startService(Intent(context, CallService::class.java).apply {
@@ -104,7 +94,7 @@ fun ActiveCallScreen(
         CallManager.onLocalVideoTrackReady = { track ->
             localVideoTrack = track
         }
-        // Захватываем трек если он уже был установлен до регистрации callback-а
+
         if (localVideoTrack == null) localVideoTrack = CallManager.localVideoTrack
 
         onDispose {
@@ -112,8 +102,7 @@ fun ActiveCallScreen(
             CallManager.onPeerJoined = null
             CallManager.onCallEnded = null
             CallManager.onLocalVideoTrackReady = null
-            // Если экран закрылся без нажатия кнопки завершения (системная кнопка «Назад»,
-            // или Activity уничтожена) — отправляем call_end собеседнику И освобождаем ресурсы.
+
             if (CallManager.callId.isNotEmpty()) {
                 context.startService(Intent(context, CallService::class.java).apply {
                     action = CallService.ACTION_END
@@ -123,7 +112,6 @@ fun ActiveCallScreen(
         }
     }
 
-    // Запустить уведомление активного звонка (можно в корутине — не критично по времени)
     LaunchedEffect(Unit) {
         context.startService(Intent(context, CallService::class.java).apply {
             action = CallService.ACTION_ACTIVE
@@ -143,11 +131,11 @@ fun ActiveCallScreen(
             .fillMaxSize()
             .background(c.callBg)
     ) {
-        // ── Видео зоны ────────────────────────────────────────────────────────
+
         if (isVideo) {
             if (isGroup) {
                 if (remoteVideoTracks.isEmpty()) {
-                    // Ожидание подключения
+
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("📞", fontSize = 48.sp)
@@ -161,7 +149,7 @@ fun ActiveCallScreen(
                         }
                     }
                 } else {
-                    // Speaker view: один участник на большом экране, остальные — стрип миниатюр
+
                     val effectiveMainId =
                         if (mainPeerId != null && remoteVideoTracks.containsKey(mainPeerId))
                             mainPeerId!! else remoteVideoTracks.keys.first()
@@ -169,7 +157,7 @@ fun ActiveCallScreen(
                     val thumbnailPeers = remoteVideoTracks.keys.filter { it != effectiveMainId }
 
                     Column(Modifier.fillMaxSize()) {
-                        // Главное видео — занимает всё доступное место
+
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -185,7 +173,6 @@ fun ActiveCallScreen(
                             }
                         }
 
-                        // Стрип миниатюр: появляется когда участников > 1
                         if (thumbnailPeers.isNotEmpty()) {
                             LazyRow(
                                 modifier = Modifier
@@ -215,12 +202,11 @@ fun ActiveCallScreen(
                             }
                         }
 
-                        // Резервируем высоту под панель управления
                         Spacer(Modifier.height(200.dp))
                     }
                 }
             } else {
-                // 1-to-1: remote video на весь экран
+
                 val remoteTrack = remoteVideoTracks[peerId]
                 if (remoteTrack != null) {
                     RemoteVideoView(
@@ -247,7 +233,6 @@ fun ActiveCallScreen(
                 }
             }
 
-            // Своё видео — маленькое, в углу
             if (!isCamOff && localVideoTrack != null) {
                 Box(
                     modifier = Modifier
@@ -261,7 +246,7 @@ fun ActiveCallScreen(
                 }
             }
         } else {
-            // Аудиозвонок — показываем аватар
+
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -296,7 +281,6 @@ fun ActiveCallScreen(
             }
         }
 
-        // ── Нижняя панель ─────────────────────────────────────────────────────
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -309,7 +293,7 @@ fun ActiveCallScreen(
                 .padding(bottom = 40.dp, top = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Имя и таймер
+
             Text(
                 peerName,
                 color = Color.White,
@@ -326,7 +310,6 @@ fun ActiveCallScreen(
             )
             Spacer(modifier = Modifier.height(20.dp))
 
-            // ── Ряд вспомогательных кнопок ────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -367,7 +350,6 @@ fun ActiveCallScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // ── Кнопка завершения — большая, по центру ────────────────────
             HangUpButton(label = s.activeHangUp) {
                 context.startService(Intent(context, CallService::class.java).apply {
                     action = CallService.ACTION_END
@@ -379,7 +361,6 @@ fun ActiveCallScreen(
     }
 }
 
-// Небольшая круглая кнопка для вспомогательных действий (мут, камера, динамик)
 @Composable
 private fun SmallCallButton(
     label: String,
@@ -425,7 +406,6 @@ private fun SmallCallButton(
     }
 }
 
-// Большая красная кнопка завершения звонка — всегда по центру
 @Composable
 private fun HangUpButton(label: String, onClick: () -> Unit) {
     val c = LocalBeaconColors.current
@@ -464,13 +444,7 @@ private fun RemoteVideoView(track: VideoTrack, label: String, modifier: Modifier
     Box(modifier = modifier.background(c.callBg)) {
         AndroidView(
             factory = { ctx ->
-                // TextureViewRenderer вместо SurfaceViewRenderer:
-                // SurfaceView имеет асинхронный Surface lifecycle — Surface создаётся
-                // отдельно через SurfaceHolder.Callback.surfaceCreated(). Если WebRTC
-                // rendering thread пытается создать EGL surface до готовности Surface,
-                // makeCurrent() бросает RuntimeException на native-потоке → JNI fatal crash.
-                // TextureView работает через SurfaceTexture, который доступен сразу при
-                // создании View — нет async lifecycle, нет гонки с EGL.
+
                 SurfaceViewRenderer(ctx).apply {
                     try {
                         val egl = CallManager.getEglBase()?.eglBaseContext ?: return@apply

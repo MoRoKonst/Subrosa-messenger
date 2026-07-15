@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.util.Base64
@@ -14,12 +14,12 @@ import javax.crypto.spec.SecretKeySpec
 data class Group(
     val id: String,
     val name: String,
-    val avatar: String, // emoji
-    val members: List<String>, // userId list
+    val avatar: String,
+    val members: List<String>,
     val admins: List<String>,
     val createdBy: String,
     val createdAt: Long = System.currentTimeMillis(),
-    val groupKey: ByteArray? = null, // Локально хранится зашифрованный ключ
+    val groupKey: ByteArray? = null,
     val description: String = ""
 ) {
     override fun equals(other: Any?): Boolean {
@@ -49,48 +49,31 @@ object GroupManager {
     private const val KEY_GROUPS = "my_groups"
     private val lock = Any()
 
-    // ─── Генерация группового ключа ──────────────────────────────────────────
-
-    /**
-     * Генерирует случайный AES-256 ключ для группы
-     */
     fun generateGroupKey(): ByteArray {
         val keyGen = KeyGenerator.getInstance("AES")
         keyGen.init(256, SecureRandom())
         return keyGen.generateKey().encoded
     }
 
-    /**
-     * Шифрует групповой ключ для конкретного участника
-     */
     fun encryptGroupKeyForMember(groupKey: ByteArray, memberPublicKey: String): String {
         val keyBase64 = Base64.encodeToString(groupKey, Base64.NO_WRAP)
         return CryptoManager.encrypt(keyBase64, memberPublicKey)
     }
 
-    /**
-     * Расшифровывает групповой ключ (получен от создателя группы)
-     */
     fun decryptGroupKey(encryptedGroupKey: String): ByteArray {
         val keyBase64 = CryptoManager.decrypt(encryptedGroupKey)
         return Base64.decode(keyBase64, Base64.NO_WRAP)
     }
 
-    // ─── Шифрование сообщений группы ─────────────────────────────────────────
-
-    /**
-     * Шифрует сообщение групповым ключом
-     */
     fun encryptGroupMessage(message: String, groupKey: ByteArray): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         val secretKey = SecretKeySpec(groupKey, "AES")
-        // Явная генерация IV через SecureRandom — не полагаемся на внутреннюю реализацию провайдера.
+
         val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
         cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
 
         val encrypted = cipher.doFinal(message.toByteArray(Charsets.UTF_8))
 
-        // Формат: [IV][зашифрованные данные]
         val combined = ByteArray(iv.size + encrypted.size)
         System.arraycopy(iv, 0, combined, 0, iv.size)
         System.arraycopy(encrypted, 0, combined, iv.size, encrypted.size)
@@ -98,9 +81,6 @@ object GroupManager {
         return Base64.encodeToString(combined, Base64.NO_WRAP)
     }
 
-    /**
-     * Расшифровывает сообщение групповым ключом
-     */
     fun decryptGroupMessage(encryptedMessage: String, groupKey: ByteArray): String {
         val combined = Base64.decode(encryptedMessage, Base64.NO_WRAP)
         if (combined.size <= 12) throw IllegalArgumentException("Слишком короткое зашифрованное сообщение")
@@ -116,15 +96,9 @@ object GroupManager {
         return String(decrypted, Charsets.UTF_8)
     }
 
-    // ─── Хранение групп ──────────────────────────────────────────────────────
-
-    /**
-     * Сохранить группу локально
-     */
     fun saveGroup(context: Context, group: Group) = synchronized(lock) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
 
-        // Считываем raw-строки существующих ключей — нужны если SMK залочен
         val existingRawKeys = mutableMapOf<String, String>()
         try {
             val existing = JSONArray(prefs.getString(KEY_GROUPS, "[]") ?: "[]")
@@ -155,9 +129,7 @@ object GroupManager {
                     val groupKeyStored = if (StorageKeyManager.isUnlocked) {
                         StorageKeyManager.wrapBytes(g.groupKey)
                     } else {
-                        // SMK залочен — сохраняем уже существующий raw ключ чтобы
-                        // не понижать защиту до plain Base64. Новый ключ (ротация)
-                        // будет re-wrap при следующей загрузке когда SMK разблокируется.
+
                         existingRawKeys[g.id]
                             ?: Base64.encodeToString(g.groupKey, Base64.NO_WRAP)
                     }
@@ -169,9 +141,6 @@ object GroupManager {
         prefs.edit().putString(KEY_GROUPS, json.toString()).apply()
     }
 
-    /**
-     * Загрузить все группы
-     */
     fun loadGroups(context: Context): List<Group> = synchronized(lock) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val jsonStr = prefs.getString(KEY_GROUPS, "[]") ?: "[]"
@@ -185,7 +154,6 @@ object GroupManager {
                 val storedKey = if (obj.has("groupKey")) obj.getString("groupKey") else null
                 val groupKey = if (storedKey != null) StorageKeyManager.unwrapBytes(storedKey) else null
 
-                // Eager re-wrap: если ключ хранился как plain Base64 и SMK теперь доступен
                 if (storedKey != null
                     && !storedKey.startsWith(StorageKeyManager.SMK_PREFIX)
                     && StorageKeyManager.isUnlocked
@@ -222,16 +190,10 @@ object GroupManager {
         }
     }
 
-    /**
-     * Получить группу по ID
-     */
     fun getGroup(context: Context, groupId: String): Group? {
         return loadGroups(context).find { it.id == groupId }
     }
 
-    /**
-     * Удалить группу
-     */
     fun deleteGroup(context: Context, groupId: String) = synchronized(lock) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
 
@@ -274,11 +236,6 @@ object GroupManager {
         prefs.edit().putString(KEY_GROUPS, json.toString()).apply()
     }
 
-    // ─── Управление участниками ──────────────────────────────────────────────
-
-    /**
-     * Добавить участника в группу
-     */
     fun addMember(context: Context, groupId: String, userId: String) {
         val group = getGroup(context, groupId) ?: return
         val updatedMembers = group.members.toMutableList()
@@ -289,9 +246,6 @@ object GroupManager {
         }
     }
 
-    /**
-     * Удалить участника из группы
-     */
     fun removeMember(context: Context, groupId: String, userId: String) {
         val group = getGroup(context, groupId) ?: return
         val updatedMembers = group.members.toMutableList()
@@ -306,9 +260,6 @@ object GroupManager {
         ))
     }
 
-    /**
-     * Сделать админом
-     */
     fun promoteToAdmin(context: Context, groupId: String, userId: String) {
         val group = getGroup(context, groupId) ?: return
         val updatedAdmins = group.admins.toMutableList()
@@ -319,19 +270,11 @@ object GroupManager {
         }
     }
 
-    /**
-     * Проверка прав администратора
-     */
     fun isAdmin(context: Context, groupId: String, userId: String): Boolean {
         val group = getGroup(context, groupId) ?: return false
         return group.admins.contains(userId) || group.createdBy == userId
     }
 
-    // ─── Сообщения группы ────────────────────────────────────────────────────
-
-    /**
-     * Сохранить сообщение группы
-     */
     fun saveGroupMessage(context: Context, userId: String, message: GroupMessage) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, "group_messages_${message.groupId}")
         val messages = loadGroupMessages(context, userId, message.groupId).toMutableList()
@@ -356,9 +299,6 @@ object GroupManager {
         prefs.edit().putString("messages", json.toString()).apply()
     }
 
-    /**
-     * Удалить сообщение группы локально
-     */
     fun deleteGroupMessage(context: Context, userId: String, groupId: String, messageId: String) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, "group_messages_$groupId")
         val messages = loadGroupMessages(context, userId, groupId).toMutableList()
@@ -379,9 +319,6 @@ object GroupManager {
         prefs.edit().putString("messages", json.toString()).apply()
     }
 
-    /**
-     * Загрузить сообщения группы
-     */
     fun loadGroupMessages(context: Context, userId: String, groupId: String): List<GroupMessage> {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, "group_messages_$groupId")
         val jsonStr = prefs.getString("messages", "[]") ?: "[]"

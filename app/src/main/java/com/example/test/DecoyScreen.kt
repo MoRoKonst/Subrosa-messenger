@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.activity.compose.BackHandler
 import android.database.ContentObserver
@@ -40,12 +40,6 @@ import androidx.compose.ui.unit.sp
 import com.bcon.messenger.ui.theme.LocalBeaconColors
 import kotlin.math.absoluteValue
 
-// ─── Decoy Screen ─────────────────────────────────────────────────────────────
-//
-// Показывается при вводе panic password, после вайпа (decoy_mode) или volume×5.
-// Содержит случайный набор фиктивных чатов с реалистичной перепиской.
-// Набор выбирается однажды и сохраняется — разные пользователи видят разные диалоги.
-
 private data class FakeMsg(val text: String, val fromMe: Boolean, val time: String)
 
 private data class ChatTemplate(
@@ -55,7 +49,6 @@ private data class ChatTemplate(
     val messages: List<FakeMsg>
 )
 
-// Avatar color: same palette + same formula as real ContactCard
 private val decoyAvatarPalette = listOf(
     Color(0xFF2481CC), Color(0xFFE74C3C), Color(0xFF27AE60),
     Color(0xFFF39C12), Color(0xFF9B59B6), Color(0xFF1ABC9C)
@@ -63,11 +56,8 @@ private val decoyAvatarPalette = listOf(
 private fun avatarColorFor(name: String) =
     decoyAvatarPalette[name.hashCode().absoluteValue % decoyAvatarPalette.size]
 
-// ─── Пул из 23 шаблонов ───────────────────────────────────────────────────────
-
 private val chatPool = listOf(
 
-    // 0: Мама — продукты
     ChatTemplate("Мама", "14:32", unread = 0, listOf(
         FakeMsg("Сынок, как дела? Давно не звонил", false, "12:40"),
         FakeMsg("Хорошо мам, работы много немного", true, "13:05"),
@@ -76,7 +66,6 @@ private val chatPool = listOf(
         FakeMsg("Ладно. Купи хлеба по дороге, белого", false, "14:32"),
     )),
 
-    // 1: Мама — здоровье
     ChatTemplate("Мама", "11:20", unread = 1, listOf(
         FakeMsg("Ты как себя чувствуешь? Голос у тебя вчера был странный", false, "09:00"),
         FakeMsg("Нормально, просто устал немного", true, "09:45"),
@@ -85,7 +74,6 @@ private val chatPool = listOf(
         FakeMsg("Хорошо. Суп сварила, заедь покушай", false, "11:20"),
     )),
 
-    // 2: Папа — машина
     ChatTemplate("Папа", "Вчера", unread = 0, listOf(
         FakeMsg("Масло когда последний раз менял на своей?", false, "17:00"),
         FakeMsg("В октябре кажется, давно уже", true, "17:20"),
@@ -94,7 +82,6 @@ private val chatPool = listOf(
         FakeMsg("Ключи у меня в гараже, приезжай помогу", false, "17:23"),
     )),
 
-    // 3: Антон — встреча вечером
     ChatTemplate("Антон", "14:05", unread = 2, listOf(
         FakeMsg("Бро, что вечером делаешь?", false, "12:50"),
         FakeMsg("Пока ничего, а что?", true, "13:10"),
@@ -105,7 +92,6 @@ private val chatPool = listOf(
         FakeMsg("Ок, завтра встречаемся в 19:00", false, "14:05"),
     )),
 
-    // 4: Дима — футбол
     ChatTemplate("Дима", "Вчера", unread = 0, listOf(
         FakeMsg("Смотрел матч вчера?", false, "20:00"),
         FakeMsg("Нет, пропустил. Как прошло?", true, "20:30"),
@@ -115,7 +101,6 @@ private val chatPool = listOf(
         FakeMsg("Давай, напомни за день", true, "20:34"),
     )),
 
-    // 5: Серёга — игры/видос
     ChatTemplate("Серёга", "Вчера", unread = 1, listOf(
         FakeMsg("Заходи вечером поиграем", false, "18:00"),
         FakeMsg("Во что?", true, "18:40"),
@@ -124,7 +109,6 @@ private val chatPool = listOf(
         FakeMsg("Посмотри видос который я скинул", false, "20:44"),
     )),
 
-    // 6: Макс — долг
     ChatTemplate("Макс", "Пн", unread = 0, listOf(
         FakeMsg("Слушай, можешь до зарплаты занять немного?", false, "14:00"),
         FakeMsg("Сколько нужно?", true, "14:15"),
@@ -134,7 +118,6 @@ private val chatPool = listOf(
         FakeMsg("Не вопрос, отдашь когда будет", true, "14:19"),
     )),
 
-    // 7: Катя — переезд
     ChatTemplate("Катя", "Вчера", unread = 0, listOf(
         FakeMsg("Можешь помочь с переездом в субботу?", false, "11:00"),
         FakeMsg("Могу, в котором часу?", true, "11:05"),
@@ -144,7 +127,6 @@ private val chatPool = listOf(
         FakeMsg("Всегда пожалуйста 😊", true, "18:31"),
     )),
 
-    // 8: Лена — кафе
     ChatTemplate("Лена", "Пн", unread = 0, listOf(
         FakeMsg("Привет! Не забыл про встречу сегодня?", false, "10:00"),
         FakeMsg("Нет, помню. Уже выхожу", true, "10:28"),
@@ -153,7 +135,6 @@ private val chatPool = listOf(
         FakeMsg("Ок, заказала кофе 😊", false, "10:31"),
     )),
 
-    // 9: Аня — учёба/конспект
     ChatTemplate("Аня", "Вчера", unread = 0, listOf(
         FakeMsg("Ты конспект по матану делал на прошлой неделе?", false, "16:00"),
         FakeMsg("Нет, а что случилось?", true, "16:20"),
@@ -163,7 +144,6 @@ private val chatPool = listOf(
         FakeMsg("Спасибо, ты меня спасла!", true, "16:24"),
     )),
 
-    // 10: Работа — планёрка
     ChatTemplate("Работа", "13:47", unread = 0, listOf(
         FakeMsg("Всем привет, завтра планёрка в 10:00", false, "09:15"),
         FakeMsg("Понял, буду", true, "09:20"),
@@ -172,7 +152,6 @@ private val chatPool = listOf(
         FakeMsg("Встречу перенесли на 16:30 сегодня, не забудьте", false, "13:47"),
     )),
 
-    // 11: Рабочий чат — отчёт
     ChatTemplate("Рабочий чат", "Вчера", unread = 0, listOf(
         FakeMsg("Отчёт по проекту готов?", false, "15:00"),
         FakeMsg("Дорабатываю последние правки, через час пришлю", true, "15:10"),
@@ -182,7 +161,6 @@ private val chatPool = listOf(
         FakeMsg("Получил, спасибо! Всё норм", false, "16:22"),
     )),
 
-    // 12: Паша — дача/шашлык
     ChatTemplate("Паша", "Вчера", unread = 0, listOf(
         FakeMsg("Едем на дачу в выходные? Давно не были", false, "19:00"),
         FakeMsg("Можно, а кто ещё едет?", true, "19:20"),
@@ -191,7 +169,6 @@ private val chatPool = listOf(
         FakeMsg("Да, только не опаздывай как в прошлый раз 😄", false, "19:23"),
     )),
 
-    // 13: Маша — день рождения
     ChatTemplate("Маша", "Пн", unread = 0, listOf(
         FakeMsg("Ты помнишь что у Кости день рождения через неделю?", false, "12:00"),
         FakeMsg("Да, помню. Что-то планируем?", true, "12:15"),
@@ -200,7 +177,6 @@ private val chatPool = listOf(
         FakeMsg("Хорошо, я организую всё остальное 👍", false, "12:18"),
     )),
 
-    // 14: Костя — подвезти
     ChatTemplate("Костя", "Вчера", unread = 0, listOf(
         FakeMsg("Можешь подвезти до метро утром?", false, "21:30"),
         FakeMsg("В котором часу?", true, "21:35"),
@@ -209,7 +185,6 @@ private val chatPool = listOf(
         FakeMsg("Спасибо, выручил!", false, "09:10"),
     )),
 
-    // 15: Юля — кино
     ChatTemplate("Юля", "Пн", unread = 0, listOf(
         FakeMsg("Пойдём в кино в пятницу?", false, "20:00"),
         FakeMsg("Что смотреть будем?", true, "20:10"),
@@ -219,7 +194,6 @@ private val chatPool = listOf(
         FakeMsg("Хорошо, договорились 👍", true, "20:14"),
     )),
 
-    // 16: Витя — покупка телефона
     ChatTemplate("Витя", "Пн", unread = 0, listOf(
         FakeMsg("Ты где свой телефон брал?", false, "15:00"),
         FakeMsg("В ситилинке, а что?", true, "15:20"),
@@ -229,7 +203,6 @@ private val chatPool = listOf(
         FakeMsg("О, значит самое время брать", true, "15:43"),
     )),
 
-    // 17: Рома — спортзал
     ChatTemplate("Рома", "Вчера", unread = 0, listOf(
         FakeMsg("В зал сегодня идёшь?", false, "16:00"),
         FakeMsg("Да, в 18:30 планирую", true, "16:05"),
@@ -239,7 +212,6 @@ private val chatPool = listOf(
         FakeMsg("Понял, не спеши", true, "18:19"),
     )),
 
-    // 18: Сестра — деньги
     ChatTemplate("Сестра", "Вчера", unread = 0, listOf(
         FakeMsg("Брат, можешь дать денег до зарплаты?", false, "12:00"),
         FakeMsg("Сколько нужно?", true, "12:30"),
@@ -249,7 +221,6 @@ private val chatPool = listOf(
         FakeMsg("Не вопрос 😊", true, "12:34"),
     )),
 
-    // 19: Оля — рецепт
     ChatTemplate("Оля", "Пн", unread = 0, listOf(
         FakeMsg("Как нормально борщ сварить? Всё время не то выходит", false, "11:00"),
         FakeMsg("Свёклу заранее запеки в духовке, не вари", true, "11:15"),
@@ -258,7 +229,6 @@ private val chatPool = listOf(
         FakeMsg("Попробую сегодня, спасибо!", false, "11:18"),
     )),
 
-    // 20: Группа — учёба, пары отменили
     ChatTemplate("Группа 312", "Вчера", unread = 0, listOf(
         FakeMsg("Завтра пар нет, Ирина Николаевна заболела", false, "18:00"),
         FakeMsg("Серьёзно? Кайф 🎉", true, "18:05"),
@@ -267,7 +237,6 @@ private val chatPool = listOf(
         FakeMsg("Огонь, как раз доделаю", true, "18:08"),
     )),
 
-    // 21: Игорь — рыбалка
     ChatTemplate("Игорь", "Пн", unread = 0, listOf(
         FakeMsg("Едем на рыбалку в субботу?", false, "19:30"),
         FakeMsg("Надо погоду глянуть", true, "19:45"),
@@ -277,7 +246,6 @@ private val chatPool = listOf(
         FakeMsg("Буду, не засплю 😄", true, "19:49"),
     )),
 
-    // 22: Наташа — день рождения собеседника
     ChatTemplate("Наташа", "Пн", unread = 0, listOf(
         FakeMsg("С днём рождения тебя! 🎂🎉", false, "09:00"),
         FakeMsg("Спасибо большое Наташ! ❤️", true, "09:10"),
@@ -287,7 +255,6 @@ private val chatPool = listOf(
     )),
 )
 
-// Фиксированный чат поддержки — всегда присутствует как в реальном приложении
 private val beaconTeamChat = ChatTemplate(
     name = "Команда B-CON",
     lastTime = "14:20",
@@ -299,13 +266,10 @@ private val beaconTeamChat = ChatTemplate(
     )
 )
 
-// ─── Точка входа ──────────────────────────────────────────────────────────────
-
 @Composable
 fun DecoyScreen() {
     val context = LocalContext.current
 
-    // Volume × 5 в decoy-режиме → Emergency Wipe (MessengerService не запущен)
     DisposableEffect(Unit) {
         var pressCount = 0
         var firstPressMs = 0L
@@ -346,8 +310,6 @@ fun DecoyScreen() {
         DecoyListScreen(chats = selectedChats, onOpenChat = { openedChat = it })
     }
 }
-
-// ─── Список чатов ─────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -469,8 +431,6 @@ private fun DecoyListScreen(
     }
 }
 
-// ─── Экран переписки ──────────────────────────────────────────────────────────
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DecoyChatScreen(
@@ -542,7 +502,7 @@ private fun DecoyChatScreen(
                 .padding(horizontal = 8.dp),
         ) {
             items(allMessages) { msg ->
-                // Пузырь — точно как MessageBubble в реальном ChatScreen
+
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -582,7 +542,6 @@ private fun DecoyChatScreen(
             }
         }
 
-        // ─── Панель ввода (идентична реальному ChatScreen) ────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()

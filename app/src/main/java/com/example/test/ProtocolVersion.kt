@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 object ProtocolVersion {
     const val CURRENT_VERSION = 2

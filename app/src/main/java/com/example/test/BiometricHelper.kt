@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import androidx.biometric.BiometricManager
@@ -8,7 +8,6 @@ import androidx.fragment.app.FragmentActivity
 
 object BiometricHelper {
 
-    // Проверка доступности биометрии на устройстве
     fun isBiometricAvailable(context: Context): Boolean {
         val biometricManager = BiometricManager.from(context)
         return when (biometricManager.canAuthenticate(
@@ -20,7 +19,6 @@ object BiometricHelper {
         }
     }
 
-    // Показать диалог биометрии
     fun authenticate(
         activity: FragmentActivity,
         onSuccess: () -> Unit,

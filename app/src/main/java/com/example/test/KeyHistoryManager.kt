@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import org.json.JSONArray
@@ -14,11 +14,10 @@ object KeyHistoryManager {
         val verified: Boolean = false
     )
 
-    // Проверяет изменился ли ключ
     fun checkKeyChange(context: Context, contactId: String, newKey: String): Boolean {
         val history = getHistory(context, contactId)
         if (history.isEmpty()) {
-            // Первый контакт - сохраняем ключ
+
             addKey(context, contactId, newKey)
             return false
         }
@@ -27,7 +26,6 @@ object KeyHistoryManager {
         return lastKey != newKey
     }
 
-    // Получить историю ключей контакта
     fun getHistory(context: Context, contactId: String): List<KeyRecord> {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val json = prefs.getString(contactId, "[]") ?: "[]"
@@ -45,7 +43,6 @@ object KeyHistoryManager {
         return list
     }
 
-    // Добавить новый ключ
     fun addKey(context: Context, contactId: String, publicKey: String) {
         val history = getHistory(context, contactId).toMutableList()
         history.add(KeyRecord(
@@ -56,7 +53,6 @@ object KeyHistoryManager {
         saveHistory(context, contactId, history)
     }
 
-    // Пометить текущий ключ как верифицированный
     fun markAsVerified(context: Context, contactId: String) {
         val history = getHistory(context, contactId).toMutableList()
         if (history.isNotEmpty()) {

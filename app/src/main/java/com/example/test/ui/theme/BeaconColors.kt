@@ -1,35 +1,32 @@
-package com.bcon.messenger.ui.theme
+﻿package com.bcon.messenger.ui.theme
 
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-// ─── Три темы приложения ──────────────────────────────────────────────────────
 enum class BeaconTheme { NAVY, DARK, LIGHT }
 
-// ─── Семантическая палитра ────────────────────────────────────────────────────
 data class BeaconColors(
-    val gradientStart: Color,       // верх фона
-    val gradientEnd: Color,         // низ фона
-    val topBar: Color,              // цвет TopAppBar
-    val dialog: Color,              // фон диалогов / AlertDialog
-    val accent: Color,              // акцент: кнопки, ссылки, активные элементы
-    val textPrimary: Color,         // основной текст
-    val card: Color,                // карточки, элементы списка
-    val cardAlt: Color,             // альтернативный фон карточки
-    val fieldBorder: Color,         // рамка полей ввода
-    val bubbleOwn: Color,           // пузырёк своего сообщения
-    val bubbleOther: Color,         // пузырёк чужого сообщения
-    val bubbleSystem: Color,        // системное сообщение
-    val dangerCard: Color,          // фон карточки с предупреждением
-    val error: Color,               // текст ошибки
-    val primaryBlue: Color,         // синий бренда (аватары, ссылки)
-    val inputBg: Color,             // фон поля ввода
-    val callBg: Color,              // фон ActiveCallScreen
-    val callGradientEdge: Color,    // края градиента IncomingCallScreen
-    val isDark: Boolean             // тёмная ли тема (для системного UI)
+    val gradientStart: Color,
+    val gradientEnd: Color,
+    val topBar: Color,
+    val dialog: Color,
+    val accent: Color,
+    val textPrimary: Color,
+    val card: Color,
+    val cardAlt: Color,
+    val fieldBorder: Color,
+    val bubbleOwn: Color,
+    val bubbleOther: Color,
+    val bubbleSystem: Color,
+    val dangerCard: Color,
+    val error: Color,
+    val primaryBlue: Color,
+    val inputBg: Color,
+    val callBg: Color,
+    val callGradientEdge: Color,
+    val isDark: Boolean
 )
 
-// ─── Синяя (текущая) ──────────────────────────────────────────────────────────
 val NavyBeaconColors = BeaconColors(
     gradientStart    = Color(0xFF141e4a),
     gradientEnd      = Color(0xFF0d1238),
@@ -52,7 +49,6 @@ val NavyBeaconColors = BeaconColors(
     isDark           = true
 )
 
-// ─── Тёмная (AMOLED) ──────────────────────────────────────────────────────────
 val DarkBeaconColors = BeaconColors(
     gradientStart    = Color(0xFF1C1C1C),
     gradientEnd      = Color(0xFF0D0D0D),
@@ -75,7 +71,6 @@ val DarkBeaconColors = BeaconColors(
     isDark           = true
 )
 
-// ─── Светлая ──────────────────────────────────────────────────────────────────
 val LightBeaconColors = BeaconColors(
     gradientStart    = Color(0xFFF0F4FF),
     gradientEnd      = Color(0xFFE4EDFF),
@@ -98,7 +93,6 @@ val LightBeaconColors = BeaconColors(
     isDark           = false
 )
 
-// ─── CompositionLocal ─────────────────────────────────────────────────────────
 val LocalBeaconColors = compositionLocalOf<BeaconColors> { NavyBeaconColors }
 
 fun beaconColorsFor(theme: BeaconTheme): BeaconColors = when (theme) {

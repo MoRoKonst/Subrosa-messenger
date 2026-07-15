@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
@@ -35,12 +35,10 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
         ChatStorage.getContactPublicKey(context, contactId) ?: "unknown"
     }
 
-    // contactId — это уже SHA-256(pubkey) первые 8 байт в hex uppercase (16 символов)
     val fingerprintHex = remember {
         contactId.chunked(2).joinToString(" ").lowercase()
     }
 
-    // Emoji fingerprint через ту же функцию что на ProfileScreen
     val fingerprintEmoji = remember { fingerprintToEmoji(contactId) }
 
     val qrBitmap = remember { generateQRCode(fingerprintHex, 512) }
@@ -92,7 +90,6 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
                     modifier = Modifier.padding(bottom = 24.dp)
                 )
 
-                // ─── QR-код ───────────────────────────────────────────────────
                 if (qrBitmap != null) {
                     Surface(
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
@@ -111,7 +108,6 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // ─── Emoji fingerprint ────────────────────────────────────────
                 Surface(
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
                     color = c.card,
@@ -142,7 +138,6 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // ─── Hex fingerprint ──────────────────────────────────────────
                 Text(s.verifyHexLabel, fontSize = 13.sp, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono)
                 Spacer(modifier = Modifier.height(8.dp))
                 Surface(

@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.admin.DevicePolicyManager
@@ -52,23 +52,22 @@ class MainActivity : FragmentActivity() {
         val selectedFileUri = MutableStateFlow<Uri?>(null)
         const val PICK_IMAGE_REQUEST = 200
         const val PICK_FILE_REQUEST = 201
-        // Deep-link от уведомлений: id чата и его тип ("chat" / "group_chat")
+
         val pendingChatId = MutableStateFlow<String?>(null)
         val pendingChatType = MutableStateFlow<String?>(null)
-        // Deep-link для каналов: beacon://channel?id=... (subscribe flow)
+
         val pendingChannelLink = MutableStateFlow<String?>(null)
-        // Открытие уже подписанного канала (из уведомления)
+
         val pendingOpenChannelId = MutableStateFlow<String?>(null)
-        // Входящий звонок: Triple(callId, isVideo, fromUserId)
+
         val pendingIncomingCall = MutableStateFlow<Triple<String, Boolean, String>?>(null)
-        // Тикер для автообновления списка чатов при получении нового сообщения
+
         val chatListVersion = MutableStateFlow(0L)
-        // Текущий язык интерфейса ("ru" / "en"). Обновляется без recreate().
+
         val currentLanguage = MutableStateFlow("ru")
-        // Текущая тема. Обновляется без recreate().
+
         val currentTheme = MutableStateFlow(BeaconTheme.NAVY)
-        // (isPanicMode удалён: volume×5 теперь делает emergencyWipe(withDecoy=true))
-        // Сигнал для сброса UI к экрану калькулятора при уходе в фон
+
         val shouldResetToCalculator = MutableStateFlow(false)
     }
 
@@ -76,9 +75,8 @@ class MainActivity : FragmentActivity() {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        setIntent(intent)   // обновляем текущий intent активити
+        setIntent(intent)
 
-        // В режиме паранойи пропускаем только наши собственные действия
         if (ParanoidMode.isEnabled) {
             val isOurs = intent?.action == "EMERGENCY_WIPE" ||
                 intent?.action == "OPEN_INCOMING_CALL" ||
@@ -89,32 +87,32 @@ class MainActivity : FragmentActivity() {
         }
 
         if (intent?.action == "EMERGENCY_WIPE") emergencyWipe(withDecoy = true)
-        // Входящий звонок — открыть экран
+
         if (intent?.action == "OPEN_INCOMING_CALL") {
-            // pendingIncomingCall уже заполнен в MessengerService
+
             return
         }
         if (intent?.action == "OPEN_ACTIVE_CALL") {
-            // pendingIncomingCall == null → значит уже в звонке → навигация обрабатывается ниже
+
             return
         }
-        // Если пришло уведомление пока приложение уже открыто
+
         intent?.getStringExtra("open_chat")?.let { chatId ->
             pendingChatId.value = chatId
             pendingChatType.value = intent.getStringExtra("chat_type") ?: "chat"
         }
-        // Deep-link канала: beacon://channel?id=...
+
         handleChannelDeepLink(intent)
     }
 
     private fun handleChannelDeepLink(intent: Intent?) {
-        // From beacon:// URI (system deep link) — triggers subscribe flow
+
         val uri = intent?.data
         if (uri != null && uri.scheme == "beacon" && uri.host == "channel") {
             pendingChannelLink.value = uri.toString()
             return
         }
-        // From notification tap — directly open channel feed (already subscribed)
+
         intent?.getStringExtra("open_channel")?.let { channelId ->
             pendingOpenChannelId.value = channelId
         }
@@ -126,44 +124,37 @@ class MainActivity : FragmentActivity() {
         CryptoManager.init(this)
         ParanoidMode.init(this)
         HoneyTokenManager.init(this)
-        // Запрет скриншотов и записи экрана во всём приложении
+
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-        // Сбрасывать касания если поверх окна есть оверлей (антиклик-джекинг)
+
         window.decorView.filterTouchesWhenObscured = true
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         if (intent?.action == "EMERGENCY_WIPE") { emergencyWipe(withDecoy = true); return }
 
-        // Читаем deep-link из уведомления (холодный старт)
         intent?.getStringExtra("open_chat")?.let { chatId ->
             pendingChatId.value = chatId
             pendingChatType.value = intent.getStringExtra("chat_type") ?: "chat"
         }
-        // Обрабатываем deep-link канала при холодном старте
+
         handleChannelDeepLink(intent)
 
-        // Восстанавливаем состояние после экстренного вайпа (decoy mode)
         UserStorage.migrateDecoyState(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 0)
         }
 
-        // Разовая проверка шпионских приложений (не при маскировке — диалог раскроет приложение)
         if (!UserStorage.getCalculatorDisguise(this)) checkSpyApps()
 
-        // Синхронизируем реактивный язык с сохранённым значением
         currentLanguage.value = UserStorage.getLanguage(this)
-        // Синхронизируем тему
+
         currentTheme.value = UserStorage.getTheme(this)
 
-        // Запускаем Tor заранее
         TorManager.start(this, activityScope, if (UserStorage.getLanguage(this) == "en") enStrings else ruStrings)
 
-        // Регистрируем приёмник выключения экрана (для форс-блокировки при разблокировке)
         registerReceiver(screenLockReceiver, android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF))
 
-        // Слежение за появлением новых Accessibility-сервисов в реальном времени
         contentResolver.registerContentObserver(
             android.provider.Settings.Secure.getUriFor(
                 android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
@@ -174,14 +165,12 @@ class MainActivity : FragmentActivity() {
 
         enableEdgeToEdge()
         setContent {
-            // ─── Тема ───────────────────────────────────────────────────────────
+
             val theme by currentTheme.collectAsState()
             val beaconColors = beaconColorsFor(theme)
 
             TESTTheme(beaconColors = beaconColors) {
-                // ─── Язык ──────────────────────────────────────────────────────
-                // collectAsState() реагирует на смену языка без recreate() —
-                // screen-state и вся навигация при этом остаются нетронутыми.
+
                 val lang by currentLanguage.collectAsState()
                 val strings = if (lang == "en") enStrings else ruStrings
 
@@ -191,8 +180,7 @@ class MainActivity : FragmentActivity() {
                     var signatureTampered by remember { mutableStateOf(false) }
 
                     LaunchedEffect(Unit) {
-                        // При включённой маскировке не запускаем проверки —
-                        // диалоги с предупреждениями раскрыли бы истинную природу приложения
+
                         if (UserStorage.getCalculatorDisguise(context)) return@LaunchedEffect
 
                         val result = withContext(Dispatchers.IO) { RootDetector.checkResult() }
@@ -215,7 +203,7 @@ class MainActivity : FragmentActivity() {
                     val s = LocalStrings.current
 
                     when {
-                        // При включённой маскировке — сразу калькулятор, без диалогов
+
                         UserStorage.getCalculatorDisguise(context) -> Surface { AppNavigation() }
 
                         signatureTampered -> AlertDialog(
@@ -311,13 +299,10 @@ class MainActivity : FragmentActivity() {
 
     private val emergencyReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
-            emergencyWipe(withDecoy = true)  // EmergencyService = принудительный сценарий
+            emergencyWipe(withDecoy = true)
         }
     }
 
-    // ─── Volume × 5 → Emergency Wipe + Decoy ────────────────────────────────
-    // Быстро стираем все данные и сохраняем decoy state.
-    // После перезапуска: логин реальным паролем → фейковые чаты.
     private var volumeDownCount = 0
     private var lastVolumeDownMs = 0L
 
@@ -336,16 +321,12 @@ class MainActivity : FragmentActivity() {
         return super.onKeyDown(keyCode, event)
     }
 
-    // ─── Автоблокировка ───────────────────────────────────────────────────────
     var lastActiveTimeMs = System.currentTimeMillis()
-    // Флаг — показывать экран блокировки при следующем onResume
+
     val isAppLocked = kotlinx.coroutines.flow.MutableStateFlow(false)
 
-    // Флаг: экран телефона погас → при следующем resume требовать пароль
     private var screenWasLocked = false
 
-    // ─── Детектирование Accessibility-сервисов в реальном времени ────────────
-    // Пакеты, замеченные в текущей сессии — чтобы не показывать диалог дважды
     private val knownAccessibilityServices = mutableSetOf<String>()
 
     private val accessibilityObserver = object : android.database.ContentObserver(
@@ -358,7 +339,7 @@ class MainActivity : FragmentActivity() {
     private val screenLockReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(ctx: android.content.Context?, intent: android.content.Intent?) {
             if (intent?.action == android.content.Intent.ACTION_SCREEN_OFF) {
-                // Не блокируем приложение во время активного звонка
+
                 if (CallManager.callId.isEmpty()) screenWasLocked = true
             }
         }
@@ -371,7 +352,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Режим паранойи: проверяем root + IDS + HoneyToken при каждом возврате
+
         if (ParanoidMode.isEnabled) {
             lifecycleScope.launch {
                 val rootResult = withContext(Dispatchers.IO) { RootDetector.checkResult() }
@@ -388,7 +369,7 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
-        // Триггер таймаута пароля — независим от Paranoid Mode
+
         val timeoutWipeHours = UserStorage.getTimeoutWipeHours(this)
         if (timeoutWipeHours > 0 && UserStorage.isRegistered(this)) {
             val lastEntry = UserStorage.getLastPasswordEntry(this)
@@ -402,9 +383,9 @@ class MainActivity : FragmentActivity() {
         registerReceiver(emergencyReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
 
         if (UserStorage.isRegistered(this)) {
-            // Не блокируем приложение во время активного звонка
+
             val callActive = CallManager.callId.isNotEmpty()
-            // Блокировка по факту выключения экрана (независимо от таймаута)
+
             if (screenWasLocked && !callActive) {
                 screenWasLocked = false
                 StorageKeyManager.lock()
@@ -412,7 +393,7 @@ class MainActivity : FragmentActivity() {
                 return
             }
             screenWasLocked = false
-            // Блокировка по таймауту (приложение было свёрнуто без выключения экрана)
+
             val timeoutSecs = UserStorage.getAutoLockTimeout(this)
             if (timeoutSecs > 0 && !callActive) {
                 val elapsed = (System.currentTimeMillis() - lastActiveTimeMs) / 1000
@@ -426,8 +407,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onStop() {
         super.onStop()
-        // При уходе в фон с включённой маскировкой — блокируем SMK и сигналим
-        // composable-у вернуться к экрану калькулятора
+
         if (UserStorage.getCalculatorDisguise(this) && UserStorage.isRegistered(this)) {
             StorageKeyManager.lock()
             shouldResetToCalculator.value = true
@@ -456,7 +436,6 @@ class MainActivity : FragmentActivity() {
         pkg.startsWith("com.huawei.android") ||
         pkg.startsWith("ru.miui")
 
-    /** Живая проверка при изменении списка Accessibility-сервисов во время работы приложения. */
     private fun checkAccessibilityServicesRuntime() {
         if (UserStorage.getCalculatorDisguise(this)) return
         val am = getSystemService(AccessibilityManager::class.java) ?: return
@@ -491,7 +470,6 @@ class MainActivity : FragmentActivity() {
         val warnings = mutableListOf<String>()
         val suspiciousPackages = mutableSetOf<String>()
 
-        // ── Accessibility сервисы ──────────────────────────────────────────────
         val am = getSystemService(AccessibilityManager::class.java)
         val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
         val suspiciousServices = enabledServices.filter { svc ->
@@ -503,7 +481,6 @@ class MainActivity : FragmentActivity() {
                 suspiciousServices.joinToString("\n") { "  • ${it.resolveInfo.serviceInfo.packageName}" }
         }
 
-        // ── Администраторы устройства ──────────────────────────────────────────
         val dpm = getSystemService(DevicePolicyManager::class.java)
         val admins = dpm.getActiveAdmins() ?: emptyList()
         val suspiciousAdmins = admins.filter { cn -> !isTrustedPackage(cn.packageName) }
@@ -513,7 +490,6 @@ class MainActivity : FragmentActivity() {
                 suspiciousAdmins.joinToString("\n") { "  • ${it.packageName}" }
         }
 
-        // ── Приложения с правом рисовать поверх экрана ────────────────────────
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             try {
                 val appOps = getSystemService(android.app.AppOpsManager::class.java)
@@ -537,7 +513,6 @@ class MainActivity : FragmentActivity() {
             } catch (_: Exception) {}
         }
 
-        // Показываем диалог только если появились новые угрозы (не надоедать при каждом запуске)
         val prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
         val lastKnown = prefs.getStringSet("known_suspicious_pkgs", emptySet()) ?: emptySet()
         val hasNewThreats = suspiciousPackages.any { it !in lastKnown }
@@ -557,15 +532,6 @@ class MainActivity : FragmentActivity() {
             .show()
     }
 
-    /**
-     * Экстренный вайп.
-     *
-     * @param withDecoy true  — принудительный сценарий (AccessibilityService / EmergencyService):
-     *                          после вайпа сохраняется recovery state, чтобы пользователь мог
-     *                          войти со своим паролем и показать фейковые чаты.
-     *                  false — добровольный сброс ("Это не я"): чистый старт, регистрация нового
-     *                          аккаунта после перезапуска.
-     */
     fun emergencyWipe(withDecoy: Boolean = false) {
         WipeManager.hardWipe(this, withDecoy)
     }
@@ -576,8 +542,6 @@ class MainActivity : FragmentActivity() {
         if (requestCode == PICK_FILE_REQUEST && resultCode == RESULT_OK) selectedFileUri.value = data?.data
     }
 }
-
-// ─── Экран загрузки Tor ───────────────────────────────────────────────────────
 
 @Composable
 fun TorLoadingScreen(progress: Int, status: String) {
@@ -613,7 +577,6 @@ fun TorLoadingScreen(progress: Int, status: String) {
                 modifier = Modifier.padding(bottom = 32.dp)
             )
 
-            // Прогресс бар
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -652,20 +615,16 @@ fun TorLoadingScreen(progress: Int, status: String) {
     }
 }
 
-// ─── Навигация ────────────────────────────────────────────────────────────────
-
 @Composable
 fun AppNavigation() {
     val context = LocalContext.current
     val s = LocalStrings.current
 
-    // Состояние Tor
     var torReady by remember { mutableStateOf(TorManager.isConnected) }
     var torProgress by remember { mutableStateOf(TorManager.bootstrapProgress) }
     var torStatus by remember { mutableStateOf(s.torStatusStarting) }
     var torError by remember { mutableStateOf("") }
 
-    // Подписываемся на события Tor
     LaunchedEffect(Unit) {
         TorManager.onBootstrapProgress = { progress, status ->
             torProgress = progress
@@ -678,7 +637,7 @@ fun AppNavigation() {
             torError = error
             torReady = true
         }
-        // Если Tor уже завершил работу до подписки — проверяем сразу
+
         if (TorManager.isConnected || !TorManager.isOrbotInstalled(context)) {
             torReady = true
         }
@@ -694,20 +653,17 @@ fun AppNavigation() {
         )
     }
 
-    // Panic mode: показывается после wipe+decoy когда isDecoyMode() = true
     var isPanicMode by remember { mutableStateOf(false) }
     var openedChat by remember { mutableStateOf("") }
     var openedChannelId by remember { mutableStateOf("") }
     var verifyKeyContact by remember { mutableStateOf("") }
 
-    // ── Входящий звонок ───────────────────────────────────────────────────────
     var callFromUser  by remember { mutableStateOf("") }
     var callIsVideo   by remember { mutableStateOf(false) }
     var callIsGroup   by remember { mutableStateOf(false) }
     var callGroupId   by remember { mutableStateOf("") }
     val pendingCallVal by MainActivity.pendingIncomingCall.collectAsState()
 
-    // ── Разрешение камеры для видеозвонка ─────────────────────────────────────
     var pendingVideoCallTarget by remember { mutableStateOf("") }
     val cameraPermLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
@@ -715,7 +671,7 @@ fun AppNavigation() {
         if (pendingVideoCallTarget.isNotEmpty()) {
             val target = pendingVideoCallTarget
             pendingVideoCallTarget = ""
-            callIsVideo = granted   // видео только если разрешение дано
+            callIsVideo = granted
             CallManager.startCall(context, target, granted)
             context.startForegroundService(Intent(context, CallService::class.java).apply {
                 action = CallService.ACTION_ACTIVE
@@ -728,7 +684,6 @@ fun AppNavigation() {
         }
     }
 
-    // ── Автоблокировка ────────────────────────────────────────────────────────
     val isLocked by (context as? MainActivity)?.isAppLocked?.collectAsState()
         ?: remember { mutableStateOf(false) }.let { s -> s as androidx.compose.runtime.State<Boolean> }
 
@@ -738,11 +693,10 @@ fun AppNavigation() {
 
     val lockVisible = isLocked == true && screen != "login" && screen != "register" && screen != "calculator"
 
-    // Сброс к калькулятору при уходе приложения в фон (если маскировка включена)
     val shouldResetCalc by MainActivity.shouldResetToCalculator.collectAsState()
     LaunchedEffect(shouldResetCalc) {
         if (shouldResetCalc) {
-            // Не сбрасываем во время звонка — это сломает активный звонок
+
             if (screen != "active_call" && screen != "incoming_call") {
                 screen = "calculator"
             }
@@ -775,11 +729,9 @@ fun AppNavigation() {
         }
     }
 
-    // Deep-link: навигация по тапу на уведомление
     val pendingChatIdFromNotif by MainActivity.pendingChatId.collectAsState()
     val pendingChatTypeFromNotif by MainActivity.pendingChatType.collectAsState()
 
-    // Если приложение уже работало (onNewIntent) — переходим сразу, без re-auth
     LaunchedEffect(pendingChatIdFromNotif) {
         val chatId = pendingChatIdFromNotif ?: return@LaunchedEffect
         if (chatId.isEmpty()) return@LaunchedEffect
@@ -791,7 +743,6 @@ fun AppNavigation() {
         }
     }
 
-    // Периодическое IDS-сканирование (каждые 30 сек в paranoid mode)
     LaunchedEffect(Unit) {
         while (true) {
             kotlinx.coroutines.delay(30_000)
@@ -809,26 +760,22 @@ fun AppNavigation() {
         }
     }
 
-    // Показываем загрузку Tor только если ещё не готов и не зарегистрирован
     if (!torReady && UserStorage.isRegistered(context)) {
         TorLoadingScreen(progress = torProgress, status = torStatus)
         return
     }
 
-    // Panic mode: показываем decoy вместо реального контента
     if (isPanicMode) {
         DecoyScreen()
         return
     }
 
-    // Panic button from lock screen notification — decoy mode
     val panicModeNotif by ParanoidMode.panicModeNotif.collectAsState()
     if (panicModeNotif) {
         DecoyScreen()
         return
     }
 
-    // Stealth mode: IDS/HoneyToken обнаружил угрозу — маскируемся под decoy
     val stealthMode by ParanoidMode.stealthMode.collectAsState()
     if (stealthMode) {
         DecoyScreen()
@@ -865,13 +812,13 @@ fun AppNavigation() {
 
     when (currentScreen) {
         "calculator" -> CalculatorScreen(onUnlock = {
-            // Plain-prefs флаг надёжнее EncryptedSharedPrefs после холодного старта после вайпа
+
             val uiState = context.getSharedPreferences("beacon_ui_state", Context.MODE_PRIVATE)
             if (uiState.getBoolean("calc_pending_decoy", false)) {
                 uiState.edit().remove("calc_pending_decoy").apply()
                 isPanicMode = true
             } else when {
-                // После вайпа с decoy — показываем фейковые чаты, не регистрацию
+
                 UserStorage.isDecoyMode(context) -> isPanicMode = true
                 !UserStorage.isRegistered(context) -> screen = "register"
                 else -> screen = "login"
@@ -883,7 +830,6 @@ fun AppNavigation() {
         "security_diagnostics" -> SecurityDiagnosticsScreen(onBack = { screen = "profile" })
         "wipe_settings" -> WipeSettingsScreen(onBack = { screen = "profile" })
 
-        // ── Звонки ────────────────────────────────────────────────────────────
         "incoming_call" -> IncomingCallScreen(
             from    = callFromUser,
             isVideo = callIsVideo,
@@ -928,7 +874,7 @@ fun AppNavigation() {
             }
         )
 
-        "group_info" -> GroupInfoScreen(  // <- ДОБАВИЛИ
+        "group_info" -> GroupInfoScreen(
             groupId = openedChat,
             onBack = { screen = "group_chat" }
         )
@@ -961,13 +907,10 @@ fun AppNavigation() {
                 }
             },
             onPanicMode = {
-                // Всегда показываем DecoyScreen немедленно — никакого
-                // подозрительного чёрного экрана или перезапуска.
+
                 isPanicMode = true
                 if (!UserStorage.isDecoyMode(context)) {
-                    // Полный вайп в фоне пока жертва/наблюдатель видит фейк-чаты.
-                    // Ждём 400 мс чтобы DecoyScreen успел отрисовать первый кадр
-                    // и закэшировать remember{}-значения до удаления prefs.
+
                     lockScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                         kotlinx.coroutines.delay(400)
                         WipeManager.wipeForDecoyKeepAlive(context)
@@ -1017,7 +960,7 @@ fun AppNavigation() {
                 val camGranted = context.checkSelfPermission(android.Manifest.permission.CAMERA) ==
                     android.content.pm.PackageManager.PERMISSION_GRANTED
                 if (isVideo && !camGranted) {
-                    // Запрашиваем разрешение — звонок запустится в колбэке
+
                     pendingVideoCallTarget = openedChat
                     cameraPermLauncher.launch(android.Manifest.permission.CAMERA)
                 } else {
@@ -1033,9 +976,8 @@ fun AppNavigation() {
         )
     }
 
-    } // end AnimatedContent
+    }
 
-    // ── Экран блокировки — анимированный оверлей поверх навигации ────────────
     AnimatedVisibility(
         visible = lockVisible,
         enter = fadeIn(tween(280)),
@@ -1165,7 +1107,7 @@ fun AppNavigation() {
                 }
             }
         }
-    } // end AnimatedVisibility lock
+    }
 
-    } // end Box
+    }
 }

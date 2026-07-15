@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Context
 import android.content.Intent
@@ -13,68 +13,45 @@ import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Singleton, управляющий WebRTC-звонками.
- * Поддерживает 1-to-1 и групповые звонки (mesh-топология).
- * Сигнализация идёт через MessengerService (интент "call_signal").
- * Медиапоток P2P, шифрование DTLS-SRTP (встроено в WebRTC).
- *
- * TURN-сервер: установить coturn, задать TURN_USER/TURN_PASS через переменные среды на сервере.
- * Учётные данные доставляются клиенту сервером после ECDSA-аутентификации (сообщение "turn_config").
- */
 object CallManager {
 
     private const val TAG = "CallManager"
 
-    // ── TURN/STUN конфигурация ────────────────────────────────────────────────
-    // TURN-учётные данные доставляются сервером после аутентификации.
-    // Статические значения убраны из APK — используем только server-delivered creds.
     private val STUN_URL  get() = NetworkConfig.STUN_URL
     private val TURN_URL  get() = NetworkConfig.TURN_URL
     private val TURN_USER get() = NetworkConfig.TurnCredentials.username
     private val TURN_PASS get() = NetworkConfig.TurnCredentials.password
 
-    // ── WebRTC factory ────────────────────────────────────────────────────────
     private var factory: PeerConnectionFactory? = null
     private var eglBase: EglBase? = null
 
-    // ── Активные peer-соединения (userId → PeerConnection) ───────────────────
     val peerConnections = ConcurrentHashMap<String, PeerConnection>()
 
-    // ── Медиатреки ────────────────────────────────────────────────────────────
     var localAudioTrack: AudioTrack? = null
     var localVideoTrack: VideoTrack? = null
     private var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
-    // ── Текущий звонок ────────────────────────────────────────────────────────
     var callId: String = ""
     var isGroupCall: Boolean = false
     var groupId: String = ""
     var isVideoCall: Boolean = false
-    // Входящий оффер ожидает acceptCall()
-    private var pendingOffer: Triple<String, String, String>? = null  // (from, sdp, callId)
-    // Для группового: список членов которым мы уже отправили оффер
-    // CopyOnWriteArraySet — thread-safe: callbacks WebRTC и UI-поток могут обращаться параллельно
+
+    private var pendingOffer: Triple<String, String, String>? = null
+
     private val groupPeers = java.util.concurrent.CopyOnWriteArraySet<String>()
 
-    // ── Callbacks для UI / CallService ────────────────────────────────────────
     var onIncomingCall: ((callId: String, from: String, isVideo: Boolean, isGroup: Boolean, groupId: String) -> Unit)? = null
     var onCallConnected: ((peerId: String) -> Unit)? = null
     var onCallEnded: ((reason: String) -> Unit)? = null
     var onPeerJoined: ((peerId: String) -> Unit)? = null
 
-    // Буфер: видеотреки, пришедшие до того как ActiveCallScreen зарегистрировал колбэк.
-    // Гонка: onTrack() вызывается WebRTC-потоком сразу после ICE CONNECTED,
-    // но LaunchedEffect в ActiveCallScreen выполняется с задержкой в один фрейм (≈16 мс).
     private val pendingVideoTracks = ConcurrentHashMap<String, VideoTrack>()
 
     var onRemoteVideoTrack: ((peerId: String, track: VideoTrack) -> Unit)? = null
         set(value) {
             field = value
-            // Сразу доставляем накопленные треки, если колбэк установлен.
-            // Используем итератор с remove() чтобы не потерять трек, пришедший
-            // между forEach и clear() (гонка между onTrack и LaunchedEffect).
+
             if (value != null) {
                 val iter = pendingVideoTracks.entries.iterator()
                 while (iter.hasNext()) {
@@ -85,55 +62,38 @@ object CallManager {
             }
         }
 
-    // ── Utility ───────────────────────────────────────────────────────────────
     private var appContext: Context? = null
     private var isMuted = false
     private var isCameraOff = false
     private var isSpeakerOn = false
     private var audioManager: android.media.AudioManager? = null
 
-    // ── ICE-кандидаты полученные до создания PeerConnection или до remoteDesc ──
-    // Классическая гонка: кандидаты приходят ДО того, как пользователь принял звонок.
-    // Буфер дренируется сразу после setRemoteDescription.
     private val pendingIceCandidates = ConcurrentHashMap<String, MutableList<IceCandidate>>()
 
-    // Уведомляет UI когда локальный видеотрек стал доступен (вызывается на главном потоке).
-    // Нужен потому что localVideoTrack — обычный var, а не Compose-state;
-    // без этого callback-а pip не появится если трек установился до первой компоновки.
     var onLocalVideoTrackReady: ((VideoTrack) -> Unit)? = null
 
-    // ── Синхронизация потоков ─────────────────────────────────────────────────
-    // Единый Handler для dispatch WebRTC-коллбэков на главный поток.
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    // Отложенные Runnable для ICE DISCONNECTED — чтобы можно было отменить при восстановлении.
+
     private val disconnectRunnables = ConcurrentHashMap<String, Runnable>()
-    // Guard: предотвращает двойной release() при гонках
-    // (ICE FAILED + DISCONNECTED-таймер, или два одновременных handleCallEnd).
+
     private val callActive = java.util.concurrent.atomic.AtomicBoolean(false)
-    // Peers for which ICE restart was already attempted — prevents restart loops
+
     private val iceRestartDone = ConcurrentHashMap<String, Boolean>()
-    // Set before calling restartIce() so onRenegotiationNeeded knows it's an explicit restart
+
     private val restartingIce = ConcurrentHashMap<String, Boolean>()
-    // Fires when network comes back — triggers ICE restart for stalled peers
+
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    // PARTIAL_WAKE_LOCK keeps CPU running so WebSocket doesn't drop mid-call
+
     private var wakeLock: PowerManager.WakeLock? = null
 
-    // ── DataChannel heartbeat ─────────────────────────────────────────────────
-    // Ping/pong каждые 5 секунд; 15 сек без ответа = пир мёртв → завершить звонок.
-    // Срабатывает быстрее ICE DISCONNECTED при корректном завершении приложения.
     private val HEARTBEAT_INTERVAL_MS = 5_000L
     private val HEARTBEAT_TIMEOUT_MS  = 15_000L
     private val heartbeatChannels  = ConcurrentHashMap<String, DataChannel>()
     private val lastPongTime       = ConcurrentHashMap<String, Long>()
     private val heartbeatRunnables = ConcurrentHashMap<String, Runnable>()
 
-    // ── Ringing timeout ───────────────────────────────────────────────────────
-    // Если B не ответит за 45 с — A завершает звонок (hangUp), не ждёт ICE timeout.
     private const val RINGING_TIMEOUT_MS = 45_000L
     private var ringingTimeoutRunnable: Runnable? = null
-
-    // ─────────────────────────────────────────────────────────────────────────
 
     fun init(context: Context) {
         if (factory != null) return
@@ -144,14 +104,7 @@ object CallManager {
                 .setEnableInternalTracer(false)
                 .createInitializationOptions()
         )
-        // DefaultVideoEncoderFactory/DefaultVideoDecoderFactory:
-        // - поддерживают ВСЕ кодеки (VP8, VP9, H264) через hardware MediaCodec
-        // - SoftwareVideoEncoderFactory поддерживает только VP8/VP9 — если удалённая сторона
-        //   предлагает H264, createDecoder(H264) возвращает null → JNI NPE → fatal crash
-        // enableIntelVp8Encoder=false, enableH264HighProfile=false:
-        //   - отключает Intel VP8 (не актуально для Qualcomm/MediaTek)
-        //   - отключает H264 High Profile (вызывал EOPNOTSUPP на hardware encoder)
-        //   - оставляет: VP8 HW + H264 Baseline/Main HW — стабильный набор
+
         val encoderFactory = DefaultVideoEncoderFactory(eglBase!!.eglBaseContext, false, false)
         val decoderFactory = DefaultVideoDecoderFactory(eglBase!!.eglBaseContext)
         factory = PeerConnectionFactory.builder()
@@ -163,26 +116,21 @@ object CallManager {
 
     fun getEglBase(): EglBase? = eglBase
 
-    // ─── Аудиорежим звонка ───────────────────────────────────────────────────
-
     private fun setupAudioForCall(context: Context, isVideo: Boolean) {
         val am = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
         audioManager = am
-        // Аудиофокус запрашивается в CallService (ACTION_ACTIVE/ACTION_INCOMING).
-        // Здесь только настраиваем режим и маршрутизацию.
+
         am.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
-        // Видеозвонок: динамик по умолчанию; аудио: трубка
+
         am.isSpeakerphoneOn = isVideo
         isSpeakerOn = isVideo
         acquireWakeLock(context)
         registerNetworkCallback(context)
     }
 
-    // ─── Создать локальные треки ──────────────────────────────────────────────
-
     private fun createLocalTracks(context: Context, isVideo: Boolean) {
         val f = factory ?: return
-        // Аудио
+
         val audioConstraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
@@ -191,17 +139,13 @@ object CallManager {
         localAudioTrack = f.createAudioTrack("LA_${UUID.randomUUID()}", f.createAudioSource(audioConstraints))
         localAudioTrack?.setEnabled(true)
 
-        // Видео
         if (isVideo) {
             val camPerm = android.content.pm.PackageManager.PERMISSION_GRANTED
             if (context.checkSelfPermission(android.Manifest.permission.CAMERA) != camPerm) {
                 Log.w(TAG, "CAMERA permission not granted — видеотрек не создан")
             } else {
                 try {
-                    // Camera1Enumerator(false) = YUV-режим (NV21), без EGL/SurfaceTexture.
-                    // Camera2 и Camera1(true) используют OpenGL-текстуры для захвата кадров,
-                    // что на MIUI конфликтует с AudioRecord и вызывает JNI-краш.
-                    // Camera1(false) = чистый YUV через Camera.PreviewCallback — никакого EGL в capture pipeline.
+
                     val enumerator = Camera1Enumerator(false)
                     val deviceName = enumerator.deviceNames.firstOrNull { enumerator.isFrontFacing(it) }
                         ?: enumerator.deviceNames.firstOrNull()
@@ -232,8 +176,7 @@ object CallManager {
                         videoCapturer?.startCapture(640, 480, 30)
                         localVideoTrack = f.createVideoTrack("LV_${UUID.randomUUID()}", videoSource)
                         localVideoTrack?.setEnabled(true)
-                        // Уведомляем UI: createLocalTracks вызывается на главном потоке,
-                        // поэтому dispatch не нужен.
+
                         localVideoTrack?.let { onLocalVideoTrackReady?.invoke(it) }
                         Log.d(TAG, "Видеотрек создан (Camera1): $deviceName")
                     } else {
@@ -246,13 +189,11 @@ object CallManager {
         }
     }
 
-    // ─── Создать PeerConnection ───────────────────────────────────────────────
-
     private fun createPeerConnection(peerId: String, isOffer: Boolean): PeerConnection? {
         val f = factory ?: return null
         val iceServers = buildList {
             add(PeerConnection.IceServer.builder(STUN_URL).createIceServer())
-            // Добавляем TURN только если сервер доставил учётные данные
+
             if (NetworkConfig.TurnCredentials.isAvailable()) {
                 add(
                     PeerConnection.IceServer.builder(TURN_URL)
@@ -266,12 +207,9 @@ object CallManager {
         val config = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
-            // MAXBUNDLE: все медиапотоки (аудио + видео) делят ОДИН ICE-транспорт.
-            // Без этого BALANCED может создать отдельный ICE-транспорт для видео,
-            // что вдвое увеличивает время согласования через Tor и приводит к ICE FAILED.
+
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
-            // Предварительный сбор кандидатов сразу при создании PeerConnection,
-            // не дожидаясь setLocalDescription — сокращает задержку при звонке.
+
             iceCandidatePoolSize = 3
         }
         val pc = f.createPeerConnection(config, object : PeerConnection.Observer {
@@ -288,11 +226,7 @@ object CallManager {
             override fun onTrack(transceiver: RtpTransceiver) {
                 val track = transceiver.receiver.track()
                 if (track is VideoTrack) {
-                    // КРИТИЧНО: onTrack вызывается из нативного потока WebRTC.
-                    // Запись в Compose mutableStateMapOf из нативного потока нарушает
-                    // Compose snapshot контракт → IllegalStateException → JNI CheckException
-                    // → "Check failed: !env->ExceptionCheck()" → fatal crash.
-                    // Переключаемся на главный поток перед вызовом callback.
+
                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                         val cb = onRemoteVideoTrack
                         if (cb != null) {
@@ -308,17 +242,16 @@ object CallManager {
                 when (state) {
                     PeerConnection.IceConnectionState.CONNECTED,
                     PeerConnection.IceConnectionState.COMPLETED -> {
-                        // Отменяем таймер восстановления — соединение живо.
+
                         disconnectRunnables.remove(peerId)?.let { mainHandler.removeCallbacks(it) }
-                        // Dispatch на главный поток: onCallConnected может трогать Compose-state.
+
                         mainHandler.post { onCallConnected?.invoke(peerId) }
                     }
                     PeerConnection.IceConnectionState.FAILED -> {
                         Log.e(TAG, "ICE FAILED для $peerId")
                         disconnectRunnables.remove(peerId)?.let { mainHandler.removeCallbacks(it) }
                         if (peerConnections.size > 1) {
-                            // Групповой звонок: убираем только упавшего пира.
-                            // Уведомляем его через сигнальный сервер — вдруг WebSocket ещё жив.
+
                             sendSignal(JSONObject().apply {
                                 put("type", "call_group_leave")
                                 put("to", peerId)
@@ -332,14 +265,14 @@ object CallManager {
                             iceRestartDone.remove(peerId)
                             Log.w(TAG, "Пир $peerId удалён после ICE FAILED, звонок продолжается")
                         } else {
-                            // 1-to-1: пробуем ICE restart один раз (только если мы offerer).
+
                             val alreadyTried = iceRestartDone.put(peerId, true) ?: false
                             val pc = peerConnections[peerId]
                             if (!alreadyTried && isOffer && pc != null) {
                                 Log.w(TAG, "ICE FAILED — пробуем ICE restart для $peerId")
                                 restartingIce[peerId] = true
                                 pc.restartIce()
-                                // If restart doesn't recover within 8s — hang up
+
                                 val runnable = Runnable {
                                     disconnectRunnables.remove(peerId)
                                     Log.w(TAG, "ICE restart не восстановил соединение — завершаем")
@@ -353,9 +286,7 @@ object CallManager {
                         }
                     }
                     PeerConnection.IceConnectionState.DISCONNECTED -> {
-                        // DISCONNECTED — временный разрыв, WebRTC попытается восстановить сам.
-                        // Отменяем предыдущий таймер для этого пира (если был несколько событий подряд)
-                        // и ставим новый — ровно один активный таймер на пира.
+
                         Log.w(TAG, "ICE DISCONNECTED для $peerId — ожидаем восстановления 7 сек")
                         disconnectRunnables.remove(peerId)?.let { mainHandler.removeCallbacks(it) }
                         val runnable = Runnable {
@@ -382,11 +313,11 @@ object CallManager {
             override fun onDataChannel(channel: DataChannel?) {
                 val dc = channel ?: return
                 if (dc.label() != "heartbeat") return
-                // Вызывается из нативного потока WebRTC → диспатч на главный
+
                 mainHandler.post { setupHeartbeatChannel(peerId, dc) }
             }
             override fun onRenegotiationNeeded() {
-                // Only handle explicit ICE restart re-offers, not track-add events
+
                 if (!callActive.get() || restartingIce[peerId] != true || !isOffer) return
                 restartingIce.remove(peerId)
                 val pc = peerConnections[peerId] ?: return
@@ -419,19 +350,16 @@ object CallManager {
             override fun onAddTrack(p0: RtpReceiver?, p1: Array<out MediaStream>?) {}
         }) ?: return null
 
-        // Добавляем локальные треки
         localAudioTrack?.let { pc.addTrack(it) }
         if (isVideoCall) localVideoTrack?.let { pc.addTrack(it) }
 
         peerConnections[peerId] = pc
 
-        // Offerer создаёт DataChannel "heartbeat" ДО createOffer — он попадёт в SDP.
-        // Answerer получит его через onDataChannel выше.
         if (isOffer) {
             try {
                 val dcInit = DataChannel.Init().apply {
                     ordered       = false
-                    maxRetransmits = 0   // unreliable: пинги не нужно ретрансмитить
+                    maxRetransmits = 0
                 }
                 val dc = pc.createDataChannel("heartbeat", dcInit)
                 setupHeartbeatChannel(peerId, dc)
@@ -443,8 +371,6 @@ object CallManager {
         return pc
     }
 
-    // ─── Исходящий звонок (1-to-1) ───────────────────────────────────────────
-
     fun startCall(context: Context, targetId: String, isVideo: Boolean) {
         init(context)
         isVideoCall = isVideo
@@ -455,7 +381,6 @@ object CallManager {
         createLocalTracks(context, isVideo)
         CallSoundManager.startRingback()
 
-        // Таймер: если абонент не ответит за 45 с — сбрасываем звонок.
         val timeoutRunnable = Runnable {
             if (callActive.get()) {
                 Log.w(TAG, "Ringing timeout: абонент не ответил, завершаем")
@@ -494,8 +419,6 @@ object CallManager {
         }, sdpConstraints)
     }
 
-    // ─── Групповой звонок ─────────────────────────────────────────────────────
-
     fun startGroupCall(context: Context, gId: String, members: List<String>, isVideo: Boolean) {
         init(context)
         isVideoCall = isVideo
@@ -521,12 +444,9 @@ object CallManager {
         }
     }
 
-    // ─── Принять входящий звонок ─────────────────────────────────────────────
-
     fun acceptCall(context: Context) {
         CallSoundManager.stopAll()
-        // Групповой звонок приходит через call_group_invite — без SDP-оффера.
-        // pendingOffer в этом случае null: подключаемся ко всем известным пирам сами.
+
         if (isGroupCall && pendingOffer == null) {
             init(context)
             setupAudioForCall(context, isVideoCall)
@@ -544,7 +464,7 @@ object CallManager {
         val remoteSdp = SessionDescription(SessionDescription.Type.OFFER, offerSdp)
         pc.setRemoteDescription(object : SdpObserver {
             override fun onSetSuccess() {
-                // Применяем кандидаты от caller, которые пришли ДО нажатия «Принять»
+
                 drainPendingIceCandidates(from, pc)
                 val sdpConstraints = MediaConstraints().apply {
                     mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
@@ -578,7 +498,6 @@ object CallManager {
             override fun onCreateFailure(p0: String?) {}
         }, remoteSdp)
 
-        // Принять входящий групповой — подключиться к остальным участникам
         if (isGroupCall) {
             groupPeers.filter { it != from }.forEach { peerId ->
                 connectToPeer(context, peerId)
@@ -586,7 +505,6 @@ object CallManager {
         }
     }
 
-    // Подключиться к конкретному peer (для mesh в группе)
     private fun connectToPeer(context: Context, peerId: String) {
         if (peerConnections.containsKey(peerId)) return
         val pc = createPeerConnection(peerId, isOffer = true) ?: return
@@ -617,13 +535,11 @@ object CallManager {
         }, sdpConstraints)
     }
 
-    // ─── Отклонить / Завершить ────────────────────────────────────────────────
-
     fun declineCall() {
         CallSoundManager.stopAll()
         val offer = pendingOffer
         if (offer != null) {
-            // 1-to-1 или групповой с SDP-оффером
+
             sendSignal(JSONObject().apply {
                 put("type", "call_end")
                 put("to", offer.first)
@@ -631,7 +547,7 @@ object CallManager {
                 put("reason", "decline")
             })
         } else if (isGroupCall && callId.isNotEmpty()) {
-            // Групповой инвайт (без SDP): уведомляем инициатора
+
             val initiator = groupPeers.firstOrNull()
             if (initiator != null) {
                 sendSignal(JSONObject().apply {
@@ -642,7 +558,7 @@ object CallManager {
                 })
             }
         }
-        // Сбрасываем всё состояние звонка
+
         pendingOffer = null
         callId = ""
         callActive.set(false)
@@ -667,8 +583,6 @@ object CallManager {
         }
     }
 
-    // ─── Управление во время звонка ───────────────────────────────────────────
-
     fun toggleMute(): Boolean {
         isMuted = !isMuted
         localAudioTrack?.setEnabled(!isMuted)
@@ -692,10 +606,8 @@ object CallManager {
         return isSpeakerOn
     }
 
-    // ─── Обработка входящих сигнальных сообщений (из MessengerService) ────────
-
     fun handleOffer(from: String, sdp: String, cId: String, isVideo: Boolean, isGroup: Boolean, gId: String) {
-        // Уже идёт звонок — автоматически отвечаем «занято»
+
         if (callId.isNotEmpty() || pendingOffer != null) {
             sendSignal(JSONObject().apply {
                 put("type", "call_end")
@@ -716,7 +628,7 @@ object CallManager {
     }
 
     fun handleGroupInvite(from: String, cId: String, isVideo: Boolean, gId: String) {
-        // Уже идёт звонок
+
         if (callId.isNotEmpty() || pendingOffer != null) {
             sendSignal(JSONObject().apply {
                 put("type", "call_end")
@@ -737,8 +649,8 @@ object CallManager {
     }
 
     fun handleAnswer(from: String, sdp: String) {
-        CallSoundManager.stopAll()   // Остановить гудки — собеседник ответил
-        // Абонент ответил — отменяем таймер ожидания.
+        CallSoundManager.stopAll()
+
         ringingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         ringingTimeoutRunnable = null
         val pc = peerConnections[from] ?: return
@@ -755,9 +667,9 @@ object CallManager {
     }
 
     fun handleGroupJoin(from: String, sdp: String, cId: String) {
-        // Входящий оффер от нового участника группы — создаём для него answer
+
         groupPeers.add(from)
-        // Dispatch на главный поток: onPeerJoined модифицирует Compose mutableStateListOf
+
         android.os.Handler(android.os.Looper.getMainLooper()).post { onPeerJoined?.invoke(from) }
         val pc = createPeerConnection(from, isOffer = false) ?: return
         val remoteSdp = SessionDescription(SessionDescription.Type.OFFER, sdp)
@@ -779,8 +691,7 @@ object CallManager {
                                     put("group_id", groupId)
                                     put("sdp", sdp.description)
                                 })
-                                // Mesh: сообщаем новому участнику о всех уже подключённых пирах.
-                                // Получив список, он сам отправит им call_group_join-офферы.
+
                                 val existingPeers = peerConnections.keys.filter { it != from }
                                 if (existingPeers.isNotEmpty()) {
                                     sendSignal(JSONObject().apply {
@@ -809,8 +720,7 @@ object CallManager {
     }
 
     fun handleGroupPeerList(peers: List<String>) {
-        // Получили список уже активных участников от инициатора.
-        // Подключаемся к каждому, кого ещё не знаем (отправляем им call_group_join).
+
         val ctx = appContext ?: return
         peers.filter { !peerConnections.containsKey(it) }.forEach { peerId ->
             groupPeers.add(peerId)
@@ -822,8 +732,7 @@ object CallManager {
         val ice = IceCandidate(sdpMid, sdpMLineIndex, candidate)
         val pc = peerConnections[from]
         if (pc == null || pc.remoteDescription == null) {
-            // PC ещё не создан (пользователь не принял звонок) или remote SDP ещё не установлен.
-            // Буферизуем — применим сразу после setRemoteDescription.
+
             pendingIceCandidates.getOrPut(from) { mutableListOf() }.add(ice)
             Log.d(TAG, "ICE buffered for $from (pc=${pc != null}, remoteDesc=${pc?.remoteDescription != null})")
         } else {
@@ -831,7 +740,6 @@ object CallManager {
         }
     }
 
-    /** Применить накопленные ICE-кандидаты после успешного setRemoteDescription. */
     private fun drainPendingIceCandidates(peerId: String, pc: PeerConnection) {
         val pending = pendingIceCandidates.remove(peerId) ?: return
         Log.d(TAG, "Applying ${pending.size} buffered ICE candidates for $peerId")
@@ -839,9 +747,9 @@ object CallManager {
     }
 
     fun handleCallEnd(from: String, reason: String) {
-        // Игнорируем запоздалые call_end от предыдущих звонков
+
         if (callId.isEmpty()) return
-        // Отменяем таймер восстановления ICE и heartbeat для ушедшего пира
+
         disconnectRunnables.remove(from)?.let { mainHandler.removeCallbacks(it) }
         stopHeartbeat(from)
         heartbeatChannels.remove(from)
@@ -851,21 +759,17 @@ object CallManager {
         pendingIceCandidates.remove(from)
         if (peerConnections.isEmpty()) {
             if (release()) {
-                // Диспатч на главный поток: handleCallEnd вызывается из WebSocket-треда
-                // MessengerService, а onCallEnded → onHangUp() выполняет Compose-навигацию.
+
                 mainHandler.post { onCallEnded?.invoke(reason) }
             }
         }
     }
 
-    // ─── ICE Restart (ответная сторона) ──────────────────────────────────────
-
-    /** Получен restart-оффер от инициатора звонка — применяем как обычный offer и отвечаем. */
     fun handleIceRestart(from: String, sdp: String) {
         val pc = peerConnections[from] ?: return
-        // Cancel any pending hangup timers — restart is already underway
+
         disconnectRunnables.remove(from)?.let { mainHandler.removeCallbacks(it) }
-        iceRestartDone.remove(from)  // allow future restarts if needed
+        iceRestartDone.remove(from)
         val remoteSdp = SessionDescription(SessionDescription.Type.OFFER, sdp)
         pc.setRemoteDescription(object : SdpObserver {
             override fun onSetSuccess() {
@@ -898,8 +802,6 @@ object CallManager {
         }, remoteSdp)
     }
 
-    // ─── Сетевые события → ICE restart ───────────────────────────────────────
-
     private fun registerNetworkCallback(context: Context) {
         if (networkCallback != null) return
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -911,7 +813,7 @@ object CallManager {
                     val state = pc.iceConnectionState()
                     if (state == PeerConnection.IceConnectionState.DISCONNECTED ||
                         state == PeerConnection.IceConnectionState.FAILED) {
-                        // Cancel the existing timer and give the restart a fresh window
+
                         disconnectRunnables.remove(peerId)?.let { mainHandler.removeCallbacks(it) }
                         Log.d(TAG, "ICE $state для $peerId — пробуем restart после смены сети")
                         restartingIce[peerId] = true
@@ -944,16 +846,14 @@ object CallManager {
         try {
             (context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
                 .unregisterNetworkCallback(cb)
-        } catch (e: Exception) { /* already unregistered */ }
+        } catch (e: Exception) {  }
     }
-
-    // ─── WakeLock ─────────────────────────────────────────────────────────────
 
     private fun acquireWakeLock(context: Context) {
         if (wakeLock?.isHeld == true) return
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Beacon:CallWakeLock").apply {
-            acquire(60 * 60 * 1000L)   // max 1 hour; released in release()
+            acquire(60 * 60 * 1000L)
         }
         Log.d(TAG, "WakeLock acquired")
     }
@@ -962,8 +862,6 @@ object CallManager {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
     }
-
-    // ─── Отправка сигнала через MessengerService ──────────────────────────────
 
     private fun sendSignal(data: JSONObject) {
         val ctx = appContext ?: return
@@ -975,8 +873,6 @@ object CallManager {
             putExtra("call_signal", data.toString())
         })
     }
-
-    // ─── DataChannel heartbeat helpers ───────────────────────────────────────
 
     private fun setupHeartbeatChannel(peerId: String, dc: DataChannel) {
         heartbeatChannels[peerId] = dc
@@ -990,8 +886,7 @@ object CallManager {
                         mainHandler.post { startHeartbeat(peerId) }
                     }
                     DataChannel.State.CLOSED -> {
-                        // Пир закрыл канал (корректное завершение приложения) —
-                        // завершаем звонок немедленно, не ждём ICE DISCONNECTED.
+
                         mainHandler.post {
                             if (!callActive.get()) return@post
                             Log.w(TAG, "DataChannel closed by $peerId — завершаем звонок")
@@ -1030,7 +925,7 @@ object CallManager {
                 }
             }
         })
-        // На случай если DC уже открыт к моменту регистрации observer
+
         if (dc.state() == DataChannel.State.OPEN) {
             lastPongTime[peerId] = System.currentTimeMillis()
             mainHandler.post { startHeartbeat(peerId) }
@@ -1043,7 +938,7 @@ object CallManager {
             override fun run() {
                 if (!callActive.get()) return
                 val dc = heartbeatChannels[peerId]
-                // Канал удалён или закрыт — прекращаем heartbeat
+
                 if (dc == null || dc.state() == DataChannel.State.CLOSED) return
                 if (dc.state() == DataChannel.State.OPEN) {
                     try {
@@ -1080,41 +975,34 @@ object CallManager {
         heartbeatRunnables.remove(peerId)?.let { mainHandler.removeCallbacks(it) }
     }
 
-    // ─── Освободить ресурсы ───────────────────────────────────────────────────
-
     fun release(): Boolean {
-        // compareAndSet(true, false): атомарно проверяем и сбрасываем флаг.
-        // Если звонок уже не активен (false) — возвращаем false, ничего не делаем.
-        // Гарантирует что release() выполнится ровно один раз при гонках
-        // (ICE FAILED + DISCONNECTED-таймер, два одновременных handleCallEnd и т.п.)
+
         if (!callActive.compareAndSet(true, false)) return false
 
-        // Отменяем таймер ожидания ответа (ringing timeout)
         ringingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         ringingTimeoutRunnable = null
-        // Отменяем все таймеры восстановления ICE
+
         disconnectRunnables.values.forEach { mainHandler.removeCallbacks(it) }
         disconnectRunnables.clear()
         onLocalVideoTrackReady = null
 
-        CallSoundManager.stopAll()   // Страховка: всегда гасим звуки при освобождении
-        // Сначала отменяем все heartbeat-таймеры, чтобы они не вызвали hangUp() рекурсивно
+        CallSoundManager.stopAll()
+
         heartbeatRunnables.values.forEach { mainHandler.removeCallbacks(it) }
         heartbeatRunnables.clear()
-        heartbeatChannels.clear()    // DataChannel закроются автоматически при pc.close()
+        heartbeatChannels.clear()
         lastPongTime.clear()
         peerConnections.values.forEach { it.close() }
         peerConnections.clear()
         groupPeers.clear()
         pendingIceCandidates.clear()
         pendingVideoTracks.clear()
-        // Порядок важен:
-        // 1. Остановить захват камеры
+
         try { videoCapturer?.stopCapture() } catch (e: Exception) { Log.w(TAG, "stopCapture: ${e.message}") }
-        // 2. Диспозить видеотрек ДО surfaceTextureHelper — трек держит ссылки на нативный пайплайн
+
         localVideoTrack?.dispose()
         localVideoTrack = null
-        // 3. Теперь безопасно диспозить кэптурер и хелпер
+
         videoCapturer?.dispose()
         videoCapturer = null
         surfaceTextureHelper?.dispose()
@@ -1132,7 +1020,7 @@ object CallManager {
         audioManager?.let { am ->
             am.isSpeakerphoneOn = false
             am.mode = android.media.AudioManager.MODE_NORMAL
-            // AudioFocus запрашивался в CallService — он же его освобождает при остановке сервиса.
+
         }
         audioManager = null
         releaseWakeLock()

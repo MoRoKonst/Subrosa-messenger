@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.annotation.SuppressLint
 import android.media.MediaCodec
@@ -62,8 +62,6 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.util.UUID
 
-// ─── Запись видеокружка (CameraX) ────────────────────────────────────────────
-
 @Composable
 fun VideoCircleRecorder(
     onSend: (File, Int) -> Unit,
@@ -86,15 +84,13 @@ fun VideoCircleRecorder(
     var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
-    // Накапливаем сегменты (при переключении камеры во время записи)
     val outputFiles = remember { mutableListOf<File>() }
-    // Deferred завершается при Finalize текущего сегмента
+
     val currentSegmentDeferred = remember { mutableStateOf<CompletableDeferred<File?>?>(null) }
 
-    // Разрешения
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { /* CameraX сам сообщит об ошибке */ }
+    ) {  }
 
     LaunchedEffect(Unit) {
         val cam = context.checkSelfPermission(android.Manifest.permission.CAMERA)
@@ -108,7 +104,6 @@ fun VideoCircleRecorder(
         }
     }
 
-    // Завершение записи — собирает все сегменты, склеивает и отправляет
     fun stopAndFinish(send: Boolean) {
         timerJob?.cancel(); timerJob = null
         val rec = activeRecording
@@ -120,7 +115,7 @@ fun VideoCircleRecorder(
 
         if (send) {
             scope.launch {
-                // Дожидаемся завершения текущего сегмента
+
                 if (rec != null) rec.stop()
                 currentSegmentDeferred.value?.await()
 
@@ -153,19 +148,16 @@ fun VideoCircleRecorder(
         }
     }
 
-    // Переключение камеры во время записи:
-    // останавливает текущий сегмент, таймер продолжает идти, запись возобновляется на новой камере
     fun switchCamera() {
         if (isRecording) {
             val rec = activeRecording
             activeRecording = null
             pendingAutoRestart = true
-            rec?.stop() // Finalize добавит файл в outputFiles
+            rec?.stop()
         }
         useFrontCamera = !useFrontCamera
     }
 
-    // Старт записи (или следующего сегмента при смене камеры)
     @SuppressLint("MissingPermission")
     fun startRecording() {
         val vc = videoCapture ?: return
@@ -199,7 +191,6 @@ fun VideoCircleRecorder(
             activeRecording = rec
             isRecording = true
 
-            // Запускаем таймер только для первого сегмента
             if (timerJob == null) {
                 recordingSeconds = 0
                 timerJob = scope.launch {
@@ -215,18 +206,15 @@ fun VideoCircleRecorder(
         }
     }
 
-    // Инициализация камеры
     LaunchedEffect(Unit) {
         val future = ProcessCameraProvider.getInstance(context)
         cameraProvider = withContext(Dispatchers.IO) { future.get() }
     }
 
-    // Привязка камеры; перепривязывается при смене useFrontCamera
     LaunchedEffect(cameraProvider, previewViewRef, useFrontCamera) {
         val provider = cameraProvider ?: return@LaunchedEffect
         val pv = previewViewRef ?: return@LaunchedEffect
 
-        // При смене камеры во время записи — ждём завершения текущего сегмента перед rebind
         if (pendingAutoRestart) {
             currentSegmentDeferred.value?.await()
         }
@@ -262,7 +250,6 @@ fun VideoCircleRecorder(
             }
         }
 
-        // После смены камеры автоматически возобновляем запись
         if (pendingAutoRestart) {
             pendingAutoRestart = false
             delay(150)
@@ -293,7 +280,7 @@ fun VideoCircleRecorder(
                 .background(Color(0xCC000000)),
             contentAlignment = Alignment.Center
         ) {
-            // Круглое превью с камерой + арка таймера
+
             Box(
                 modifier = Modifier.size(280.dp),
                 contentAlignment = Alignment.Center
@@ -332,7 +319,6 @@ fun VideoCircleRecorder(
                 }
             }
 
-            // Таймер текст
             if (isRecording) {
                 Box(
                     modifier = Modifier
@@ -344,7 +330,6 @@ fun VideoCircleRecorder(
                 }
             }
 
-            // Нижние элементы управления
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -481,7 +466,6 @@ fun VideoCircleRecorder(
                 }
             }
 
-            // Крестик закрытия (вверху справа)
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -510,7 +494,6 @@ fun VideoCircleRecorder(
                 }
             }
 
-            // Кнопка переключения камеры (вверху слева), работает и во время записи
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -549,7 +532,6 @@ fun VideoCircleRecorder(
     }
 }
 
-// Склеивает список MP4-сегментов в один файл (MediaExtractor + MediaMuxer)
 private fun mergeVideoSegments(segments: List<File>, context: android.content.Context): File? {
     if (segments.isEmpty()) return null
     if (segments.size == 1) return segments[0]
@@ -560,8 +542,7 @@ private fun mergeVideoSegments(segments: List<File>, context: android.content.Co
     try {
         muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
-        // Добавляем треки по форматам из первого сегмента
-        val muxerTracks = mutableMapOf<String, Int>() // "video"/"audio" -> muxer track index
+        val muxerTracks = mutableMapOf<String, Int>()
         val firstEx = MediaExtractor()
         firstEx.setDataSource(segments[0].absolutePath)
         for (i in 0 until firstEx.trackCount) {
@@ -623,7 +604,6 @@ private fun mergeVideoSegments(segments: List<File>, context: android.content.Co
             }
             ex.release()
 
-            // Смещение для следующего сегмента (~1 кадр при 30fps)
             timeOffsetUs += maxPtsUs + 33_333L
         }
 
@@ -640,8 +620,6 @@ private fun mergeVideoSegments(segments: List<File>, context: android.content.Co
         return null
     }
 }
-
-// ─── Воспроизведение видеокружка ──────────────────────────────────────────────
 
 @Composable
 fun VideoCirclePlayer(

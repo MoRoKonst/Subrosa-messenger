@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -44,7 +44,7 @@ fun ServersScreen(onBack: () -> Unit) {
     var newHost by remember { mutableStateOf("") }
     var newPort by remember { mutableStateOf("9000") }
     var newName by remember { mutableStateOf("") }
-    // Реальное состояние WebSocket-подключения, обновляется каждые 500 мс
+
     var isReallyConnected by remember { mutableStateOf(MessengerService.connected) }
     var currentServer by remember { mutableStateOf(ServerManager.getCurrentServer(context)) }
     LaunchedEffect(Unit) {
@@ -82,7 +82,7 @@ fun ServersScreen(onBack: () -> Unit) {
                 .padding(padding)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Режим сервера
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -116,7 +116,6 @@ fun ServersScreen(onBack: () -> Unit) {
 
                 HorizontalDivider(color = c.textPrimary.copy(alpha = 0.1f), modifier = Modifier.padding(horizontal = 16.dp))
 
-                // Постоянный поток трафика
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -142,7 +141,7 @@ fun ServersScreen(onBack: () -> Unit) {
                             fontSize = 12.sp
                         )
                     }
-                    // Три состояния: OFF → MODERATE → AGGRESSIVE → OFF
+
                     TextButton(onClick = {
                         val next = when (coverMode) {
                             UserStorage.CoverTrafficMode.OFF -> UserStorage.CoverTrafficMode.MODERATE
@@ -150,7 +149,7 @@ fun ServersScreen(onBack: () -> Unit) {
                             UserStorage.CoverTrafficMode.AGGRESSIVE -> UserStorage.CoverTrafficMode.OFF
                         }
                         if (coverMode == UserStorage.CoverTrafficMode.OFF) {
-                            // Показываем предупреждение перед включением
+
                             pendingCoverMode = next
                             showCoverWarning = true
                         } else {
@@ -176,7 +175,6 @@ fun ServersScreen(onBack: () -> Unit) {
                 HorizontalDivider(color = c.textPrimary.copy(alpha = 0.1f), modifier = Modifier.padding(horizontal = 16.dp))
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // Кнопка переключения сервера
                 Button(
                     onClick = {
                         ServerManager.switchToNext(context)
@@ -215,7 +213,7 @@ fun ServersScreen(onBack: () -> Unit) {
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
                                 .clickable {
-                                    // Клик по серверу - переключиться на него
+
                                     val prefs = EncryptedStorage.getEncryptedPrefs(context, "server_prefs")
                                     val enabledServers = servers.filter { it.enabled }
                                     val targetIndex = enabledServers.indexOfFirst {

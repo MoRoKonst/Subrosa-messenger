@@ -1,4 +1,4 @@
-package com.bcon.messenger.ui.theme
+﻿package com.bcon.messenger.ui.theme
 
 import android.app.Activity
 import androidx.compose.material3.MaterialTheme
@@ -39,7 +39,6 @@ fun TESTTheme(
         )
     }
 
-    // Обновляем цвета статус-бара и навигационной панели под текущую тему
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {

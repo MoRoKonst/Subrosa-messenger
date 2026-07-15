@@ -1,4 +1,4 @@
-package com.bcon.messenger
+﻿package com.bcon.messenger
 
 import android.content.Intent
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -61,7 +61,6 @@ private fun formatChatTimestamp(ts: Long): String {
     }
 }
 
-// ─── Private option row for the "new" dialog ──────────────────────────────────
 @Composable
 private fun OptionRow(
     label: String,
@@ -85,8 +84,6 @@ private fun OptionRow(
     }
 }
 
-// ─── Main screen ──────────────────────────────────────────────────────────────
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatsScreen(
@@ -104,7 +101,6 @@ fun ChatsScreen(
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     val scope = rememberCoroutineScope()
 
-    // ── State ──────────────────────────────────────────────────────────────
     var chatItems            by remember { mutableStateOf(listOf<ChatItem>()) }
     var showGroupOptions     by remember { mutableStateOf(false) }
     var showAddDialog        by remember { mutableStateOf(false) }
@@ -120,7 +116,6 @@ fun ChatsScreen(
     var newChannelDesc             by remember { mutableStateOf("") }
     var newChannelAvatar           by remember { mutableStateOf("📢") }
 
-    // ── Own profile data (for TopBar avatar) ──────────────────────────────
     val myUserId      = remember { UserStorage.getUserId(context) }
     val myDisplayName = remember { UserStorage.getUserDisplayName(context) }
     val myAvatarBitmap = AvatarStore.avatars[myUserId]
@@ -131,7 +126,6 @@ fun ChatsScreen(
         )[myDisplayName.hashCode().absoluteValue % 6]
     }
 
-    // ── Load chats ─────────────────────────────────────────────────────────
     fun loadChats() {
         scope.launch(Dispatchers.IO) {
             val loadedContacts = ChatStorage.getContacts(context)
@@ -154,7 +148,7 @@ fun ChatsScreen(
                 val lastPost = ChannelManager.loadPosts(context, channel.id).lastOrNull()?.text ?: s.chatsNoPosts
                 items.add(ChatItem.ChannelItem(channel, lastPost))
             }
-            // Сортируем по времени последнего сообщения (новые вверху)
+
             items.sortByDescending { item ->
                 when (item) {
                     is ChatItem.Contact -> item.lastTimestamp
@@ -170,35 +164,29 @@ fun ChatsScreen(
     val chatListVersion by MainActivity.chatListVersion.collectAsState()
     LaunchedEffect(chatListVersion) { loadChats() }
 
-    // Авто-обновление контакта поддержки при смене SupportConfig.FINGERPRINT
     LaunchedEffect(Unit) {
         if (SupportConfig.isConfigured) {
             val supportPrefKey = "beacon_support_contact_fp"
             val plainPrefs = context.getSharedPreferences("beacon_meta", android.content.Context.MODE_PRIVATE)
             val storedFP = plainPrefs.getString(supportPrefKey, null)
 
-            // Вспомогательная функция: копирует аватар со старого FP на новый
             fun migrateAvatar(oldContactId: String) {
-                // Персистентное хранилище (EncryptedSharedPreferences)
+
                 val oldAvatar = ChatStorage.getContactAvatar(context, oldContactId)
                 if (oldAvatar != null) {
                     ChatStorage.saveContactAvatar(context, SupportConfig.FINGERPRINT, oldAvatar)
                 }
-                // In-memory AvatarStore (текущая сессия)
+
                 AvatarStore.avatars[oldContactId]?.let { bmp ->
                     AvatarStore.avatars[SupportConfig.FINGERPRINT] = bmp
                 }
             }
 
-            // Если фингерпринт поддержки изменился — мигрируем аватар и удаляем старый контакт
             if (storedFP != null && storedFP != SupportConfig.FINGERPRINT) {
                 migrateAvatar(storedFP)
                 ChatStorage.removeContact(context, storedFP)
             }
 
-            // Первый запуск после обновления (storedFP == null): убираем все контакты
-            // с именем поддержки, которые не совпадают с текущим фингерпринтом.
-            // Это чистит старые контакты поддержки при смене ключа разработчика.
             if (storedFP == null) {
                 ChatStorage.getContacts(context).forEach { contactId ->
                     if (contactId != SupportConfig.FINGERPRINT &&
@@ -209,15 +197,12 @@ fun ChatsScreen(
                 }
             }
 
-            // Всегда обновляем контакт поддержки до актуальных данных из SupportConfig
             ChatStorage.addContact(context, SupportConfig.FINGERPRINT)
             ChatStorage.saveContactPublicKey(context, SupportConfig.FINGERPRINT, SupportConfig.PUBLIC_KEY)
             ChatStorage.saveContactName(context, SupportConfig.FINGERPRINT, SupportConfig.NAME)
 
-            // Сохраняем текущий фингерпринт поддержки для следующего запуска
             plainPrefs.edit().putString(supportPrefKey, SupportConfig.FINGERPRINT).apply()
 
-            // Запрашиваем актуальный ключ (и аватар) с сервера — так же, как при ручном добавлении
             context.startService(
                 Intent(context, MessengerService::class.java).apply {
                     putExtra("request_key", SupportConfig.FINGERPRINT)
@@ -234,7 +219,6 @@ fun ChatsScreen(
         onChannelLinkConsumed()
     }
 
-    // ══════════════════════════════════════════════════════════════════════
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
@@ -270,7 +254,7 @@ fun ChatsScreen(
                     }
                 },
                 actions = {
-                    // Profile mini-avatar
+
                     Box(
                         modifier = Modifier
                             .padding(end = 6.dp)
@@ -297,7 +281,7 @@ fun ChatsScreen(
                             )
                         }
                     }
-                    // Compose / add button
+
                     IconButton(onClick = { showGroupOptions = true }) {
                         Icon(
                             Icons.Default.Add,
@@ -317,7 +301,7 @@ fun ChatsScreen(
                 .padding(padding)
         ) {
             if (chatItems.isEmpty()) {
-                // ── Empty state ────────────────────────────────────────────
+
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -341,7 +325,7 @@ fun ChatsScreen(
                     )
                 }
             } else {
-                // ── Chat list ──────────────────────────────────────────────
+
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(top = 8.dp, bottom = 80.dp)
@@ -384,7 +368,7 @@ fun ChatsScreen(
                                     onClick = { onOpenChannel(item.channel.id) }
                                 )
                             }
-                            // Indented divider (starts after avatar area)
+
                             HorizontalDivider(
                                 modifier = Modifier.padding(start = 82.dp),
                                 color = c.textPrimary.copy(alpha = 0.07f),
@@ -397,7 +381,6 @@ fun ChatsScreen(
         }
     }
 
-    // ── Delete dialog ──────────────────────────────────────────────────────────
     deleteTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
@@ -438,7 +421,6 @@ fun ChatsScreen(
         )
     }
 
-    // ── Add contact dialog ─────────────────────────────────────────────────────
     if (showAddDialog) {
         AlertDialog(
             onDismissRequest = { showAddDialog = false; inviteCode = "" },
@@ -474,11 +456,11 @@ fun ChatsScreen(
                                 ChatStorage.addContact(context, fingerprint)
                                 ChatStorage.saveContactPublicKey(context, fingerprint, fixedKey)
                                 ChatStorage.saveContactName(context, fingerprint, decodedName)
-                                // Если инвайт v3 — сохраняем mailboxTag; первое сообщение пойдёт через mailbox
+
                                 if (inviteData.mailboxTag != null) {
                                     AnonTokenManager.setContactMailboxTag(context, fingerprint, inviteData.mailboxTag)
                                 } else {
-                                    // Старый инвайт без тега — запрашиваем ключ как раньше
+
                                     context.startService(
                                         Intent(context, MessengerService::class.java).apply {
                                             putExtra("request_key", fingerprint)
@@ -512,7 +494,6 @@ fun ChatsScreen(
         )
     }
 
-    // ── Support dialog ─────────────────────────────────────────────────────────
     if (showSupportDialog) {
         AlertDialog(
             onDismissRequest = { showSupportDialog = false },
@@ -540,7 +521,6 @@ fun ChatsScreen(
         )
     }
 
-    // ── New / compose options dialog ───────────────────────────────────────────
     if (showGroupOptions) {
         AlertDialog(
             onDismissRequest = { showGroupOptions = false },
@@ -573,7 +553,6 @@ fun ChatsScreen(
         )
     }
 
-    // ── Subscribe channel: enter link ──────────────────────────────────────────
     if (showChannelSubscribeInput) {
         AlertDialog(
             onDismissRequest = { showChannelSubscribeInput = false; channelLinkInput = "" },
@@ -616,7 +595,6 @@ fun ChatsScreen(
         )
     }
 
-    // ── Subscribe confirmation ─────────────────────────────────────────────────
     pendingSubscribeData?.let { linkData ->
         ChannelSubscribeDialog(
             linkData = linkData,
@@ -646,7 +624,6 @@ fun ChatsScreen(
         )
     }
 
-    // ── Create channel dialog ──────────────────────────────────────────────────
     if (showCreateChannelDialog) {
         AlertDialog(
             onDismissRequest = {
@@ -710,8 +687,6 @@ fun ChatsScreen(
         )
     }
 }
-
-// ─── Chat item cards ──────────────────────────────────────────────────────────
 
 private val avatarPalette = listOf(
     Color(0xFF2481CC), Color(0xFFE74C3C), Color(0xFF27AE60),
@@ -954,7 +929,7 @@ fun GroupChatCard(
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
-            // Member count badge
+
             Surface(shape = CircleShape, color = c.accent.copy(alpha = 0.15f)) {
                 Text(
                     text = "${group.members.size}",
