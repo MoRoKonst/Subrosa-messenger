@@ -45,6 +45,9 @@ app/release/
 *.pem
 *.key
 ForEXP/.key
+certs/
+nginx-cache/
+beacon-data/
 
 # Установщики и дистрибутивы (не должны быть в репозитории)
 *.exe

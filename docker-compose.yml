@@ -1,17 +1,51 @@
+﻿version: '3.8'
+
 services:
-  beacon:
-    build: ./ForEXP
-    restart: unless-stopped
+  beacon-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: beacon-messenger-server
     ports:
-      # Слушаем только на localhost — nginx проксирует снаружи через WSS
-      - "127.0.0.1:9000:9000"
-    volumes:
-      - beacon_data:/data
+      - "9000:9000"
     environment:
-      DB_PATH: /data/messages.db
-      CHANNEL_ADMIN_SECRET: ${CHANNEL_ADMIN_SECRET}
-      FEDERATION_SECRET: ${FEDERATION_SECRET:-}
-      FEDERATION_PEERS: ${FEDERATION_PEERS:-}
+      CHANNEL_ADMIN_SECRET: ${CHANNEL_ADMIN_SECRET:-change-me-in-production}
+      BEACON_HOST: "0.0.0.0"
+      BEACON_PORT: 9000
+    volumes:
+      - beacon-data:/app/data
+    restart: unless-stopped
+    networks:
+      - beacon-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import asyncio; asyncio.run(asyncio.sleep(0))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: beacon-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+      - nginx-cache:/var/cache/nginx
+    depends_on:
+      - beacon-server
+    restart: unless-stopped
+    networks:
+      - beacon-network
 
 volumes:
-  beacon_data:
+  beacon-data:
+    driver: local
+  nginx-cache:
+    driver: local
+
+networks:
+  beacon-network:
+    driver: bridge

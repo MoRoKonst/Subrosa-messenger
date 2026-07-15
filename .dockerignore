@@ -1,0 +1,30 @@
+﻿# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Certificates and keys
+certs/
+*.pem
+*.key
+
+# Docker volumes and data
+beacon-data/
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
