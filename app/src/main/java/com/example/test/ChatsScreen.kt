@@ -104,7 +104,6 @@ fun ChatsScreen(
     var chatItems            by remember { mutableStateOf(listOf<ChatItem>()) }
     var showGroupOptions     by remember { mutableStateOf(false) }
     var showAddDialog        by remember { mutableStateOf(false) }
-    var showSupportDialog    by remember { mutableStateOf(false) }
     var inviteCode           by remember { mutableStateOf("") }
     var deleteTarget         by remember { mutableStateOf<ChatItem.Contact?>(null) }
 
@@ -164,54 +163,6 @@ fun ChatsScreen(
     val chatListVersion by MainActivity.chatListVersion.collectAsState()
     LaunchedEffect(chatListVersion) { loadChats() }
 
-    LaunchedEffect(Unit) {
-        if (SupportConfig.isConfigured) {
-            val supportPrefKey = "beacon_support_contact_fp"
-            val plainPrefs = context.getSharedPreferences("beacon_meta", android.content.Context.MODE_PRIVATE)
-            val storedFP = plainPrefs.getString(supportPrefKey, null)
-
-            fun migrateAvatar(oldContactId: String) {
-
-                val oldAvatar = ChatStorage.getContactAvatar(context, oldContactId)
-                if (oldAvatar != null) {
-                    ChatStorage.saveContactAvatar(context, SupportConfig.FINGERPRINT, oldAvatar)
-                }
-
-                AvatarStore.avatars[oldContactId]?.let { bmp ->
-                    AvatarStore.avatars[SupportConfig.FINGERPRINT] = bmp
-                }
-            }
-
-            if (storedFP != null && storedFP != SupportConfig.FINGERPRINT) {
-                migrateAvatar(storedFP)
-                ChatStorage.removeContact(context, storedFP)
-            }
-
-            if (storedFP == null) {
-                ChatStorage.getContacts(context).forEach { contactId ->
-                    if (contactId != SupportConfig.FINGERPRINT &&
-                        ChatStorage.getContactName(context, contactId) == SupportConfig.NAME) {
-                        migrateAvatar(contactId)
-                        ChatStorage.removeContact(context, contactId)
-                    }
-                }
-            }
-
-            ChatStorage.addContact(context, SupportConfig.FINGERPRINT)
-            ChatStorage.saveContactPublicKey(context, SupportConfig.FINGERPRINT, SupportConfig.PUBLIC_KEY)
-            ChatStorage.saveContactName(context, SupportConfig.FINGERPRINT, SupportConfig.NAME)
-
-            plainPrefs.edit().putString(supportPrefKey, SupportConfig.FINGERPRINT).apply()
-
-            context.startService(
-                Intent(context, MessengerService::class.java).apply {
-                    putExtra("request_key", SupportConfig.FINGERPRINT)
-                }
-            )
-
-            loadChats()
-        }
-    }
 
     LaunchedEffect(pendingChannelLink) {
         val link = pendingChannelLink ?: return@LaunchedEffect
@@ -494,32 +445,6 @@ fun ChatsScreen(
         )
     }
 
-    if (showSupportDialog) {
-        AlertDialog(
-            onDismissRequest = { showSupportDialog = false },
-            containerColor = c.dialog,
-            title = { Text(SupportConfig.DIALOG_TITLE, color = Color.White, fontFamily = JetBrainsMono) },
-            text = {
-                Text(SupportConfig.DIALOG_TEXT, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 14.sp)
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (SupportConfig.isConfigured) {
-                        ChatStorage.addContact(context, SupportConfig.FINGERPRINT)
-                        ChatStorage.saveContactPublicKey(context, SupportConfig.FINGERPRINT, SupportConfig.PUBLIC_KEY)
-                        ChatStorage.saveContactName(context, SupportConfig.FINGERPRINT, SupportConfig.NAME)
-                    }
-                    showSupportDialog = false
-                    onOpenChat(SupportConfig.FINGERPRINT)
-                }) { Text(s.write, color = c.accent, fontFamily = JetBrainsMono) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSupportDialog = false }) {
-                    Text(s.close, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono)
-                }
-            }
-        )
-    }
 
     if (showGroupOptions) {
         AlertDialog(
@@ -542,10 +467,6 @@ fun ChatsScreen(
                     HorizontalDivider(color = c.textPrimary.copy(alpha = 0.08f), thickness = 0.5.dp)
                     OptionRow(s.chatsCreateChannel, labelColor = c.accent) {
                         showGroupOptions = false; showCreateChannelDialog = true
-                    }
-                    HorizontalDivider(color = c.textPrimary.copy(alpha = 0.08f), thickness = 0.5.dp)
-                    OptionRow(s.profileSupport, labelColor = c.textPrimary.copy(alpha = 0.6f)) {
-                        showGroupOptions = false; showSupportDialog = true
                     }
                 }
             },

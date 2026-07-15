@@ -40,7 +40,6 @@ interface IStr2 {
     val chatsChannelNameLabel: String
     val chatsChannelDescLabel: String; val chatsChannelFillFields: String
     val chatsChannelBadLink: String; val chatsChannelBadge: String
-    val chatsSupportWrite: String
 }
 
 interface IStr3 {
@@ -50,7 +49,7 @@ interface IStr3 {
     val profileShowQr: String; val profileScanQr: String
     val profileQrHint: String; val profileCodeCopied: String
     val profileSendHint: String; val profileServers: String
-    val profileSupport: String; val profileBackup: String
+    val profileBackup: String
     val profileSectionSecurity: String; val profileSectionGeneral: String
     val profileHideNotif: String; val profileHideNotifSub: String
     val profileAutoLock: String; val profileAutoLockAfter: (String) -> String
@@ -320,7 +319,6 @@ private val ru2 = object : IStr2 {
     override val chatsChannelFillFields = "Укажите название канала"
     override val chatsChannelBadLink = "Неверная ссылка"
     override val chatsChannelBadge = "канал"
-    override val chatsSupportWrite = "Написать"
 }
 
 private val ru3 = object : IStr3 {
@@ -336,7 +334,6 @@ private val ru3 = object : IStr3 {
     override val profileCodeCopied = "✓ код скопирован"
     override val profileSendHint = "Отправьте этот код другу, чтобы он мог добавить вас в контакты"
     override val profileServers = "🌐 Серверы"
-    override val profileSupport = "❓ Поддержка"
     override val profileBackup = "📦 Резервное копирование"
     override val profileSectionSecurity = "Безопасность"
     override val profileSectionGeneral  = "Основное"
@@ -767,7 +764,6 @@ private val en2 = object : IStr2 {
     override val chatsChannelFillFields = "Enter a channel name"
     override val chatsChannelBadLink = "Invalid link"
     override val chatsChannelBadge = "channel"
-    override val chatsSupportWrite = "Write"
 }
 
 private val en3 = object : IStr3 {
@@ -783,7 +779,6 @@ private val en3 = object : IStr3 {
     override val profileCodeCopied = "✓ code copied"
     override val profileSendHint = "Send this code to a friend so they can add you as a contact"
     override val profileServers = "🌐 Servers"
-    override val profileSupport = "❓ Support"
     override val profileBackup = "📦 Backup"
     override val profileSectionSecurity = "Security"
     override val profileSectionGeneral  = "General"

@@ -939,8 +939,7 @@ fun AppNavigation() {
             onOpenServers = { screen = "servers" },
             onOpenBackup = { screen = "backup" },
             onOpenDiagnostics = { screen = "security_diagnostics" },
-            onOpenWipeSettings = { screen = "wipe_settings" },
-            onOpenSupport = { openedChat = SupportConfig.FINGERPRINT; screen = "chat" }
+            onOpenWipeSettings = { screen = "wipe_settings" }
         )
 
         "verify_key" -> VerifyKeyScreen(

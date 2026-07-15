@@ -157,8 +157,7 @@ fun ProfileScreen(
     onOpenServers: () -> Unit,
     onOpenBackup: () -> Unit,
     onOpenDiagnostics: () -> Unit,
-    onOpenWipeSettings: () -> Unit = {},
-    onOpenSupport: () -> Unit = {}
+    onOpenWipeSettings: () -> Unit = {}
 ) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
@@ -167,7 +166,6 @@ fun ProfileScreen(
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
     var showNotMeConfirm   by remember { mutableStateOf(false) }
-    var showSupportDialog  by remember { mutableStateOf(false) }
     var showQr             by remember { mutableStateOf(false) }
     var showCopied         by remember { mutableStateOf(false) }
     var showLockDialog     by remember { mutableStateOf(false) }
@@ -731,7 +729,6 @@ fun ProfileScreen(
                         PDivider()
                         PRow(s.profileBackup,     onClick = onOpenBackup,               trailing = { PChevron() })
                         PDivider()
-                        PRow(s.profileSupport,    onClick = { showSupportDialog = true }, trailing = { PChevron() })
                         PDivider()
                         PRow(s.profileDiagnostics, onClick = onOpenDiagnostics,         trailing = { PChevron() })
                         PDivider()
@@ -919,35 +916,4 @@ fun ProfileScreen(
         )
     }
 
-    if (showSupportDialog) {
-        AlertDialog(
-            onDismissRequest = { showSupportDialog = false },
-            containerColor = c.dialog,
-            title = { Text(SupportConfig.DIALOG_TITLE, color = Color.White, fontFamily = AppFont) },
-            text = {
-                Text(
-                    SupportConfig.DIALOG_TEXT,
-                    color = c.textPrimary,
-                    fontFamily = AppFont,
-                    fontSize = 14.sp
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (SupportConfig.isConfigured) {
-                        ChatStorage.addContact(context, SupportConfig.FINGERPRINT)
-                        ChatStorage.saveContactPublicKey(context, SupportConfig.FINGERPRINT, SupportConfig.PUBLIC_KEY)
-                        ChatStorage.saveContactName(context, SupportConfig.FINGERPRINT, SupportConfig.NAME)
-                    }
-                    showSupportDialog = false
-                    onOpenSupport()
-                }) { Text(s.write, color = c.accent, fontFamily = AppFont) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSupportDialog = false }) {
-                    Text(s.close, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
-                }
-            }
-        )
-    }
 }
