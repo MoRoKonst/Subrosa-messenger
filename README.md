@@ -316,12 +316,6 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the system design and module referenc
 | [DEPLOY.md](DEPLOY.md) | SysAdmins | Production deployment, Let's Encrypt, auto-renewal |
 | [CHECKLIST.md](CHECKLIST.md) | DevOps | Pre/post deployment verification steps |
 
-### For Your Market
-
-| Document | Audience | Description |
-|---|---|---|
-| [BEACON_FOR_LAWYERS.md](BEACON_FOR_LAWYERS.md) | Юристы/Адвокаты | Targeted guide for legal professionals & their IT teams |
-
 ### Technical & Security
 
 | Document | Audience | Description |
