@@ -149,11 +149,12 @@ object BackupManager {
 
             // Поддержка старых бэкапов (version < 3) без GZIP
             val jsonBytes = try {
-                ungzip(decryptedBytes)
+                val decompressed = ungzip(decryptedBytes)
+                decryptedBytes.fill(0) // отдельный массив — безопасно обнулять сразу
+                decompressed
             } catch (e: Exception) {
-                decryptedBytes // fallback — старый формат без сжатия
+                decryptedBytes // fallback — старый формат без сжатия; обнуляем после парсинга
             }
-            decryptedBytes.fill(0)
 
             val backup = JSONObject(String(jsonBytes, Charsets.UTF_8))
             jsonBytes.fill(0)
@@ -171,13 +172,13 @@ object BackupManager {
 
             // EC keypair (версия 6+) — восстанавливает fingerprint/identity
             if (version >= 6 && backup.has("ec_private_key") && backup.has("ec_public_key")) {
+                if (!StorageKeyManager.isUnlocked) {
+                    return Result.failure(IllegalStateException("SMK не разблокирован — невозможно безопасно сохранить приватный ключ"))
+                }
                 val privRaw = Base64.decode(backup.getString("ec_private_key"), Base64.NO_WRAP)
                 val pubB64  = backup.getString("ec_public_key")
                 val ecPrefs = EncryptedStorage.getEncryptedPrefs(context, "beacon_ec_keys_enc")
-                val privToStore = if (StorageKeyManager.isUnlocked)
-                    StorageKeyManager.wrapBytes(privRaw)
-                else
-                    Base64.encodeToString(privRaw, Base64.NO_WRAP)
+                val privToStore = StorageKeyManager.wrapBytes(privRaw)
                 ecPrefs.edit().putString("ec_priv", privToStore).putString("ec_pub", pubB64).commit()
                 privRaw.fill(0)
                 // Сразу обновляем userId чтобы не ждать перезапуска MessengerService

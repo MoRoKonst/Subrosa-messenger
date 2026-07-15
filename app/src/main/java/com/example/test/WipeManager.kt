@@ -41,6 +41,7 @@ object WipeManager {
     // ── Hard: полное крипто-уничтожение (бывший emergencyWipe) ───────────────
 
     fun hardWipe(context: Context, withDecoy: Boolean = false) {
+        StorageKeyManager.lock()  // Обнулить SMK если вызов напрямую (минуя wipe())
         // ── Сохраняем данные ДО вайпа ────────────────────────────────────────
         var savedPasswordHash: String? = null
         var savedUsername: String? = null
@@ -65,7 +66,7 @@ object WipeManager {
             try {
                 val ks = java.security.KeyStore.getInstance("AndroidKeyStore")
                 ks.load(null)
-                listOf("_androidx_security_master_key", "_androidx_security_crypto_master_key_")
+                listOf("_androidx_security_master_key", "_androidx_security_crypto_master_key_", "beacon_smk_wrap")
                     .filter { ks.containsAlias(it) }
                     .forEach { ks.deleteEntry(it) }
             } catch (_: Exception) {}
@@ -147,7 +148,7 @@ object WipeManager {
             try {
                 val ks = java.security.KeyStore.getInstance("AndroidKeyStore")
                 ks.load(null)
-                listOf("_androidx_security_master_key", "_androidx_security_crypto_master_key_")
+                listOf("_androidx_security_master_key", "_androidx_security_crypto_master_key_", "beacon_smk_wrap")
                     .filter { ks.containsAlias(it) }
                     .forEach { ks.deleteEntry(it) }
             } catch (_: Exception) {}
@@ -193,7 +194,7 @@ object WipeManager {
             try {
                 val ks = java.security.KeyStore.getInstance("AndroidKeyStore")
                 ks.load(null)
-                listOf("_androidx_security_master_key", "_androidx_security_crypto_master_key_")
+                listOf("_androidx_security_master_key", "_androidx_security_crypto_master_key_", "beacon_smk_wrap")
                     .filter { ks.containsAlias(it) }
                     .forEach { ks.deleteEntry(it) }
             } catch (_: Exception) {}

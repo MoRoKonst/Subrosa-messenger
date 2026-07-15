@@ -20,7 +20,7 @@ object CertificatePinner {
 
             override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
                 if (chain == null || chain.isEmpty()) {
-                    throw javax.security.cert.CertificateException("Certificate chain is empty")
+                    throw java.security.cert.CertificateException("Certificate chain is empty")
                 }
 
                 // Проверяем pinning только для production
@@ -40,7 +40,7 @@ object CertificatePinner {
                 )
 
                 if (!TRUSTED_PINS.contains(pin)) {
-                    throw javax.security.cert.CertificateException(
+                    throw java.security.cert.CertificateException(
                         "Certificate pinning failed! Server pin doesn't match trusted pins."
                     )
                 }

@@ -61,8 +61,10 @@ object AnonTokenManager {
     fun addContactTokens(ctx: Context, fingerprint: String, tokens: List<String>) {
         val existing = getContactTokens(ctx, fingerprint).toMutableList()
         existing.addAll(tokens.filter { it.isNotBlank() && it.length == 32 })
+        // Ограничиваем пул — защита от OOM при вредоносном контакте
+        val capped = if (existing.size > POOL_SIZE) existing.takeLast(POOL_SIZE) else existing
         prefs(ctx).edit()
-            .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(existing).toString())
+            .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(capped).toString())
             .apply()
     }
 
@@ -126,7 +128,7 @@ object AnonTokenManager {
         val real = getMyMailboxTags(ctx)
         val fakeCount = maxOf(MBOX_TOTAL - real.size, 0)
         val fakes = (1..fakeCount).map { generateToken() }
-        return (real + fakes).shuffled()
+        return (real + fakes).shuffled(java.util.Random(rng.nextLong()))
     }
 
     // ── Служебное ─────────────────────────────────────────────────────────────
