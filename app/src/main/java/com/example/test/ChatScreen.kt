@@ -611,7 +611,6 @@ fun ChatScreen(
             uri ?: return@collect
             MainActivity.selectedFileUri.value = null
             try {
-
                 val cursor = context.contentResolver.query(uri, null, null, null, null)
                 val fileName = cursor?.use {
                     if (it.moveToFirst()) {
@@ -620,8 +619,662 @@ fun ChatScreen(
                     } else "file"
                 } ?: "file"
 
-                val mimeType = context.contentResolver.getType(uri) ?: "**"
-                                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image*"; addCategory(Intent.CATEGORY_OPENABLE) },
+                val mimeType = context.contentResolver.getType(uri) ?: "*/*"
+
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+
+                if (bytes != null && bytes.isNotEmpty()) {
+                    if (bytes.size > 20 * 1024 * 1024) {
+                        android.widget.Toast.makeText(
+                            context,
+                            s.chatFileTooBig,
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        return@collect
+                    }
+
+                    val fileIcon = when {
+                        mimeType.startsWith("image/") -> "🖼️"
+                        mimeType.startsWith("video/") -> "🎬"
+                        mimeType == "application/pdf" -> "📕"
+                        mimeType.contains("word") || mimeType.contains("document") -> "📘"
+                        else -> "📄"
+                    }
+
+                    if (!isOnline) {
+                        android.widget.Toast.makeText(context, s.chatMediaOffline, android.widget.Toast.LENGTH_SHORT).show()
+                        return@collect
+                    }
+
+                    android.widget.Toast.makeText(
+                        context,
+                        s.chatFileSending(fileName, bytes.size / 1024),
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+
+                    val chunks = fileToChunks(bytes)
+                    val fileId = UUID.randomUUID().toString()
+                    messengerService?.sendFile(recipient, fileName, chunks, fileId)
+
+                    val file = File(context.cacheDir, "files/$fileId/$fileName").apply {
+                        parentFile?.mkdirs()
+                        writeBytes(bytes)
+                    }
+
+                    val displayText = "$fileIcon $fileName"
+                    messages.add(Message(
+                        id = fileId,
+                        text = displayText,
+                        isOwn = true,
+                        fileName = fileName,
+                        filePath = file.absolutePath
+                    ))
+
+                    ChatStorage.saveOrUpdateMessage(
+                        context, userId, recipient,
+                        ChatStorage.StoredMessage(
+                            id = fileId,
+                            text = displayText,
+                            isOwn = true,
+                            filePath = file.absolutePath,
+                            fileName = fileName
+                        )
+                    )
+
+                    scope.launch { listState.animateScrollToItem(messages.size - 1) }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("ChatScreen", "Ошибка обработки файла: ${e.message}")
+                android.widget.Toast.makeText(
+                    context,
+                    s.error(e.message ?: ""),
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    DisposableEffect(recipient) {
+        onDispose {
+            if (!isEditMode) ChatStorage.saveDraft(context, userId, recipient, inputText)
+            messengerService?.onVoiceReceived = null
+            messengerService?.onKeyChanged = null
+            messengerService?.onReadReceived = null
+            messengerService?.onDeliveredReceived = null
+            messengerService?.onMessageReceived = null
+            messengerService?.onStatusChanged = null
+            messengerService?.onTypingReceived = null
+            messengerService?.onEditReceived = null
+            messengerService?.onImageReceived = null
+            messengerService?.onReactionReceived = null
+            messengerService?.onVideoReceived = null
+            try { context.unbindService(connection) } catch (e: Exception) {}
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().navigationBarsPadding().imePadding()) {
+
+        TopAppBar(
+            title = {
+                if (searchMode) {
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, color = Color.White),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(c.accent),
+                        decorationBox = { inner ->
+                            if (searchQuery.isEmpty()) Text(s.chatSearchPlaceholder, fontSize = 16.sp, color = Color(0x88FFFFFF), fontFamily = JetBrainsMono)
+                            inner()
+                        }
+                    )
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val recipientName = ChatStorage.getContactName(context, recipient)
+                        val avatarColor = remember(recipientName) {
+                            listOf(c.primaryBlue, Color(0xFFE74C3C), Color(0xFF27AE60),
+                                Color(0xFFF39C12), Color(0xFF9B59B6), Color(0xFF1ABC9C)
+                            )[recipientName.hashCode().absoluteValue % 6]
+                        }
+                        val avatarBitmap = AvatarStore.avatars[recipient]
+                        if (avatarBitmap != null) {
+                            Image(
+                                bitmap = avatarBitmap.asImageBitmap(),
+                                contentDescription = recipientName,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.size(40.dp).clip(CircleShape)
+                            )
+                        } else {
+                            Surface(shape = CircleShape, color = avatarColor, modifier = Modifier.size(40.dp)) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = if (recipientName.isNotEmpty()) recipientName.first().uppercaseChar().toString() else "?",
+                                        fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            if (showKeyWarning) {
+                                AlertDialog(
+                                    onDismissRequest = {},
+                                    title = { Text(s.chatKeyWarningTitle) },
+                                    text = {
+                                        Text(s.chatKeyWarningText, color = Color.Red)
+                                    },
+                                    confirmButton = {
+                                        TextButton(onClick = { KeyHistoryManager.markAsVerified(context, recipient); showKeyWarning = false }) {
+                                            Text(s.chatKeyWarningConfirm)
+                                        }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = { onBack() }) { Text(s.chatKeyWarningLeave) }
+                                    }
+                                )
+                            }
+                            Text(recipientName, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = Color.White)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val statusKey = when {
+                                    isTyping -> "typing"
+                                    isOnline -> "online"
+                                    else     -> "offline"
+                                }
+                                AnimatedContent(
+                                    targetState = statusKey,
+                                    transitionSpec = {
+                                        (fadeIn(tween(220)) + slideInVertically(tween(220)) { -it }) togetherWith
+                                        (fadeOut(tween(160)) + slideOutVertically(tween(160)) { it })
+                                    },
+                                    label = "status"
+                                ) { key ->
+                                    when (key) {
+                                        "typing" -> Row(
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                s.chatTyping.trimEnd('.', '…', ' '),
+                                                fontSize = 14.sp,
+                                                color = c.accent,
+                                                fontFamily = JetBrainsMono
+                                            )
+                                            Spacer(Modifier.width(5.dp))
+                                            TypingDotsIndicator(color = c.accent)
+                                        }
+                                        else -> Text(
+                                            text = if (key == "online") s.chatOnline else s.chatOffline,
+                                            fontSize = 13.sp,
+                                            color = if (key == "online") c.accent else c.textPrimary.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                }
+                                if (disappearTimerSecs > 0L) {
+                                    val label = when (disappearTimerSecs) {
+                                        3600L -> s.chatDisappear1hShort
+                                        86400L -> s.chatDisappear24hShort
+                                        604800L -> s.chatDisappear7dShort
+                                        else -> " · ⏱"
+                                    }
+                                    Text(label, fontSize = 12.sp, color = c.accent)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            navigationIcon = {
+                IconButton(onClick = {
+                    if (searchMode) { searchMode = false; searchQuery = "" } else onBack()
+                }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.back)
+                }
+            },
+            actions = {
+                IconButton(onClick = { searchMode = !searchMode; if (!searchMode) searchQuery = "" }) {
+                    Icon(
+                        painter = painterResource(if (searchMode) R.drawable.ic_close else R.drawable.ic_search),
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                IconButton(onClick = { showDisappearDialog = true }) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_timer),
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                var showOverflowMenu by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { showOverflowMenu = true }) {
+                        Icon(Icons.Default.MoreVert, s.chatMenu, tint = Color.White)
+                    }
+                    DropdownMenu(
+                        expanded = showOverflowMenu,
+                        onDismissRequest = { showOverflowMenu = false },
+                        containerColor = c.dialog
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(s.chatAudioCall, color = Color.White, fontFamily = JetBrainsMono) },
+                            onClick = {
+                                showOverflowMenu = false
+                                pendingCallIsVideo = false
+                                callPermissionLauncher.launch(arrayOf(android.Manifest.permission.RECORD_AUDIO))
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(s.chatVideoCall, color = Color.White, fontFamily = JetBrainsMono) },
+                            onClick = {
+                                showOverflowMenu = false
+                                pendingCallIsVideo = true
+                                callPermissionLauncher.launch(arrayOf(
+                                    android.Manifest.permission.RECORD_AUDIO,
+                                    android.Manifest.permission.CAMERA
+                                ))
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(s.chatVerifyAction, color = Color.White, fontFamily = JetBrainsMono) },
+                            onClick = {
+                                showOverflowMenu = false
+                                onVerifyKey()
+                            }
+                        )
+                    }
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
+        )
+
+        if (!isTorConnected && !torWarningDismissed) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF3D1A00))
+                    .padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("⚠️", fontSize = 14.sp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = s.chatDirectConnection,
+                    fontSize = 12.sp,
+                    color = Color(0xFFFFAA44),
+                    fontFamily = JetBrainsMono,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = {
+                        torWarningDismissed = true
+                        context.getSharedPreferences("beacon_prefs", Context.MODE_PRIVATE)
+                            .edit().putBoolean("tor_warning_dismissed", true).apply()
+                    },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = null,
+                        tint = Color(0xFFFFAA44),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        val displayedMessages = if (searchMode && searchQuery.isNotBlank())
+            messages.filter { it.text.contains(searchQuery, ignoreCase = true) }
+        else messages
+
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize()
+                .background(bgGradient)
+                .padding(horizontal = 8.dp),
+            state = listState
+        ) {
+            if (hasMoreHistory || isLoadingMoreHistory) {
+                item(key = "load_more_header") {
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        if (isLoadingMoreHistory) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp).padding(vertical = 4.dp),
+                                color = c.accent,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            TextButton(onClick = { loadMoreHistory() }) {
+                                Text(s.chatLoadEarlier, color = c.accent, fontFamily = JetBrainsMono, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+            }
+            items(displayedMessages, key = { it.id }) { msg ->
+                if (msg.replyTo == null) {
+                    val storedExpiry = remember(msg.id) {
+                        if (disappearTimerSecs > 0L) System.currentTimeMillis() + disappearTimerSecs * 1000L else 0L
+                    }
+                }
+                Box(
+                    modifier = Modifier.animateItem(
+                        fadeInSpec  = androidx.compose.animation.core.tween(180),
+                        fadeOutSpec = androidx.compose.animation.core.tween(120),
+                        placementSpec = androidx.compose.animation.core.spring(
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioLowBouncy
+                        )
+                    )
+                ) {
+                    MessageBubble(
+                        msg = msg,
+                        contactId = recipient,
+                        searchQuery = if (searchMode) searchQuery else "",
+                        onLongClick = { message -> contextMenuMessage = message },
+                        onSwipeToReply = { message -> replyToMessage = message },
+                        playingVoiceId = playingVoiceId,
+                        onVoicePlay = { id -> playingVoiceId = id },
+                        onVoiceStop = { playingVoiceId = null },
+                        playingVideoId = playingVideoId,
+                        onVideoPlay = { id -> playingVideoId = id },
+                        onVideoStop = { playingVideoId = null },
+                        onImageClick = { bmp -> fullscreenImageBitmap = bmp }
+                    )
+                }
+            }
+        }
+        val showScrollFab by remember { derivedStateOf { listState.canScrollForward } }
+        Box(modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 8.dp)) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showScrollFab,
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut()
+            ) {
+                FloatingActionButton(
+                    onClick = { scope.launch { listState.animateScrollToItem(messages.size - 1) } },
+                    containerColor = c.primaryBlue,
+                    contentColor = Color.White,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(22.dp))
+                }
+            }
+        }
+        } // end Box
+
+        if (contextMenuMessage != null) {
+            val ctxMsg = contextMenuMessage!!
+            AlertDialog(
+                onDismissRequest = { contextMenuMessage = null },
+                containerColor = c.dialog,
+                title = null,
+                text = {
+                    Column {
+                        TextButton(onClick = {
+                            replyToMessage = ctxMsg
+                            contextMenuMessage = null
+                        }) { Text(s.chatContextReply, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                        if (!ctxMsg.isSystem) {
+                            TextButton(onClick = {
+                                showForwardDialog = ctxMsg
+                                contextMenuMessage = null
+                            }) { Text("Переслать", color = Color(0xFF90CAF9), fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                        }
+                        if (ctxMsg.imageBitmap != null) {
+                            TextButton(onClick = {
+                                val bmp = ctxMsg.imageBitmap
+                                scope.launch(Dispatchers.IO) {
+                                    try {
+                                        val cv = ContentValues().apply {
+                                            put(MediaStore.Images.Media.DISPLAY_NAME, "beacon_${System.currentTimeMillis()}.jpg")
+                                            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/B-CON")
+                                            }
+                                        }
+                                        val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+                                        uri?.let { context.contentResolver.openOutputStream(it)?.use { os -> bmp.compress(Bitmap.CompressFormat.JPEG, 95, os) } }
+                                        withContext(Dispatchers.Main) {
+                                            android.widget.Toast.makeText(context, s.chatPhotoSaved, android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    } catch (_: Exception) {}
+                                }
+                                contextMenuMessage = null
+                            }) { Text(s.chatSavePhoto, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                        }
+                        if (ctxMsg.voiceFile == null && ctxMsg.imageBitmap == null &&
+                            ctxMsg.text.isNotEmpty() && !ctxMsg.isSystem) {
+                            TextButton(onClick = {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("message", ctxMsg.text))
+                                contextMenuMessage = null
+                                scope.launch {
+                                    delay(60_000L)
+                                    @Suppress("DEPRECATION")
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                        cm.clearPrimaryClip()
+                                    } else {
+                                        cm.setPrimaryClip(ClipData.newPlainText("", ""))
+                                    }
+                                }
+                            }) { Text(s.chatContextCopy, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                        }
+                        if (!ctxMsg.isOwn) {
+                            TextButton(onClick = {
+                                showReactionPicker = ctxMsg
+                                contextMenuMessage = null
+                            }) { Text(s.chatContextReaction, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                        }
+                        if (ctxMsg.isOwn && ctxMsg.text.isNotEmpty() && ctxMsg.voiceFile == null) {
+                            TextButton(onClick = {
+                                isEditMode = true
+                                editingMessageId = ctxMsg.id
+                                inputText = ctxMsg.text
+                                contextMenuMessage = null
+                            }) { Text(s.chatContextEdit, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                        }
+                        TextButton(onClick = {
+                            val idx = messages.indexOfFirst { it.id == ctxMsg.id }
+                            if (idx != -1) messages.removeAt(idx)
+                            scope.launch(Dispatchers.IO) {
+                                ChatStorage.deleteMessage(context, userId, recipient, ctxMsg.id)
+                            }
+                            contextMenuMessage = null
+                        }) { Text(s.chatContextDeleteOwn, color = Color(0xFFFF6B6B), fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                        if (ctxMsg.isOwn) {
+                            TextButton(onClick = {
+                                val idx = messages.indexOfFirst { it.id == ctxMsg.id }
+                                if (idx != -1) messages.removeAt(idx)
+                                scope.launch(Dispatchers.IO) {
+                                    ChatStorage.deleteMessage(context, userId, recipient, ctxMsg.id)
+                                }
+                                messengerService?.sendDeleteMessage(recipient, ctxMsg.id)
+                                contextMenuMessage = null
+                            }) { Text(s.chatContextDeleteAll, color = c.error, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                        }
+                    }
+                },
+                confirmButton = {}
+            )
+        }
+
+        if (fullscreenImageBitmap != null) {
+            Dialog(
+                onDismissRequest = { fullscreenImageBitmap = null },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .clickable { fullscreenImageBitmap = null },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        bitmap = fullscreenImageBitmap!!.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+
+        if (showReactionPicker != null) {
+            AlertDialog(
+                onDismissRequest = { showReactionPicker = null },
+                containerColor = c.dialog,
+                title = { Text(s.chatPickReaction, color = Color.White, fontFamily = JetBrainsMono) },
+                text = {
+                    Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
+                        listOf("❤️", "👍", "😂", "😮", "😢", "🔥").forEach { emoji ->
+                            Text(text = emoji, fontSize = 32.sp,
+                                modifier = Modifier.clickable {
+                                    val msg = showReactionPicker!!
+                                    val index = messages.indexOf(msg)
+                                    if (index != -1) {
+                                        val updated = msg.copy(reactions = msg.reactions.toMutableMap().also { it[username] = emoji })
+                                        messages[index] = updated
+                                        ChatStorage.saveOrUpdateMessage(context, UserStorage.getUserId(context), recipient,
+                                            ChatStorage.StoredMessage(id = updated.id, text = updated.text, isOwn = updated.isOwn, timestamp = updated.timestamp, reactions = updated.reactions))
+                                        messengerService?.sendReaction(recipient, updated.id, emoji)
+                                    }
+                                    showReactionPicker = null
+                                })
+                        }
+                    }
+                },
+                confirmButton = {}
+            )
+        }
+
+        if (showDisappearDialog) {
+            AlertDialog(
+                onDismissRequest = { showDisappearDialog = false },
+                containerColor = c.dialog,
+                title = { Text(s.chatDisappearTitle, color = Color.White, fontFamily = JetBrainsMono) },
+                text = {
+                    Column {
+                        listOf(
+                            0L to s.chatDisappearOff,
+                            3600L to s.chatDisappear1h,
+                            86400L to s.chatDisappear24h,
+                            604800L to s.chatDisappear7d
+                        ).forEach { (secs, label) ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    disappearTimerSecs = secs
+                                    scope.launch(Dispatchers.IO) {
+                                        ChatStorage.setDisappearTimer(context, userId, recipient, secs)
+                                    }
+                                    messengerService?.sendDisappearTimer(recipient, secs)
+                                    showDisappearDialog = false
+                                }.padding(vertical = 12.dp, horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = disappearTimerSecs == secs,
+                                    onClick = null,
+                                    colors = RadioButtonDefaults.colors(selectedColor = c.accent)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(label, color = Color.White, fontFamily = JetBrainsMono, fontSize = 15.sp)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {}
+            )
+        }
+
+        Box {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = isTyping,
+            enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
+            exit  = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(c.topBar)
+                    .padding(horizontal = 16.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${ChatStorage.getContactName(context, recipient)} ${s.chatTyping}${".".repeat(typingDots)}",
+                    fontSize = 13.sp,
+                    color = c.textPrimary.copy(alpha = 0.6f),
+                    fontFamily = JetBrainsMono
+                )
+            }
+        }
+        } // end typing Box
+
+        if (replyToMessage != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .background(c.topBar)
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_reply),
+                    contentDescription = null,
+                    tint = c.accent,
+                    modifier = Modifier.size(18.dp).padding(end = 4.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(s.chatReplyPreview, fontSize = 11.sp, color = c.accent, fontFamily = JetBrainsMono)
+                    Text(replyToMessage!!.text.take(60), fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = JetBrainsMono)
+                }
+                IconButton(onClick = { replyToMessage = null }) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_close),
+                        contentDescription = null,
+                        tint = Color.Gray,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+
+        if (isEditMode) {
+            Row(modifier = Modifier.fillMaxWidth().background(c.topBar).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(s.chatEditing, fontSize = 12.sp, color = c.primaryBlue, modifier = Modifier.weight(1f), fontFamily = JetBrainsMono)
+                TextButton(onClick = { isEditMode = false; editingMessageId = null; inputText = "" }) {
+                    Text(s.cancel, color = Color.Gray, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                }
+            }
+        }
+
+        if (showAttachMenu) {
+            AlertDialog(
+                onDismissRequest = { showAttachMenu = false },
+                title = { Text(s.chatAttach, color = Color.White, fontSize = 20.sp, fontFamily = JetBrainsMono) },
+                text = {
+                    Column {
+                        TextButton(onClick = {
+                            showAttachMenu = false
+                            try {
+                                (context as? MainActivity)?.startActivityForResult(
+                                    Intent(Intent.ACTION_GET_CONTENT).apply {
+                                        type = "*/*"
+                                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+                                        addCategory(Intent.CATEGORY_OPENABLE)
+                                    },
+                                    MainActivity.PICK_IMAGE_REQUEST
+                                )
+                            } catch (e: Exception) {}
+                        }) { Text(s.chatAttachMedia, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono) }
+
+                        TextButton(onClick = {
+                            showAttachMenu = false
+                            try {
+                                (context as? MainActivity)?.startActivityForResult(
+                                    Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE) },
                                     MainActivity.PICK_FILE_REQUEST
                                 )
                             } catch (e: Exception) {}
