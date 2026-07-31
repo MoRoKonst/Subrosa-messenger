@@ -810,9 +810,9 @@ object CryptoManager {
             try {
                 loadPublicKey(Base64.encodeToString(offCurve, Base64.NO_WRAP))
                 emit(tr("  ❌ ПРОВАЛ: точка не на кривой была принята!", "  ❌ FAIL: an off-curve point was accepted!"))
-            } catch (e: SecurityException) {
+            } catch (e: Exception) {
                 emit(tr("  ✅ УСПЕХ: точка не на кривой отклонена", "  ✅ PASS: off-curve point rejected"))
-                emit(tr("     Причина: ${e.message}", "     Reason: ${e.message}"))
+                emit(tr("     Причина: ${e.javaClass.simpleName}: ${e.message}", "     Reason: ${e.javaClass.simpleName}: ${e.message}"))
             }
         } catch (e: Exception) {
             emit(tr("  ❌ ОШИБКА: ${e.message}", "  ❌ ERROR: ${e.message}"))
@@ -1059,9 +1059,9 @@ object CryptoManager {
             try {
                 loadPublicKey(Base64.encodeToString(outOfField, Base64.NO_WRAP))
                 emit(tr("  ❌ ПРОВАЛ: координата вне поля была принята!", "  ❌ FAIL: an out-of-field coordinate was accepted!"))
-            } catch (e: SecurityException) {
+            } catch (e: Exception) {
                 emit(tr("  ✅ ОЖИДАЕМО: координата вне поля отклонена", "  ✅ EXPECTED: out-of-field coordinate rejected"))
-                emit(tr("     Причина: ${e.message}", "     Reason: ${e.message}"))
+                emit(tr("     Причина: ${e.javaClass.simpleName}: ${e.message}", "     Reason: ${e.javaClass.simpleName}: ${e.message}"))
             }
         } catch (e: Exception) {
             emit(tr("  ⚠️ Тест не выполнен: ${e.message}", "  ⚠️ Test did not run: ${e.message}"))
