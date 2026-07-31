@@ -3,7 +3,9 @@
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -83,6 +85,26 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
             .fillMaxSize()
             .background(bgGradient)
     ) {
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 16.dp, end = 16.dp)
+                .background(c.card, RoundedCornerShape(8.dp))
+                .clickable {
+                    val newLang = if (s.langCode == "ru") "en" else "ru"
+                    UserStorage.setLanguage(context, newLang)
+                    MainActivity.currentLanguage.value = newLang
+                }
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = if (s.langCode == "ru") "EN" else "RU",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = c.accent,
+                fontFamily = AppFont
+            )
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()

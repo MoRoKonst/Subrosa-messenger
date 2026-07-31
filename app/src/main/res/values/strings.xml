@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">B-CON</string>
-    <string name="emergency_service_description">Экстренное удаление данных при 5 нажатиях кнопки убавления громкости</string>
+    <string name="app_name">Beacon</string>
+    <string name="emergency_service_description">Emergency data deletion on 5 volume down button presses</string>
 </resources>

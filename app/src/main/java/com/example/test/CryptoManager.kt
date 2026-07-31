@@ -604,43 +604,45 @@ object CryptoManager {
     }
 
     fun runSecurityDiagnostics(context: android.content.Context, onLine: ((String) -> Unit)? = null): String {
+        val isEn = UserStorage.getLanguage(context) == "en"
+        fun tr(ru: String, en: String) = if (isEn) en else ru
         val report = StringBuilder()
         fun emit(line: String = "") { report.append(line).append('\n'); onLine?.invoke(line) }
         emit("═══════════════════════════════════════")
-        emit("🔐 ДИАГНОСТИКА БЕЗОПАСНОСТИ KEYSTORE")
+        emit(tr("🔐 ДИАГНОСТИКА БЕЗОПАСНОСТИ KEYSTORE", "🔐 KEYSTORE SECURITY DIAGNOSTICS"))
         emit("═══════════════════════════════════════\n")
 
         if (!hasKeys()) {
             generateKeyPair()
         }
 
-        emit("📋 ТЕСТ 1: Проверка существования ключей")
+        emit(tr("📋 ТЕСТ 1: Проверка существования ключей", "📋 TEST 1: Key existence check"))
         val hasKeysInitial = hasKeys()
-        emit("  Ключи существуют: $hasKeysInitial")
+        emit(tr("  Ключи существуют: $hasKeysInitial", "  Keys exist: $hasKeysInitial"))
 
         if (!hasKeysInitial) {
-            emit("  ⚠️ Ключи не найдены, генерируем...")
+            emit(tr("  ⚠️ Ключи не найдены, генерируем...", "  ⚠️ Keys not found, generating..."))
             generateKeyPair()
-            emit("  ✅ Ключи сгенерированы")
+            emit(tr("  ✅ Ключи сгенерированы", "  ✅ Keys generated"))
         }
         emit()
 
-        emit("📋 ТЕСТ 2: Защита от повторной генерации")
+        emit(tr("📋 ТЕСТ 2: Защита от повторной генерации", "📋 TEST 2: Regeneration protection"))
         val publicKey1 = getPublicKeyString()
-        emit("  Публичный ключ (до): ${publicKey1.take(50)}...")
+        emit(tr("  Публичный ключ (до): ${publicKey1.take(50)}...", "  Public key (before): ${publicKey1.take(50)}..."))
 
         generateKeyPair()
         val publicKey2 = getPublicKeyString()
-        emit("  Публичный ключ (после): ${publicKey2.take(50)}...")
+        emit(tr("  Публичный ключ (после): ${publicKey2.take(50)}...", "  Public key (after): ${publicKey2.take(50)}..."))
 
         if (publicKey1 == publicKey2) {
-            emit("  ✅ УСПЕХ: Ключи НЕ пересоздались (защита работает)")
+            emit(tr("  ✅ УСПЕХ: Ключи НЕ пересоздались (защита работает)", "  ✅ PASS: Keys were NOT recreated (protection works)"))
         } else {
-            emit("  ❌ ПРОВАЛ: Ключи пересоздались (КРИТИЧЕСКАЯ УЯЗВИМОСТЬ!)")
+            emit(tr("  ❌ ПРОВАЛ: Ключи пересоздались (КРИТИЧЕСКАЯ УЯЗВИМОСТЬ!)", "  ❌ FAIL: Keys were recreated (CRITICAL VULNERABILITY!)"))
         }
         emit()
 
-        emit("📋 ТЕСТ 3: Удаление и восстановление")
+        emit(tr("📋 ТЕСТ 3: Удаление и восстановление", "📋 TEST 3: Deletion and recovery"))
         val keyBeforeDelete = getPublicKeyString()
 
         val ctx3 = appContext
@@ -650,26 +652,26 @@ object CryptoManager {
 
         deleteKeys()
         val hasKeysAfterDelete = hasKeys()
-        emit("  После deleteKeys(): hasKeys() = $hasKeysAfterDelete")
+        emit(tr("  После deleteKeys(): hasKeys() = $hasKeysAfterDelete", "  After deleteKeys(): hasKeys() = $hasKeysAfterDelete"))
 
         if (!hasKeysAfterDelete) {
-            emit("  ✅ УСПЕХ: Ключи успешно удалены")
+            emit(tr("  ✅ УСПЕХ: Ключи успешно удалены", "  ✅ PASS: Keys successfully deleted"))
         } else {
-            emit("  ❌ ПРОВАЛ: Ключи не удалились")
+            emit(tr("  ❌ ПРОВАЛ: Ключи не удалились", "  ❌ FAIL: Keys were not deleted"))
         }
 
         generateKeyPair()
         val hasKeysAfterRegenerate = hasKeys()
         val keyAfterRegenerate = getPublicKeyString()
-        emit("  После generateKeyPair(): hasKeys() = $hasKeysAfterRegenerate")
+        emit(tr("  После generateKeyPair(): hasKeys() = $hasKeysAfterRegenerate", "  After generateKeyPair(): hasKeys() = $hasKeysAfterRegenerate"))
 
         if (hasKeysAfterRegenerate) {
-            emit("  ✅ УСПЕХ: Генерация новых ключей работает")
+            emit(tr("  ✅ УСПЕХ: Генерация новых ключей работает", "  ✅ PASS: New key generation works"))
             if (keyBeforeDelete != keyAfterRegenerate) {
-                emit("  ✅ УСПЕХ: Новые ключи отличаются от старых")
+                emit(tr("  ✅ УСПЕХ: Новые ключи отличаются от старых", "  ✅ PASS: New keys differ from the old ones"))
             }
         } else {
-            emit("  ❌ ПРОВАЛ: Не удалось восстановить ключи")
+            emit(tr("  ❌ ПРОВАЛ: Не удалось восстановить ключи", "  ❌ FAIL: Could not restore keys"))
         }
 
         if (savedPrivB64 != null && savedPubB64 != null && encPrefs3 != null) {
@@ -677,21 +679,21 @@ object CryptoManager {
                 .putString(SW_PRIV_KEY, savedPrivB64)
                 .putString(SW_PUB_KEY,  savedPubB64)
                 .commit()
-            emit("  🔄 Ключи аккаунта восстановлены (fingerprint не изменился)")
+            emit(tr("  🔄 Ключи аккаунта восстановлены (fingerprint не изменился)", "  🔄 Account keys restored (fingerprint unchanged)"))
         }
         emit()
 
-        emit("📋 ТЕСТ 4: Проверка хранилища ключей")
+        emit(tr("📋 ТЕСТ 4: Проверка хранилища ключей", "📋 TEST 4: Key storage check"))
         try {
-            val ctx4 = appContext ?: throw IllegalStateException("CryptoManager.init() не вызван")
+            val ctx4 = appContext ?: throw IllegalStateException(tr("CryptoManager.init() не вызван", "CryptoManager.init() was not called"))
             val encPrefs4 = EncryptedStorage.getEncryptedPrefs(ctx4, SW_KEY_PREFS_ENC)
             val privB64 = encPrefs4.getString(SW_PRIV_KEY, null)
             val pubB64  = encPrefs4.getString(SW_PUB_KEY,  null)
 
             if (privB64 == null || pubB64 == null) {
-                emit("  ❌ ПРОВАЛ: Ключи не найдены в EncryptedSharedPreferences ($SW_KEY_PREFS_ENC)")
+                emit(tr("  ❌ ПРОВАЛ: Ключи не найдены в EncryptedSharedPreferences ($SW_KEY_PREFS_ENC)", "  ❌ FAIL: Keys not found in EncryptedSharedPreferences ($SW_KEY_PREFS_ENC)"))
             } else {
-                emit("  ✅ Ключи присутствуют в хранилище: $SW_KEY_PREFS_ENC")
+                emit(tr("  ✅ Ключи присутствуют в хранилище: $SW_KEY_PREFS_ENC", "  ✅ Keys present in storage: $SW_KEY_PREFS_ENC"))
 
                 val kf = java.security.KeyFactory.getInstance("EC")
                 val privKey = kf.generatePrivate(
@@ -701,13 +703,13 @@ object CryptoManager {
                     java.security.spec.X509EncodedKeySpec(Base64.decode(pubB64, Base64.NO_WRAP))
                 )
 
-                emit("  Алгоритм: ${privKey.algorithm} / ${pubKey.algorithm}")
-                emit("  Формат приватного ключа: ${privKey.format} (PKCS#8, экспортируемый только через EncryptedPrefs)")
+                emit(tr("  Алгоритм: ${privKey.algorithm} / ${pubKey.algorithm}", "  Algorithm: ${privKey.algorithm} / ${pubKey.algorithm}"))
+                emit(tr("  Формат приватного ключа: ${privKey.format} (PKCS#8, экспортируемый только через EncryptedPrefs)", "  Private key format: ${privKey.format} (PKCS#8, exportable only via EncryptedPrefs)"))
 
                 if (pubKey is java.security.interfaces.ECPublicKey) {
                     val curveName = pubKey.params.toString()
                     val ok = curveName.contains("secp256r1") || curveName.contains("prime256v1")
-                    emit("  Кривая: ${if (ok) "secp256r1 (P-256) ✅" else curveName}")
+                    emit(tr("  Кривая: ${if (ok) "secp256r1 (P-256) ✅" else curveName}", "  Curve: ${if (ok) "secp256r1 (P-256) ✅" else curveName}"))
                 }
 
                 val testBytes = "key_pair_consistency_check".toByteArray()
@@ -719,128 +721,128 @@ object CryptoManager {
                 }.verify(sig4)
 
                 if (verified4) {
-                    emit("  ✅ УСПЕХ: Ключевая пара согласована (sign ↔ verify)")
+                    emit(tr("  ✅ УСПЕХ: Ключевая пара согласована (sign ↔ verify)", "  ✅ PASS: Key pair is consistent (sign ↔ verify)"))
                 } else {
-                    emit("  ❌ ПРОВАЛ: Ключевая пара несогласована!")
+                    emit(tr("  ❌ ПРОВАЛ: Ключевая пара несогласована!", "  ❌ FAIL: Key pair is inconsistent!"))
                 }
 
-                emit("  🔒 Защита: EncryptedSharedPreferences (AES-256-GCM, мастер-ключ в AndroidKeyStore)")
-                emit("  ✅ УСПЕХ: Ключи корректно хранятся и защищены")
+                emit(tr("  🔒 Защита: EncryptedSharedPreferences (AES-256-GCM, мастер-ключ в AndroidKeyStore)", "  🔒 Protection: EncryptedSharedPreferences (AES-256-GCM, master key in AndroidKeyStore)"))
+                emit(tr("  ✅ УСПЕХ: Ключи корректно хранятся и защищены", "  ✅ PASS: Keys are correctly stored and protected"))
             }
         } catch (e: Exception) {
-            emit("  ❌ ОШИБКА: ${e.message}")
+            emit(tr("  ❌ ОШИБКА: ${e.message}", "  ❌ ERROR: ${e.message}"))
         }
         emit()
 
-        emit("📋 ТЕСТ 5: Шифрование и расшифровка")
+        emit(tr("📋 ТЕСТ 5: Шифрование и расшифровка", "📋 TEST 5: Encryption and decryption"))
         try {
-            val testMessage = "Секретное сообщение 🔐"
+            val testMessage = tr("Секретное сообщение 🔐", "Secret message 🔐")
             val currentPublicKey = getPublicKeyString()
 
-            emit("  Оригинал: '$testMessage'")
-            emit("  Длина оригинала: ${testMessage.length} символов")
-            emit("  Байты оригинала: ${testMessage.toByteArray(Charsets.UTF_8).size} байт")
+            emit(tr("  Оригинал: '$testMessage'", "  Original: '$testMessage'"))
+            emit(tr("  Длина оригинала: ${testMessage.length} символов", "  Original length: ${testMessage.length} characters"))
+            emit(tr("  Байты оригинала: ${testMessage.toByteArray(Charsets.UTF_8).size} байт", "  Original bytes: ${testMessage.toByteArray(Charsets.UTF_8).size} bytes"))
 
             val encrypted = encrypt(testMessage, currentPublicKey)
-            emit("  Зашифровано: ${encrypted.take(50)}...")
+            emit(tr("  Зашифровано: ${encrypted.take(50)}...", "  Encrypted: ${encrypted.take(50)}..."))
 
             val decrypted = decrypt(encrypted)
-            emit("  Расшифровано: '$decrypted'")
-            emit("  Длина расшифрованного: ${decrypted.length} символов")
-            emit("  Байты расшифрованного: ${decrypted.toByteArray(Charsets.UTF_8).size} байт")
-            emit("  HEX расшифрованного: ${decrypted.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it) }}")
-            emit("  HEX оригинала:       ${testMessage.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it) }}")
+            emit(tr("  Расшифровано: '$decrypted'", "  Decrypted: '$decrypted'"))
+            emit(tr("  Длина расшифрованного: ${decrypted.length} символов", "  Decrypted length: ${decrypted.length} characters"))
+            emit(tr("  Байты расшифрованного: ${decrypted.toByteArray(Charsets.UTF_8).size} байт", "  Decrypted bytes: ${decrypted.toByteArray(Charsets.UTF_8).size} bytes"))
+            emit(tr("  HEX расшифрованного: ${decrypted.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it) }}", "  Decrypted HEX: ${decrypted.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it) }}"))
+            emit(tr("  HEX оригинала:       ${testMessage.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it) }}", "  Original HEX:        ${testMessage.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it) }}"))
 
             if (decrypted == testMessage) {
-                emit("  ✅ УСПЕХ: Шифрование/расшифровка работает корректно")
+                emit(tr("  ✅ УСПЕХ: Шифрование/расшифровка работает корректно", "  ✅ PASS: Encryption/decryption works correctly"))
             } else {
-                emit("  ❌ ПРОВАЛ: Сообщение не совпадает")
-                emit("  Ожидалось: '$testMessage'")
-                emit("  Получено:  '$decrypted'")
+                emit(tr("  ❌ ПРОВАЛ: Сообщение не совпадает", "  ❌ FAIL: Message does not match"))
+                emit(tr("  Ожидалось: '$testMessage'", "  Expected: '$testMessage'"))
+                emit(tr("  Получено:  '$decrypted'", "  Got:      '$decrypted'"))
 
                 for (i in 0 until maxOf(testMessage.length, decrypted.length)) {
                     val orig = testMessage.getOrNull(i)
                     val dec = decrypted.getOrNull(i)
                     if (orig != dec) {
-                        emit("  Различие на позиции $i: '$orig' vs '$dec'")
+                        emit(tr("  Различие на позиции $i: '$orig' vs '$dec'", "  Difference at position $i: '$orig' vs '$dec'"))
                     }
                 }
             }
         } catch (e: Exception) {
-            emit("  ❌ ОШИБКА: ${e.message}")
+            emit(tr("  ❌ ОШИБКА: ${e.message}", "  ❌ ERROR: ${e.message}"))
             e.printStackTrace()
         }
         emit()
 
-        emit("📋 ТЕСТ 6: Подпись и верификация")
+        emit(tr("📋 ТЕСТ 6: Подпись и верификация", "📋 TEST 6: Signing and verification"))
         try {
-            val testMessage = "Тестовое сообщение для подписи"
+            val testMessage = tr("Тестовое сообщение для подписи", "Test message for signing")
             val signature = sign(testMessage)
-            emit("  Подпись создана: ${signature.take(50)}...")
+            emit(tr("  Подпись создана: ${signature.take(50)}...", "  Signature created: ${signature.take(50)}..."))
 
             val publicKey = getPublicKeyString()
             val isValid = verify(testMessage, signature, publicKey)
 
             if (isValid) {
-                emit("  ✅ УСПЕХ: Подпись валидна")
+                emit(tr("  ✅ УСПЕХ: Подпись валидна", "  ✅ PASS: Signature is valid"))
             } else {
-                emit("  ❌ ПРОВАЛ: Подпись невалидна")
+                emit(tr("  ❌ ПРОВАЛ: Подпись невалидна", "  ❌ FAIL: Signature is invalid"))
             }
 
-            val fakeSignature = sign("Другое сообщение")
+            val fakeSignature = sign(tr("Другое сообщение", "Another message"))
             val isFakeValid = verify(testMessage, fakeSignature, publicKey)
 
             if (!isFakeValid) {
-                emit("  ✅ УСПЕХ: Поддельная подпись отклонена")
+                emit(tr("  ✅ УСПЕХ: Поддельная подпись отклонена", "  ✅ PASS: Forged signature rejected"))
             } else {
-                emit("  ❌ ПРОВАЛ: Поддельная подпись принята (КРИТИЧЕСКАЯ УЯЗВИМОСТЬ!)")
+                emit(tr("  ❌ ПРОВАЛ: Поддельная подпись принята (КРИТИЧЕСКАЯ УЯЗВИМОСТЬ!)", "  ❌ FAIL: Forged signature accepted (CRITICAL VULNERABILITY!)"))
             }
         } catch (e: Exception) {
-            emit("  ❌ ОШИБКА: ${e.message}")
+            emit(tr("  ❌ ОШИБКА: ${e.message}", "  ❌ ERROR: ${e.message}"))
         }
         emit()
 
-        emit("📋 ТЕСТ 7: Защита от Invalid Curve Attack")
-        emit("  ℹ️ Информационный тест")
-        emit("  ✅ Защита реализована в методе validateECPoint()")
-        emit("     - Вызывается внутри loadPublicKey() для ВСЕХ ключей")
-        emit("     - Проверка: точка не в бесконечности")
-        emit("     - Проверка: координаты в поле (0 < x,y < p)")
-        emit("     - Проверка: y² = x³ + ax + b (mod p)")
-        emit("  ✅ Каждый входящий ключ проверяется автоматически")
-        emit("  ✅ Некорректные точки отклоняются с SecurityException")
+        emit(tr("📋 ТЕСТ 7: Защита от Invalid Curve Attack", "📋 TEST 7: Invalid Curve Attack protection"))
+        emit(tr("  ℹ️ Информационный тест", "  ℹ️ Informational test"))
+        emit(tr("  ✅ Защита реализована в методе validateECPoint()", "  ✅ Protection implemented in validateECPoint()"))
+        emit(tr("     - Вызывается внутри loadPublicKey() для ВСЕХ ключей", "     - Called inside loadPublicKey() for ALL keys"))
+        emit(tr("     - Проверка: точка не в бесконечности", "     - Check: point is not at infinity"))
+        emit(tr("     - Проверка: координаты в поле (0 < x,y < p)", "     - Check: coordinates are in field (0 < x,y < p)"))
+        emit(tr("     - Проверка: y² = x³ + ax + b (mod p)", "     - Check: y² = x³ + ax + b (mod p)"))
+        emit(tr("  ✅ Каждый входящий ключ проверяется автоматически", "  ✅ Every incoming key is checked automatically"))
+        emit(tr("  ✅ Некорректные точки отклоняются с SecurityException", "  ✅ Invalid points are rejected with SecurityException"))
         emit()
 
-        emit("📋 ТЕСТ 8: Шифрование файлов")
+        emit(tr("📋 ТЕСТ 8: Шифрование файлов", "📋 TEST 8: File encryption"))
         try {
-            val testData = "Содержимое тестового файла 📄".toByteArray()
+            val testData = tr("Содержимое тестового файла 📄", "Test file contents 📄").toByteArray()
             val publicKey = getPublicKeyString()
 
             val encrypted = encryptFile(testData, publicKey)
-            emit("  Файл зашифрован: ${encrypted.encryptedData.size} байт")
-            emit("  IV: ${encrypted.iv.size} байт")
-            emit("  Ephemeral key: ${encrypted.ephemeralPublicKey.size} байт")
+            emit(tr("  Файл зашифрован: ${encrypted.encryptedData.size} байт", "  File encrypted: ${encrypted.encryptedData.size} bytes"))
+            emit(tr("  IV: ${encrypted.iv.size} байт", "  IV: ${encrypted.iv.size} bytes"))
+            emit(tr("  Ephemeral key: ${encrypted.ephemeralPublicKey.size} байт", "  Ephemeral key: ${encrypted.ephemeralPublicKey.size} bytes"))
 
             val decrypted = decryptFile(encrypted)
             val decryptedText = String(decrypted)
 
             if (decryptedText == String(testData)) {
-                emit("  ✅ УСПЕХ: Шифрование файлов работает корректно")
+                emit(tr("  ✅ УСПЕХ: Шифрование файлов работает корректно", "  ✅ PASS: File encryption works correctly"))
             } else {
-                emit("  ❌ ПРОВАЛ: Файл расшифрован некорректно")
+                emit(tr("  ❌ ПРОВАЛ: Файл расшифрован некорректно", "  ❌ FAIL: File decrypted incorrectly"))
             }
         } catch (e: Exception) {
-            emit("  ❌ ОШИБКА: ${e.message}")
+            emit(tr("  ❌ ОШИБКА: ${e.message}", "  ❌ ERROR: ${e.message}"))
         }
         emit()
 
         emit("═══════════════════════════════════════")
-        emit("📊 ИТОГОВЫЙ СТАТУС")
+        emit(tr("📊 ИТОГОВЫЙ СТАТУС", "📊 SUMMARY"))
         emit("═══════════════════════════════════════")
-        emit("Публичный ключ (fingerprint):")
+        emit(tr("Публичный ключ (fingerprint):", "Public key (fingerprint):"))
         emit(getFingerprintEmoji())
         emit()
-        emit("⚠️ ВАЖНО: Проверь логи выше на наличие ❌")
+        emit(tr("⚠️ ВАЖНО: Проверь логи выше на наличие ❌", "⚠️ IMPORTANT: Check the logs above for ❌"))
         emit("═══════════════════════════════════════")
 
         return report.toString()
@@ -870,44 +872,46 @@ object CryptoManager {
     )
 
     fun runStressTests(context: android.content.Context, onLine: ((String) -> Unit)? = null): String {
+        val isEn = UserStorage.getLanguage(context) == "en"
+        fun tr(ru: String, en: String) = if (isEn) en else ru
         val report = StringBuilder()
         fun emit(line: String = "") { report.append(line).append('\n'); onLine?.invoke(line) }
         emit("═══════════════════════════════════════")
-        emit("💣 СТРЕСС-ТЕСТЫ (ДОЛЖНЫ ПРОВАЛИТЬСЯ)")
+        emit(tr("💣 СТРЕСС-ТЕСТЫ (ДОЛЖНЫ ПРОВАЛИТЬСЯ)", "💣 STRESS TESTS (SHOULD FAIL)"))
         emit("═══════════════════════════════════════\n")
 
-        emit("📋 НЕГАТИВНЫЙ ТЕСТ 1: Расшифровка мусора")
+        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 1: Расшифровка мусора", "📋 NEGATIVE TEST 1: Decrypting garbage"))
         try {
             val garbage = "AAAAAAAAAAAAAAAAAAAAAA=="
             decrypt(garbage)
-            emit("  ❌ БАГ: Мусор расшифровался (не должно было!)")
+            emit(tr("  ❌ БАГ: Мусор расшифровался (не должно было!)", "  ❌ BUG: Garbage decrypted (should not have!)"))
         } catch (e: Exception) {
-            emit("  ✅ ОЖИДАЕМО: Мусор отклонён")
-            emit("     Причина: ${e.javaClass.simpleName}")
+            emit(tr("  ✅ ОЖИДАЕМО: Мусор отклонён", "  ✅ EXPECTED: Garbage rejected"))
+            emit(tr("     Причина: ${e.javaClass.simpleName}", "     Reason: ${e.javaClass.simpleName}"))
         }
         emit()
 
-        emit("📋 НЕГАТИВНЫЙ ТЕСТ 2: Подделка подписи")
+        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 2: Подделка подписи", "📋 NEGATIVE TEST 2: Signature forgery"))
         try {
-            val message = "Оригинальное сообщение"
+            val message = tr("Оригинальное сообщение", "Original message")
             val fakeSignature = Base64.encodeToString(ByteArray(64) { it.toByte() }, Base64.NO_WRAP)
             val publicKey = getPublicKeyString()
 
             val isValid = verify(message, fakeSignature, publicKey)
 
             if (isValid) {
-                emit("  ❌ КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: Поддельная подпись принята!")
+                emit(tr("  ❌ КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: Поддельная подпись принята!", "  ❌ CRITICAL VULNERABILITY: Forged signature accepted!"))
             } else {
-                emit("  ✅ ОЖИДАЕМО: Подделка отклонена")
+                emit(tr("  ✅ ОЖИДАЕМО: Подделка отклонена", "  ✅ EXPECTED: Forgery rejected"))
             }
         } catch (e: Exception) {
-            emit("  ✅ ОЖИДАЕМО: Подделка вызвала исключение")
+            emit(tr("  ✅ ОЖИДАЕМО: Подделка вызвала исключение", "  ✅ EXPECTED: Forgery raised an exception"))
         }
         emit()
 
-        emit("📋 НЕГАТИВНЫЙ ТЕСТ 3: Изменение зашифрованного текста")
+        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 3: Изменение зашифрованного текста", "📋 NEGATIVE TEST 3: Tampering with ciphertext"))
         try {
-            val originalMessage = "Важное сообщение"
+            val originalMessage = tr("Важное сообщение", "Important message")
             val publicKey = getPublicKeyString()
             val encrypted = encrypt(originalMessage, publicKey)
 
@@ -917,18 +921,18 @@ object CryptoManager {
 
             try {
                 val decrypted = decrypt(corruptedString)
-                emit("  ❌ КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: Изменённые данные расшифровались!")
-                emit("     Расшифровано: $decrypted")
+                emit(tr("  ❌ КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: Изменённые данные расшифровались!", "  ❌ CRITICAL VULNERABILITY: Tampered data was decrypted!"))
+                emit(tr("     Расшифровано: $decrypted", "     Decrypted: $decrypted"))
             } catch (e: Exception) {
-                emit("  ✅ ОЖИДАЕМО: GCM детектировал изменение")
-                emit("     Причина: ${e.javaClass.simpleName}")
+                emit(tr("  ✅ ОЖИДАЕМО: GCM детектировал изменение", "  ✅ EXPECTED: GCM detected the tampering"))
+                emit(tr("     Причина: ${e.javaClass.simpleName}", "     Reason: ${e.javaClass.simpleName}"))
             }
         } catch (e: Exception) {
-            emit("  ⚠️ Тест не выполнен: ${e.message}")
+            emit(tr("  ⚠️ Тест не выполнен: ${e.message}", "  ⚠️ Test did not run: ${e.message}"))
         }
         emit()
 
-        emit("📋 НЕГАТИВНЫЙ ТЕСТ 4: Смена ключей после удаления")
+        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 4: Смена ключей после удаления", "📋 NEGATIVE TEST 4: Key change after deletion"))
         try {
 
             val encPrefsStress4 = EncryptedStorage.getEncryptedPrefs(context, SW_KEY_PREFS_ENC)
@@ -936,7 +940,7 @@ object CryptoManager {
             val savedPubStress4  = encPrefsStress4.getString(SW_PUB_KEY,  null)
 
             val key1 = getPublicKeyString()
-            val testMessage = "Тест"
+            val testMessage = tr("Тест", "Test")
             val encrypted1 = encrypt(testMessage, key1)
 
             deleteKeys()
@@ -945,15 +949,15 @@ object CryptoManager {
             val key2 = getPublicKeyString()
 
             if (key1 == key2) {
-                emit("  ❌ БАГ: Ключи не изменились после удаления!")
+                emit(tr("  ❌ БАГ: Ключи не изменились после удаления!", "  ❌ BUG: Keys did not change after deletion!"))
             } else {
-                emit("  ✅ ОЖИДАЕМО: Новые ключи отличаются")
+                emit(tr("  ✅ ОЖИДАЕМО: Новые ключи отличаются", "  ✅ EXPECTED: New keys differ"))
 
                 try {
                     decrypt(encrypted1)
-                    emit("  ❌ БАГ: Старое сообщение расшифровалось новым ключом!")
+                    emit(tr("  ❌ БАГ: Старое сообщение расшифровалось новым ключом!", "  ❌ BUG: Old message decrypted with the new key!"))
                 } catch (e: Exception) {
-                    emit("  ✅ ОЖИДАЕМО: Старое сообщение не расшифровывается")
+                    emit(tr("  ✅ ОЖИДАЕМО: Старое сообщение не расшифровывается", "  ✅ EXPECTED: Old message does not decrypt"))
                 }
             }
 
@@ -962,16 +966,16 @@ object CryptoManager {
                     .putString(SW_PRIV_KEY, savedPrivStress4)
                     .putString(SW_PUB_KEY,  savedPubStress4)
                     .commit()
-                emit("  🔄 Ключи аккаунта восстановлены (fingerprint не изменился)")
+                emit(tr("  🔄 Ключи аккаунта восстановлены (fingerprint не изменился)", "  🔄 Account keys restored (fingerprint unchanged)"))
             }
         } catch (e: Exception) {
-            emit("  ⚠️ Тест не выполнен: ${e.message}")
+            emit(tr("  ⚠️ Тест не выполнен: ${e.message}", "  ⚠️ Test did not run: ${e.message}"))
         }
         emit()
 
-        emit("📋 НЕГАТИВНЫЙ ТЕСТ 5: Подмена IV в зашифрованном файле")
+        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 5: Подмена IV в зашифрованном файле", "📋 NEGATIVE TEST 5: IV tampering in encrypted file"))
         try {
-            val testData = "Секретный файл".toByteArray()
+            val testData = tr("Секретный файл", "Secret file").toByteArray()
             val publicKey = getPublicKeyString()
 
             val encrypted = encryptFile(testData, publicKey)
@@ -987,42 +991,42 @@ object CryptoManager {
                 val result = decryptFile(corrupted)
                 val resultText = String(result)
 
-                if (resultText == "Секретный файл") {
-                    emit("  ❌ КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: Файл с подменённым IV расшифровался корректно!")
+                if (resultText == tr("Секретный файл", "Secret file")) {
+                    emit(tr("  ❌ КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: Файл с подменённым IV расшифровался корректно!", "  ❌ CRITICAL VULNERABILITY: File with tampered IV decrypted correctly!"))
                 } else {
-                    emit("  ❌ ЧАСТИЧНАЯ УЯЗВИМОСТЬ: Файл расшифровался, но с мусором")
-                    emit("     Ожидалось: Секретный файл")
-                    emit("     Получено: ${resultText.take(50)}")
+                    emit(tr("  ❌ ЧАСТИЧНАЯ УЯЗВИМОСТЬ: Файл расшифровался, но с мусором", "  ❌ PARTIAL VULNERABILITY: File decrypted, but into garbage"))
+                    emit(tr("     Ожидалось: Секретный файл", "     Expected: Secret file"))
+                    emit(tr("     Получено: ${resultText.take(50)}", "     Got: ${resultText.take(50)}"))
                 }
             } catch (e: javax.crypto.AEADBadTagException) {
-                emit("  ✅ ОЖИДАЕМО: GCM детектировал подмену IV")
-                emit("     Причина: ${e.javaClass.simpleName}")
+                emit(tr("  ✅ ОЖИДАЕМО: GCM детектировал подмену IV", "  ✅ EXPECTED: GCM detected the IV tampering"))
+                emit(tr("     Причина: ${e.javaClass.simpleName}", "     Reason: ${e.javaClass.simpleName}"))
             } catch (e: Exception) {
-                emit("  ✅ ОЖИДАЕМО: Подмена IV заблокирована")
-                emit("     Причина: ${e.javaClass.simpleName}")
+                emit(tr("  ✅ ОЖИДАЕМО: Подмена IV заблокирована", "  ✅ EXPECTED: IV tampering was blocked"))
+                emit(tr("     Причина: ${e.javaClass.simpleName}", "     Reason: ${e.javaClass.simpleName}"))
             }
         } catch (e: Exception) {
-            emit("  ⚠️ Тест не выполнен: ${e.message}")
+            emit(tr("  ⚠️ Тест не выполнен: ${e.message}", "  ⚠️ Test did not run: ${e.message}"))
         }
         emit()
 
-        emit("📋 НЕГАТИВНЫЙ ТЕСТ 6: Информационный - Replay Attack")
-        emit("  ℹ️ Защита от Replay реализована на уровне MessengerService")
-        emit("     (receivedMessageIds кеш последних 100 ID)")
+        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 6: Информационный - Replay Attack", "📋 NEGATIVE TEST 6: Informational — Replay Attack"))
+        emit(tr("  ℹ️ Защита от Replay реализована на уровне MessengerService", "  ℹ️ Replay protection is implemented at the MessengerService level"))
+        emit(tr("     (receivedMessageIds кеш последних 100 ID)", "     (receivedMessageIds cache of the last 100 IDs)"))
         emit()
 
-        emit("📋 ТЕСТ 7: Защита от Invalid Curve Attack")
-        emit("  ℹ️ Информационный тест")
-        emit("  ✅ Защита реализована в методе validateECPoint()")
-        emit("     - Вызывается внутри loadPublicKey() для ВСЕХ ключей")
-        emit("     - Проверка: точка не в бесконечности")
-        emit("     - Проверка: координаты в поле (0 < x,y < p)")
-        emit("     - Проверка: y² = x³ + ax + b (mod p)")
-        emit("  ✅ Каждый входящий ключ проверяется автоматически")
-        emit("  ✅ Некорректные точки отклоняются с SecurityException")
+        emit(tr("📋 ТЕСТ 7: Защита от Invalid Curve Attack", "📋 TEST 7: Invalid Curve Attack protection"))
+        emit(tr("  ℹ️ Информационный тест", "  ℹ️ Informational test"))
+        emit(tr("  ✅ Защита реализована в методе validateECPoint()", "  ✅ Protection implemented in validateECPoint()"))
+        emit(tr("     - Вызывается внутри loadPublicKey() для ВСЕХ ключей", "     - Called inside loadPublicKey() for ALL keys"))
+        emit(tr("     - Проверка: точка не в бесконечности", "     - Check: point is not at infinity"))
+        emit(tr("     - Проверка: координаты в поле (0 < x,y < p)", "     - Check: coordinates are in field (0 < x,y < p)"))
+        emit(tr("     - Проверка: y² = x³ + ax + b (mod p)", "     - Check: y² = x³ + ax + b (mod p)"))
+        emit(tr("  ✅ Каждый входящий ключ проверяется автоматически", "  ✅ Every incoming key is checked automatically"))
+        emit(tr("  ✅ Некорректные точки отклоняются с SecurityException", "  ✅ Invalid points are rejected with SecurityException"))
         emit()
 
-        emit("📋 НЕГАТИВНЫЙ ТЕСТ 8: Паддинг работает?")
+        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 8: Паддинг работает?", "📋 NEGATIVE TEST 8: Is padding working?"))
         try {
             val short = "Hi"
             val long = "A".repeat(1000)
@@ -1033,96 +1037,98 @@ object CryptoManager {
             val sizeShort = Base64.decode(encShort, Base64.NO_WRAP).size
             val sizeLong = Base64.decode(encLong, Base64.NO_WRAP).size
 
-            emit("  Короткое сообщение: $sizeShort байт")
-            emit("  Длинное сообщение: $sizeLong байт")
-            emit("  Разница: ${sizeLong - sizeShort} байт")
+            emit(tr("  Короткое сообщение: $sizeShort байт", "  Short message: $sizeShort bytes"))
+            emit(tr("  Длинное сообщение: $sizeLong байт", "  Long message: $sizeLong bytes"))
+            emit(tr("  Разница: ${sizeLong - sizeShort} байт", "  Difference: ${sizeLong - sizeShort} bytes"))
 
             if (sizeShort > short.length + 100) {
-                emit("  ✅ Паддинг работает (размер больше исходного)")
+                emit(tr("  ✅ Паддинг работает (размер больше исходного)", "  ✅ Padding works (size is larger than original)"))
             } else {
-                emit("  ⚠️ ВНИМАНИЕ: Паддинг может быть недостаточным")
+                emit(tr("  ⚠️ ВНИМАНИЕ: Паддинг может быть недостаточным", "  ⚠️ WARNING: Padding may be insufficient"))
             }
         } catch (e: Exception) {
-            emit("  ⚠️ Тест не выполнен: ${e.message}")
+            emit(tr("  ⚠️ Тест не выполнен: ${e.message}", "  ⚠️ Test did not run: ${e.message}"))
         }
         emit()
 
         emit("═══════════════════════════════════════")
-        emit("📊 ИТОГ СТРЕСС-ТЕСТОВ")
+        emit(tr("📊 ИТОГ СТРЕСС-ТЕСТОВ", "📊 STRESS TEST SUMMARY"))
         emit("═══════════════════════════════════════")
-        emit("Все негативные тесты ДОЛЖНЫ быть отклонены.")
-        emit("Если видишь ❌ БАГ - это критическая проблема!")
+        emit(tr("Все негативные тесты ДОЛЖНЫ быть отклонены.", "All negative tests SHOULD be rejected."))
+        emit(tr("Если видишь ❌ БАГ - это критическая проблема!", "If you see ❌ BUG — that's a critical problem!"))
         emit("═══════════════════════════════════════")
 
         return report.toString()
     }
 
     fun runAdvancedTests(context: android.content.Context, onLine: ((String) -> Unit)? = null): String {
+        val isEn = UserStorage.getLanguage(context) == "en"
+        fun tr(ru: String, en: String) = if (isEn) en else ru
         val report = StringBuilder()
         fun emit(line: String = "") { report.append(line).append('\n'); onLine?.invoke(line) }
         emit("═══════════════════════════════════════")
-        emit("🔬 РАСШИРЕННЫЕ ТЕСТЫ (SESSION + GROUP)")
+        emit(tr("🔬 РАСШИРЕННЫЕ ТЕСТЫ (SESSION + GROUP)", "🔬 ADVANCED TESTS (SESSION + GROUP)"))
         emit("═══════════════════════════════════════\n")
 
-        emit("📋 ТЕСТ 9: HKDF (KDF-деривация)")
+        emit(tr("📋 ТЕСТ 9: HKDF (KDF-деривация)", "📋 TEST 9: HKDF (KDF derivation)"))
         try {
             val testSecret = ByteArray(32) { (it * 7 + 3).toByte() }
             val key1 = deriveAesKey(testSecret, "BeaconECDH")
             val key2 = deriveAesKey(testSecret, "BeaconECDH")
             if (key1.contentEquals(key2)) {
-                emit("  ✅ Детерминизм: одинаковые входы → одинаковый ключ")
+                emit(tr("  ✅ Детерминизм: одинаковые входы → одинаковый ключ", "  ✅ Determinism: same inputs → same key"))
             } else {
-                emit("  ❌ ПРОВАЛ: HKDF не детерминирован!")
+                emit(tr("  ❌ ПРОВАЛ: HKDF не детерминирован!", "  ❌ FAIL: HKDF is not deterministic!"))
             }
             val key3 = deriveAesKey(testSecret, "BeaconFileEncryption")
             if (!key1.contentEquals(key3)) {
-                emit("  ✅ Дифференциация: разный info → разный ключ")
+                emit(tr("  ✅ Дифференциация: разный info → разный ключ", "  ✅ Differentiation: different info → different key"))
             } else {
-                emit("  ❌ ПРОВАЛ: разные info дали одинаковый ключ!")
+                emit(tr("  ❌ ПРОВАЛ: разные info дали одинаковый ключ!", "  ❌ FAIL: different info produced the same key!"))
             }
             val zeroSecret = ByteArray(32)
             val keyZero1 = deriveAesKey(zeroSecret, "BeaconECDH")
             val keyZero2 = deriveAesKey(zeroSecret, "BeaconECDH")
             if (keyZero1.contentEquals(keyZero2) && !keyZero1.contentEquals(key1)) {
-                emit("  ✅ Выход зависит от входа (нулевой секрет → свой ключ)")
+                emit(tr("  ✅ Выход зависит от входа (нулевой секрет → свой ключ)", "  ✅ Output depends on input (zero secret → its own key)"))
             } else {
-                emit("  ❌ ПРОВАЛ: HKDF не зависит от входного секрета!")
+                emit(tr("  ❌ ПРОВАЛ: HKDF не зависит от входного секрета!", "  ❌ FAIL: HKDF does not depend on the input secret!"))
             }
-            emit("  Длина ключа: ${key1.size} байт (ожидается 32)")
-            if (key1.size == 32) emit("  ✅ Длина корректна")
-            else emit("  ❌ ПРОВАЛ: неверная длина ключа!")
+            emit(tr("  Длина ключа: ${key1.size} байт (ожидается 32)", "  Key length: ${key1.size} bytes (expected 32)"))
+            if (key1.size == 32) emit(tr("  ✅ Длина корректна", "  ✅ Length is correct"))
+            else emit(tr("  ❌ ПРОВАЛ: неверная длина ключа!", "  ❌ FAIL: incorrect key length!"))
         } catch (e: Exception) {
-            emit("  ❌ ОШИБКА: ${e.message}")
+            emit(tr("  ❌ ОШИБКА: ${e.message}", "  ❌ ERROR: ${e.message}"))
         }
         emit()
 
-        emit("📋 ТЕСТ 10: AES-GCM примитив (прямой вызов)")
+        emit(tr("📋 ТЕСТ 10: AES-GCM примитив (прямой вызов)", "📋 TEST 10: AES-GCM primitive (direct call)"))
         try {
             val aesKey = ByteArray(32).also { secureRandom.nextBytes(it) }
             val plaintext = "AES-GCM direct test 🔒"
             val encrypted = aesEncrypt(plaintext, aesKey)
             val decrypted = aesDecrypt(encrypted, aesKey)
             if (decrypted == plaintext) {
-                emit("  ✅ Round-trip: шифрование/расшифровка корректны")
+                emit(tr("  ✅ Round-trip: шифрование/расшифровка корректны", "  ✅ Round-trip: encryption/decryption correct"))
             } else {
-                emit("  ❌ ПРОВАЛ: round-trip не совпадает")
+                emit(tr("  ❌ ПРОВАЛ: round-trip не совпадает", "  ❌ FAIL: round-trip mismatch"))
             }
 
             val tampered = encrypted.copyOf()
             tampered[tampered.size / 2] = (tampered[tampered.size / 2].toInt() xor 0xFF).toByte()
             try {
                 aesDecrypt(tampered, aesKey)
-                emit("  ❌ ПРОВАЛ: GCM не поймал модификацию данных!")
+                emit(tr("  ❌ ПРОВАЛ: GCM не поймал модификацию данных!", "  ❌ FAIL: GCM did not catch the data tampering!"))
             } catch (_: Exception) {
-                emit("  ✅ GCM тампер-детект: модификация обнаружена")
+                emit(tr("  ✅ GCM тампер-детект: модификация обнаружена", "  ✅ GCM tamper detection: modification detected"))
             }
 
             val aesKey2 = ByteArray(32).also { secureRandom.nextBytes(it) }
             val encrypted2 = aesEncrypt(plaintext, aesKey2)
             if (!encrypted.contentEquals(encrypted2)) {
-                emit("  ✅ Разные ключи → разный шифртекст")
+                emit(tr("  ✅ Разные ключи → разный шифртекст", "  ✅ Different keys → different ciphertext"))
             } else {
-                emit("  ❌ ПРОВАЛ: разные ключи дали одинаковый шифртекст!")
+                emit(tr("  ❌ ПРОВАЛ: разные ключи дали одинаковый шифртекст!", "  ❌ FAIL: different keys produced the same ciphertext!"))
             }
 
             val shortPlain = "Hi"
@@ -1131,53 +1137,53 @@ object CryptoManager {
             val encLong = aesEncrypt(longPlain, aesKey)
 
             if (encShort.size > shortPlain.length + 100 && encLong.size > longPlain.length + 100) {
-                emit("  ✅ Паддинг добавлен: размер не раскрывает длину сообщения")
+                emit(tr("  ✅ Паддинг добавлен: размер не раскрывает длину сообщения", "  ✅ Padding added: size does not reveal message length"))
             } else {
-                emit("  ⚠️ ВНИМАНИЕ: паддинг может быть недостаточным")
+                emit(tr("  ⚠️ ВНИМАНИЕ: паддинг может быть недостаточным", "  ⚠️ WARNING: padding may be insufficient"))
             }
         } catch (e: Exception) {
-            emit("  ❌ ОШИБКА: ${e.message}")
+            emit(tr("  ❌ ОШИБКА: ${e.message}", "  ❌ ERROR: ${e.message}"))
         }
         emit()
 
-        emit("📋 ТЕСТ 11: Группы — генерация и распределение ключа")
+        emit(tr("📋 ТЕСТ 11: Группы — генерация и распределение ключа", "📋 TEST 11: Groups — key generation and distribution"))
         try {
             val groupKey = GroupManager.generateGroupKey()
-            emit("  Групповой ключ: ${groupKey.size} байт")
+            emit(tr("  Групповой ключ: ${groupKey.size} байт", "  Group key: ${groupKey.size} bytes"))
             if (groupKey.size == 32) {
-                emit("  ✅ Длина ключа 256 бит (AES-256)")
+                emit(tr("  ✅ Длина ключа 256 бит (AES-256)", "  ✅ Key length is 256 bits (AES-256)"))
             } else {
-                emit("  ❌ ПРОВАЛ: неверная длина группового ключа!")
+                emit(tr("  ❌ ПРОВАЛ: неверная длина группового ключа!", "  ❌ FAIL: incorrect group key length!"))
             }
 
             val groupKey2 = GroupManager.generateGroupKey()
             if (!groupKey.contentEquals(groupKey2)) {
-                emit("  ✅ Генератор случаен: два ключа отличаются")
+                emit(tr("  ✅ Генератор случаен: два ключа отличаются", "  ✅ Generator is random: two keys differ"))
             } else {
-                emit("  ❌ ПРОВАЛ: два ключа одинаковы (не случайные)!")
+                emit(tr("  ❌ ПРОВАЛ: два ключа одинаковы (не случайные)!", "  ❌ FAIL: two keys are identical (not random)!"))
             }
 
             val myPublicKey = getPublicKeyString()
             val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, myPublicKey)
-            emit("  Зашифрованный групповой ключ: ${encryptedGroupKey.take(40)}...")
+            emit(tr("  Зашифрованный групповой ключ: ${encryptedGroupKey.take(40)}...", "  Encrypted group key: ${encryptedGroupKey.take(40)}..."))
 
             val decryptedGroupKey = GroupManager.decryptGroupKey(encryptedGroupKey)
             if (groupKey.contentEquals(decryptedGroupKey)) {
-                emit("  ✅ Распределение ключа: encrypt → decrypt совпадают")
+                emit(tr("  ✅ Распределение ключа: encrypt → decrypt совпадают", "  ✅ Key distribution: encrypt → decrypt match"))
             } else {
-                emit("  ❌ ПРОВАЛ: расшифрованный ключ не совпадает!")
+                emit(tr("  ❌ ПРОВАЛ: расшифрованный ключ не совпадает!", "  ❌ FAIL: decrypted key does not match!"))
             }
         } catch (e: Exception) {
-            emit("  ❌ ОШИБКА: ${e.message}")
+            emit(tr("  ❌ ОШИБКА: ${e.message}", "  ❌ ERROR: ${e.message}"))
         }
         emit()
 
-        emit("📋 ТЕСТ 12: Группы — шифрование/расшифровка сообщений")
+        emit(tr("📋 ТЕСТ 12: Группы — шифрование/расшифровка сообщений", "📋 TEST 12: Groups — message encryption/decryption"))
         try {
             val groupKey = GroupManager.generateGroupKey()
             val messages = listOf(
-                "Привет группе! 👋",
-                "Тест с эмодзи 🔐🛡️",
+                tr("Привет группе! 👋", "Hello group! 👋"),
+                tr("Тест с эмодзи 🔐🛡️", "Test with emoji 🔐🛡️"),
                 "A".repeat(500)
             )
             var allOk = true
@@ -1187,18 +1193,18 @@ object CryptoManager {
                 if (decrypted != msg) { allOk = false; break }
             }
             if (allOk) {
-                emit("  ✅ Round-trip: ${messages.size} сообщений (включая длинное)")
+                emit(tr("  ✅ Round-trip: ${messages.size} сообщений (включая длинное)", "  ✅ Round-trip: ${messages.size} messages (including a long one)"))
             } else {
-                emit("  ❌ ПРОВАЛ: одно или несколько сообщений не совпали")
+                emit(tr("  ❌ ПРОВАЛ: одно или несколько сообщений не совпали", "  ❌ FAIL: one or more messages did not match"))
             }
 
             val groupKey2 = GroupManager.generateGroupKey()
             val enc1 = GroupManager.encryptGroupMessage("Same message", groupKey2)
             val enc2 = GroupManager.encryptGroupMessage("Same message", groupKey2)
             if (enc1 != enc2) {
-                emit("  ✅ IV случаен: два шифртекста одного сообщения различны")
+                emit(tr("  ✅ IV случаен: два шифртекста одного сообщения различны", "  ✅ IV is random: two ciphertexts of the same message differ"))
             } else {
-                emit("  ❌ ПРОВАЛ: IV не случаен — два шифртекста совпадают!")
+                emit(tr("  ❌ ПРОВАЛ: IV не случаен — два шифртекста совпадают!", "  ❌ FAIL: IV is not random — two ciphertexts match!"))
             }
 
             val enc = GroupManager.encryptGroupMessage("Secret", groupKey)
@@ -1207,21 +1213,21 @@ object CryptoManager {
             val tampered = android.util.Base64.encodeToString(decoded, android.util.Base64.NO_WRAP)
             try {
                 GroupManager.decryptGroupMessage(tampered, groupKey)
-                emit("  ❌ ПРОВАЛ: GCM не поймал модификацию группового сообщения!")
+                emit(tr("  ❌ ПРОВАЛ: GCM не поймал модификацию группового сообщения!", "  ❌ FAIL: GCM did not catch the group message tampering!"))
             } catch (_: Exception) {
-                emit("  ✅ GCM тампер-детект: модификация группового сообщения обнаружена")
+                emit(tr("  ✅ GCM тампер-детект: модификация группового сообщения обнаружена", "  ✅ GCM tamper detection: group message modification detected"))
             }
 
             val wrongKey = GroupManager.generateGroupKey()
             val encMsg = GroupManager.encryptGroupMessage("Private", groupKey)
             try {
                 GroupManager.decryptGroupMessage(encMsg, wrongKey)
-                emit("  ❌ ПРОВАЛ: сообщение расшифровалось неверным ключом!")
+                emit(tr("  ❌ ПРОВАЛ: сообщение расшифровалось неверным ключом!", "  ❌ FAIL: message decrypted with the wrong key!"))
             } catch (_: Exception) {
-                emit("  ✅ Неверный ключ отклонён")
+                emit(tr("  ✅ Неверный ключ отклонён", "  ✅ Wrong key rejected"))
             }
         } catch (e: Exception) {
-            emit("  ❌ ОШИБКА: ${e.message}")
+            emit(tr("  ❌ ОШИБКА: ${e.message}", "  ❌ ERROR: ${e.message}"))
         }
         emit()
 
@@ -1231,7 +1237,7 @@ object CryptoManager {
 
             SessionKeyManager.initialize(context)
 
-            emit("📋 ТЕСТ 13: X3DH — инициация сессии")
+            emit(tr("📋 ТЕСТ 13: X3DH — инициация сессии", "📋 TEST 13: X3DH — session initiation"))
             val bobBundleJson = SessionKeyManager.generatePrekeyBundle()
             val bobBundle     = SessionKeyManager.parsePrekeyBundle(bobBundleJson)
             val (_, x3dhHeader) = SessionKeyManager.initiateSession(aliceId, bobBundle)
@@ -1239,14 +1245,14 @@ object CryptoManager {
             SessionKeyManager.receiveSession(bobId, aliceIdentity, x3dhHeader)
 
             if (SessionKeyManager.hasSession(aliceId) && SessionKeyManager.hasSession(bobId)) {
-                emit("  ✅ X3DH: сессии установлены у обеих сторон")
+                emit(tr("  ✅ X3DH: сессии установлены у обеих сторон", "  ✅ X3DH: sessions established on both sides"))
             } else {
-                emit("  ❌ ПРОВАЛ: сессия не установлена!")
+                emit(tr("  ❌ ПРОВАЛ: сессия не установлена!", "  ❌ FAIL: session not established!"))
             }
             emit()
 
-            emit("📋 ТЕСТ 14: Session — шифрование/расшифровка")
-            val testMessages = listOf("Hello Bob 🔐", "Второе сообщение", "Third msg!")
+            emit(tr("📋 ТЕСТ 14: Session — шифрование/расшифровка", "📋 TEST 14: Session — encryption/decryption"))
+            val testMessages = listOf("Hello Bob 🔐", tr("Второе сообщение", "Second message"), "Third msg!")
             var sessionRoundTripOk = true
             for (msg in testMessages) {
                 val (ct, hdr) = SessionKeyManager.encryptWithSession(aliceId, msg)
@@ -1254,32 +1260,32 @@ object CryptoManager {
                 if (dec != msg) { sessionRoundTripOk = false; break }
             }
             if (sessionRoundTripOk) {
-                emit("  ✅ Round-trip: ${testMessages.size} сообщений (Alice→Bob)")
+                emit(tr("  ✅ Round-trip: ${testMessages.size} сообщений (Alice→Bob)", "  ✅ Round-trip: ${testMessages.size} messages (Alice→Bob)"))
             } else {
-                emit("  ❌ ПРОВАЛ: round-trip не совпадает")
+                emit(tr("  ❌ ПРОВАЛ: round-trip не совпадает", "  ❌ FAIL: round-trip mismatch"))
             }
 
             val (ctB, hdrB) = SessionKeyManager.encryptWithSession(bobId, "Reply from Bob")
             val decB = SessionKeyManager.decryptWithSession(aliceId, ctB, hdrB)
             if (decB == "Reply from Bob") {
-                emit("  ✅ Двусторонность: Bob→Alice работает")
+                emit(tr("  ✅ Двусторонность: Bob→Alice работает", "  ✅ Bidirectionality: Bob→Alice works"))
             } else {
-                emit("  ❌ ПРОВАЛ: Bob→Alice не работает")
+                emit(tr("  ❌ ПРОВАЛ: Bob→Alice не работает", "  ❌ FAIL: Bob→Alice does not work"))
             }
 
             val (ct1, hdr1) = SessionKeyManager.encryptWithSession(aliceId, "Same")
             val (ct2, hdr2) = SessionKeyManager.encryptWithSession(aliceId, "Same")
             if (ct1 != ct2) {
-                emit("  ✅ Ratchet: одно сообщение → разные шифртексты (ключи меняются)")
+                emit(tr("  ✅ Ratchet: одно сообщение → разные шифртексты (ключи меняются)", "  ✅ Ratchet: one message → different ciphertexts (keys change)"))
             } else {
-                emit("  ❌ ПРОВАЛ: ratchet не продвигается!")
+                emit(tr("  ❌ ПРОВАЛ: ratchet не продвигается!", "  ❌ FAIL: ratchet is not advancing!"))
             }
 
             SessionKeyManager.decryptWithSession(bobId, ct1, hdr1)
             SessionKeyManager.decryptWithSession(bobId, ct2, hdr2)
             emit()
 
-            emit("📋 ТЕСТ 15: Session — out-of-order доставка")
+            emit(tr("📋 ТЕСТ 15: Session — out-of-order доставка", "📋 TEST 15: Session — out-of-order delivery"))
 
             val msgs = listOf("Out0", "Out1", "Out2")
             val encrypted15 = msgs.map { SessionKeyManager.encryptWithSession(aliceId, it) }
@@ -1290,27 +1296,27 @@ object CryptoManager {
 
             val dec1 = SessionKeyManager.decryptWithSession(bobId, encrypted15[1].first, encrypted15[1].second)
             if (dec0 == "Out0" && dec1 == "Out1" && dec2 == "Out2") {
-                emit("  ✅ Out-of-order: все 3 сообщения расшифрованы корректно")
+                emit(tr("  ✅ Out-of-order: все 3 сообщения расшифрованы корректно", "  ✅ Out-of-order: all 3 messages decrypted correctly"))
             } else {
-                emit("  ❌ ПРОВАЛ: out-of-order доставка не работает")
+                emit(tr("  ❌ ПРОВАЛ: out-of-order доставка не работает", "  ❌ FAIL: out-of-order delivery does not work"))
                 emit("     dec0='$dec0', dec1='$dec1', dec2='$dec2'")
             }
             emit()
 
-            emit("📋 ТЕСТ 16: Session — изоляция (неверный контакт)")
+            emit(tr("📋 ТЕСТ 16: Session — изоляция (неверный контакт)", "📋 TEST 16: Session — isolation (wrong contact)"))
             val (ctIso, hdrIso) = SessionKeyManager.encryptWithSession(aliceId, "Secret")
 
             try {
                 val fakeDecrypt = SessionKeyManager.decryptWithSession(aliceId, ctIso, hdrIso)
 
-                emit("  ⚠️ Чтение своего шифртекста своим ключом: '$fakeDecrypt'")
-                emit("  ℹ️ (Alice отправляла sendChain, читает recvChain — ожидаем мусор)")
+                emit(tr("  ⚠️ Чтение своего шифртекста своим ключом: '$fakeDecrypt'", "  ⚠️ Reading own ciphertext with own key: '$fakeDecrypt'"))
+                emit(tr("  ℹ️ (Alice отправляла sendChain, читает recvChain — ожидаем мусор)", "  ℹ️ (Alice sent via sendChain, reads recvChain — garbage expected)"))
             } catch (_: Exception) {
-                emit("  ✅ Изоляция: попытка расшифровать чужим ключом отклонена")
+                emit(tr("  ✅ Изоляция: попытка расшифровать чужим ключом отклонена", "  ✅ Isolation: attempt to decrypt with someone else's key rejected"))
             }
 
         } catch (e: Exception) {
-            emit("  ❌ ОШИБКА в сессионных тестах: ${e.message}")
+            emit(tr("  ❌ ОШИБКА в сессионных тестах: ${e.message}", "  ❌ ERROR in session tests: ${e.message}"))
         } finally {
 
             SessionKeyManager.deleteSession(aliceId)
@@ -1319,10 +1325,10 @@ object CryptoManager {
 
         emit()
         emit("═══════════════════════════════════════")
-        emit("📊 ИТОГ РАСШИРЕННЫХ ТЕСТОВ")
+        emit(tr("📊 ИТОГ РАСШИРЕННЫХ ТЕСТОВ", "📊 ADVANCED TEST SUMMARY"))
         emit("═══════════════════════════════════════")
-        emit("Покрыто: HKDF · AES-GCM · GroupManager · X3DH · Ratchet · Out-of-order")
-        emit("Если видишь ❌ ПРОВАЛ — это критическая проблема!")
+        emit(tr("Покрыто: HKDF · AES-GCM · GroupManager · X3DH · Ratchet · Out-of-order", "Covered: HKDF · AES-GCM · GroupManager · X3DH · Ratchet · Out-of-order"))
+        emit(tr("Если видишь ❌ ПРОВАЛ — это критическая проблема!", "If you see ❌ FAIL — that's a critical problem!"))
         emit("═══════════════════════════════════════")
 
         return report.toString()
