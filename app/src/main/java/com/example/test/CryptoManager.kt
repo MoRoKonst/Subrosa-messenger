@@ -803,14 +803,20 @@ object CryptoManager {
         emit()
 
         emit(tr("📋 ТЕСТ 7: Защита от Invalid Curve Attack", "📋 TEST 7: Invalid Curve Attack protection"))
-        emit(tr("  ℹ️ Информационный тест", "  ℹ️ Informational test"))
-        emit(tr("  ✅ Защита реализована в методе validateECPoint()", "  ✅ Protection implemented in validateECPoint()"))
-        emit(tr("     - Вызывается внутри loadPublicKey() для ВСЕХ ключей", "     - Called inside loadPublicKey() for ALL keys"))
-        emit(tr("     - Проверка: точка не в бесконечности", "     - Check: point is not at infinity"))
-        emit(tr("     - Проверка: координаты в поле (0 < x,y < p)", "     - Check: coordinates are in field (0 < x,y < p)"))
-        emit(tr("     - Проверка: y² = x³ + ax + b (mod p)", "     - Check: y² = x³ + ax + b (mod p)"))
-        emit(tr("  ✅ Каждый входящий ключ проверяется автоматически", "  ✅ Every incoming key is checked automatically"))
-        emit(tr("  ✅ Некорректные точки отклоняются с SecurityException", "  ✅ Invalid points are rejected with SecurityException"))
+        try {
+            val templateKeyBytes = Base64.decode(getPublicKeyString(), Base64.NO_WRAP)
+            val offCurve = templateKeyBytes.copyOf()
+            offCurve[offCurve.size - 1] = (offCurve[offCurve.size - 1].toInt() xor 0xFF).toByte()
+            try {
+                loadPublicKey(Base64.encodeToString(offCurve, Base64.NO_WRAP))
+                emit(tr("  ❌ ПРОВАЛ: точка не на кривой была принята!", "  ❌ FAIL: an off-curve point was accepted!"))
+            } catch (e: SecurityException) {
+                emit(tr("  ✅ УСПЕХ: точка не на кривой отклонена", "  ✅ PASS: off-curve point rejected"))
+                emit(tr("     Причина: ${e.message}", "     Reason: ${e.message}"))
+            }
+        } catch (e: Exception) {
+            emit(tr("  ❌ ОШИБКА: ${e.message}", "  ❌ ERROR: ${e.message}"))
+        }
         emit()
 
         emit(tr("📋 ТЕСТ 8: Шифрование файлов", "📋 TEST 8: File encryption"))
@@ -1010,20 +1016,56 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 6: Информационный - Replay Attack", "📋 NEGATIVE TEST 6: Informational — Replay Attack"))
-        emit(tr("  ℹ️ Защита от Replay реализована на уровне MessengerService", "  ℹ️ Replay protection is implemented at the MessengerService level"))
-        emit(tr("     (receivedMessageIds кеш последних 100 ID)", "     (receivedMessageIds cache of the last 100 IDs)"))
+        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 6: Replay Attack", "📋 NEGATIVE TEST 6: Replay attack"))
+        try {
+            SessionKeyManager.initialize(context)
+            val replayAlice = "_test_replay_a_${System.currentTimeMillis()}"
+            val replayBob   = "_test_replay_b_${System.currentTimeMillis()}"
+            try {
+                val bundleJson = SessionKeyManager.generatePrekeyBundle()
+                val bundle = SessionKeyManager.parsePrekeyBundle(bundleJson)
+                val (_, x3dhHeader) = SessionKeyManager.initiateSession(replayAlice, bundle)
+                SessionKeyManager.receiveSession(replayBob, getPublicKeyString(), x3dhHeader)
+
+                val (ct, hdr) = SessionKeyManager.encryptWithSession(replayAlice, "Replay me")
+                val firstDecrypt = SessionKeyManager.decryptWithSession(replayBob, ct, hdr)
+                if (firstDecrypt == "Replay me") {
+                    emit(tr("  ✅ Первая доставка успешна", "  ✅ First delivery succeeded"))
+                } else {
+                    emit(tr("  ⚠️ Первая доставка вернула неожиданный текст", "  ⚠️ First delivery returned unexpected text"))
+                }
+
+                try {
+                    SessionKeyManager.decryptWithSession(replayBob, ct, hdr)
+                    emit(tr("  ❌ КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: повторная доставка того же сообщения расшифровалась!", "  ❌ CRITICAL VULNERABILITY: replayed message decrypted again!"))
+                } catch (e: Exception) {
+                    emit(tr("  ✅ ОЖИДАЕМО: повторное сообщение отклонено (ключ уже использован и удалён)", "  ✅ EXPECTED: replayed message rejected (key already used and discarded)"))
+                    emit(tr("     Причина: ${e.javaClass.simpleName}", "     Reason: ${e.javaClass.simpleName}"))
+                }
+            } finally {
+                SessionKeyManager.deleteSession(replayAlice)
+                SessionKeyManager.deleteSession(replayBob)
+            }
+        } catch (e: Exception) {
+            emit(tr("  ⚠️ Тест не выполнен: ${e.message}", "  ⚠️ Test did not run: ${e.message}"))
+        }
         emit()
 
         emit(tr("📋 ТЕСТ 7: Защита от Invalid Curve Attack", "📋 TEST 7: Invalid Curve Attack protection"))
-        emit(tr("  ℹ️ Информационный тест", "  ℹ️ Informational test"))
-        emit(tr("  ✅ Защита реализована в методе validateECPoint()", "  ✅ Protection implemented in validateECPoint()"))
-        emit(tr("     - Вызывается внутри loadPublicKey() для ВСЕХ ключей", "     - Called inside loadPublicKey() for ALL keys"))
-        emit(tr("     - Проверка: точка не в бесконечности", "     - Check: point is not at infinity"))
-        emit(tr("     - Проверка: координаты в поле (0 < x,y < p)", "     - Check: coordinates are in field (0 < x,y < p)"))
-        emit(tr("     - Проверка: y² = x³ + ax + b (mod p)", "     - Check: y² = x³ + ax + b (mod p)"))
-        emit(tr("  ✅ Каждый входящий ключ проверяется автоматически", "  ✅ Every incoming key is checked automatically"))
-        emit(tr("  ✅ Некорректные точки отклоняются с SecurityException", "  ✅ Invalid points are rejected with SecurityException"))
+        try {
+            val templateKeyBytes = Base64.decode(getPublicKeyString(), Base64.NO_WRAP)
+            val outOfField = templateKeyBytes.copyOf()
+            for (i in outOfField.size - 64 until outOfField.size) outOfField[i] = 0xFF.toByte()
+            try {
+                loadPublicKey(Base64.encodeToString(outOfField, Base64.NO_WRAP))
+                emit(tr("  ❌ ПРОВАЛ: координата вне поля была принята!", "  ❌ FAIL: an out-of-field coordinate was accepted!"))
+            } catch (e: SecurityException) {
+                emit(tr("  ✅ ОЖИДАЕМО: координата вне поля отклонена", "  ✅ EXPECTED: out-of-field coordinate rejected"))
+                emit(tr("     Причина: ${e.message}", "     Reason: ${e.message}"))
+            }
+        } catch (e: Exception) {
+            emit(tr("  ⚠️ Тест не выполнен: ${e.message}", "  ⚠️ Test did not run: ${e.message}"))
+        }
         emit()
 
         emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 8: Паддинг работает?", "📋 NEGATIVE TEST 8: Is padding working?"))
@@ -1303,16 +1345,26 @@ object CryptoManager {
             }
             emit()
 
-            emit(tr("📋 ТЕСТ 16: Session — изоляция (неверный контакт)", "📋 TEST 16: Session — isolation (wrong contact)"))
+            emit(tr("📋 ТЕСТ 16: Session — изоляция (посторонний ключ)", "📋 TEST 16: Session — isolation (unrelated key)"))
             val (ctIso, hdrIso) = SessionKeyManager.encryptWithSession(aliceId, "Secret")
 
+            val malloryId = "_test_mallory_${System.currentTimeMillis()}"
+            val eveId     = "_test_eve_${System.currentTimeMillis()}"
             try {
-                val fakeDecrypt = SessionKeyManager.decryptWithSession(aliceId, ctIso, hdrIso)
+                val eveBundleJson = SessionKeyManager.generatePrekeyBundle()
+                val eveBundle     = SessionKeyManager.parsePrekeyBundle(eveBundleJson)
+                val (_, eveHeader) = SessionKeyManager.initiateSession(malloryId, eveBundle)
+                SessionKeyManager.receiveSession(eveId, getPublicKeyString(), eveHeader)
 
-                emit(tr("  ⚠️ Чтение своего шифртекста своим ключом: '$fakeDecrypt'", "  ⚠️ Reading own ciphertext with own key: '$fakeDecrypt'"))
-                emit(tr("  ℹ️ (Alice отправляла sendChain, читает recvChain — ожидаем мусор)", "  ℹ️ (Alice sent via sendChain, reads recvChain — garbage expected)"))
-            } catch (_: Exception) {
-                emit(tr("  ✅ Изоляция: попытка расшифровать чужим ключом отклонена", "  ✅ Isolation: attempt to decrypt with someone else's key rejected"))
+                try {
+                    val fakeDecrypt = SessionKeyManager.decryptWithSession(malloryId, ctIso, hdrIso)
+                    emit(tr("  ❌ ПРОВАЛ: посторонняя сторона расшифровала чужой шифртекст: '$fakeDecrypt'", "  ❌ FAIL: an unrelated party decrypted someone else's ciphertext: '$fakeDecrypt'"))
+                } catch (_: Exception) {
+                    emit(tr("  ✅ Изоляция: посторонний ключ не может расшифровать чужой шифртекст", "  ✅ Isolation: an unrelated key cannot decrypt someone else's ciphertext"))
+                }
+            } finally {
+                SessionKeyManager.deleteSession(malloryId)
+                SessionKeyManager.deleteSession(eveId)
             }
 
         } catch (e: Exception) {
