@@ -40,13 +40,23 @@ object StorageKeyManager {
         val salt   = ByteArray(32).also { SecureRandom().nextBytes(it) }
 
         val encPwd = encryptWithPassword(newSmk, password, salt)
-        val encKs  = encryptWithKeystore(newSmk, context)
 
-        prefs(context).edit()
-            .putString(KEY_ENC_SMK_PWD, Base64.encodeToString(encPwd, Base64.NO_WRAP))
-            .putString(KEY_SALT,        Base64.encodeToString(salt,   Base64.NO_WRAP))
-            .putString(KEY_ENC_SMK_KS,  Base64.encodeToString(encKs,  Base64.NO_WRAP))
-            .apply()
+        // KS-путь — необязательный бонус для быстрой разблокировки (биометрия).
+        // Требует secure lock screen на устройстве; без него генерация ключа падает
+        // с IllegalStateException. Пароль остаётся основным и всегда рабочим способом.
+        val encKs = try {
+            encryptWithKeystore(newSmk, context)
+        } catch (e: Exception) {
+            null
+        }
+
+        prefs(context).edit().apply {
+            putString(KEY_ENC_SMK_PWD, Base64.encodeToString(encPwd, Base64.NO_WRAP))
+            putString(KEY_SALT,        Base64.encodeToString(salt,   Base64.NO_WRAP))
+            if (encKs != null) {
+                putString(KEY_ENC_SMK_KS, Base64.encodeToString(encKs, Base64.NO_WRAP))
+            }
+        }.apply()
 
         smk?.fill(0)
         smk = newSmk
