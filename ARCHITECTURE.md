@@ -2,6 +2,8 @@
 
 This document describes the system design, module structure, and data flows of Beacon Messenger.
 
+> **Note:** The Channels feature (broadcast channels: `ChannelManager`, `ChannelFeedScreen`, `channel_*` message types and DB tables referenced below) is currently **disabled at the UI layer** on both clients — it didn't fit the product's purpose as a resilient private communication tool rather than a broadcast/social tool, and its metadata wasn't anonymized. The underlying code is left in place, unreachable, in case it's revisited later.
+
 ---
 
 ## Table of Contents

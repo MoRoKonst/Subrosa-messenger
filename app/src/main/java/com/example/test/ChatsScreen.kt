@@ -143,10 +143,11 @@ fun ChatsScreen(
                 val lastTs   = messages.lastOrNull()?.timestamp ?: 0L
                 items.add(ChatItem.GroupChat(group, messages.lastOrNull()?.text ?: s.chatsNoMessages, lastTs))
             }
-            ChannelManager.getChannels(context).forEach { channel ->
-                val lastPost = ChannelManager.loadPosts(context, channel.id).lastOrNull()?.text ?: s.chatsNoPosts
-                items.add(ChatItem.ChannelItem(channel, lastPost))
-            }
+            // Channels feature disabled — see plan history to re-enable.
+            // ChannelManager.getChannels(context).forEach { channel ->
+            //     val lastPost = ChannelManager.loadPosts(context, channel.id).lastOrNull()?.text ?: s.chatsNoPosts
+            //     items.add(ChatItem.ChannelItem(channel, lastPost))
+            // }
 
             items.sortByDescending { item ->
                 when (item) {
@@ -460,14 +461,15 @@ fun ChatsScreen(
                     OptionRow(s.chatsCreateGroup) {
                         showGroupOptions = false; onCreateGroup()
                     }
-                    HorizontalDivider(color = c.textPrimary.copy(alpha = 0.08f), thickness = 0.5.dp)
-                    OptionRow(s.chatsSubscribeChannel) {
-                        showGroupOptions = false; showChannelSubscribeInput = true
-                    }
-                    HorizontalDivider(color = c.textPrimary.copy(alpha = 0.08f), thickness = 0.5.dp)
-                    OptionRow(s.chatsCreateChannel, labelColor = c.accent) {
-                        showGroupOptions = false; showCreateChannelDialog = true
-                    }
+                    // Channels feature disabled — see plan history to re-enable.
+                    // HorizontalDivider(color = c.textPrimary.copy(alpha = 0.08f), thickness = 0.5.dp)
+                    // OptionRow(s.chatsSubscribeChannel) {
+                    //     showGroupOptions = false; showChannelSubscribeInput = true
+                    // }
+                    // HorizontalDivider(color = c.textPrimary.copy(alpha = 0.08f), thickness = 0.5.dp)
+                    // OptionRow(s.chatsCreateChannel, labelColor = c.accent) {
+                    //     showGroupOptions = false; showCreateChannelDialog = true
+                    // }
                 }
             },
             confirmButton = {}

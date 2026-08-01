@@ -50,11 +50,6 @@ The server never has access to plaintext messages, user identities, keys, or cal
 - Group descriptions and emoji avatars
 - Key rotation on member removal
 
-### Channels
-- Broadcast-only channels (admin → subscribers)
-- Subscribe via deep link (`beacon://channel?...`)
-- Up to 200 posts cached per channel
-
 ### Voice & Video Calls
 - WebRTC peer-to-peer audio and video
 - TURN relay over TCP (port 4433) for NAT traversal
@@ -103,7 +98,7 @@ Standard:  { "from": "A1B2C3D4", "to": "9F8E7D6C", "text": "<encrypted>" }
 Beacon:    { "type": "anon_message", "token": "e39f0134...", "payload": "<encrypted>" }
 ```
 
-The server sees an anonymous blob — not a `from → to` pair.
+The server sees an anonymous blob — not a `from → to` pair. Note this hides the *recipient* side of the graph edge, not the sender: the server always knows which authenticated connection (i.e. which fingerprint) sent a given `anon_message`, since sending requires an authenticated WebSocket session. What it can no longer determine is who that message was *for*.
 
 ### 2. Anonymous Mailbox (First Contact)
 
@@ -129,7 +124,7 @@ The server exposes a `.onion` address. Traffic travels entirely within the Tor n
 
 | Observer | Without Beacon | With Beacon |
 |---|---|---|
-| Server / leaked logs | `from → to` graph, content | Anonymous blobs and tokens — no identity |
+| Server / leaked logs | `from → to` graph, content | Sender identity per connection still visible; recipient side hidden (anonymous blobs and tokens) |
 | Malicious server operator | `from → to` graph, content | Token routing table (mitigated by self-hosting) |
 | Sender's ISP | Server IP, timing, volume | Encrypted Tor traffic |
 | Recipient's ISP | Server IP, timing, volume | Encrypted Tor traffic |

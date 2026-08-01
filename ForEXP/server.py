@@ -455,7 +455,7 @@ async def handle_federation_peer_incoming(websocket, ip: str):
     roster = list(dynamic_peer_urls)
     if roster:
         await send_safe(websocket, json.dumps({"type": "peer_roster", "peers": roster}))
-        print(f"[FEDERATION] Ростер ({len(roster)} пиров) отправлен → {ip}")
+        print(f"[FEDERATION] Ростер ({len(roster)} пиров) отправлен входящему пиру")
 
     try:
         async for raw_msg in websocket:
@@ -943,7 +943,7 @@ async def handle_client(websocket):
                 for payload_str in pending:
                     await send_safe(websocket, payload_str)
                 if pending:
-                    print(f"[QUEUE] Доставлено {len(pending)} отложенных сообщений → {username}")
+                    print(f"[QUEUE] Доставлено {len(pending)} отложенных сообщений")
 
                 # ── Deliver TURN credentials (from env vars — never hardcoded) ──
                 turn_user = os.environ.get("TURN_USER", "")
@@ -1205,7 +1205,7 @@ async def handle_client(websocket):
                         "id": msg_id, "protocol_version": 2
                     }))
                     await websocket.send(json.dumps({"type": "ack", "id": msg_id}))
-                    print(f"[MSG] {username} → {to} session_init (доставлено)")
+                    print("[MSG] session_init delivered")
                 else:
                     fwd = {
                         "type": "session_init", "from": username,
@@ -1219,9 +1219,9 @@ async def handle_client(websocket):
                     forwarded = FEDERATION_SECRET and await forward_to_peers(to, fwd)
                     if not forwarded:
                         await db_store(to, fwd, msg_id)
-                        print(f"[MSG] {username} → {to} session_init (оффлайн, сохранено)")
+                        print("[MSG] session_init queued (offline)")
                     else:
-                        print(f"[MSG] {username} → {to} session_init (переслано федерации)")
+                        print("[MSG] session_init forwarded via federation")
                     # Разбудить приложение получателя через FCM
                     asyncio.create_task(send_fcm_wakeup(to))
                     await websocket.send(json.dumps({"type": "ack", "id": msg_id}))
@@ -1244,7 +1244,7 @@ async def handle_client(websocket):
                         payload["session_header"] = message["session_header"]
                     await send_safe(recipient["ws"], json.dumps(payload))
                     await websocket.send(json.dumps({"type": "ack", "id": msg_id}))
-                    print(f"[MSG] {username} → {to} (доставлено)")
+                    print("[MSG] message delivered")
                 else:
                     fwd_payload = {"type": "message", "from": username,
                                    "text": message.get("text"), "signature": message.get("signature"),
@@ -1254,9 +1254,9 @@ async def handle_client(websocket):
                     forwarded = FEDERATION_SECRET and await forward_to_peers(to, fwd_payload)
                     if not forwarded:
                         await db_store(to, fwd_payload, msg_id)
-                        print(f"[MSG] {username} → {to} (оффлайн, сохранено в очередь)")
+                        print("[MSG] message queued (offline)")
                     else:
-                        print(f"[MSG] {username} → {to} (переслано федерации)")
+                        print("[MSG] message forwarded via federation")
                     # Разбудить приложение получателя через FCM
                     asyncio.create_task(send_fcm_wakeup(to))
                     await websocket.send(json.dumps({"type": "ack", "id": msg_id}))
@@ -1641,7 +1641,7 @@ async def handle_client(websocket):
                 for ws in recipient_wss:
                     asyncio.create_task(send_safe(ws, payload))
 
-                print(f"[CHANNEL] Post in {channel_id} by {username}: {text[:50]}{' [+image]' if image_data else ''}")
+                print(f"[CHANNEL] Post delivered to {len(recipient_wss)} subscriber(s){' [+image]' if image_data else ''}")
                 continue
 
             # ─── Get Channel Info ─────────────────────────────────────────────
@@ -1698,7 +1698,7 @@ async def handle_client(websocket):
                     target_ws = clients.get(target, {}).get("ws")
                 if target_ws:
                     asyncio.create_task(send_safe(target_ws, json.dumps(message)))
-                    print(f"[CALL] {msg_type} {username} → {target}")
+                    print(f"[CALL] {msg_type} relayed")
                 else:
                     if msg_type == "call_offer":
                         # Получатель оффлайн — сохраняем пропущенный звонок и будим через FCM
@@ -1710,9 +1710,9 @@ async def handle_client(websocket):
                         }
                         await db_store(target, missed)
                         asyncio.create_task(send_fcm_wakeup(target))
-                        print(f"[CALL] missed call stored for {target} from {username}")
+                        print("[CALL] missed call stored (recipient offline)")
                     else:
-                        print(f"[CALL] {msg_type} {username} → {target} (offline, dropped)")
+                        print(f"[CALL] {msg_type} dropped (recipient offline)")
                 continue
 
             # ─── Chat features relay ───────────────────────────────────────────

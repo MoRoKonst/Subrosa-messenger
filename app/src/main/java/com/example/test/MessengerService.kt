@@ -2612,13 +2612,13 @@ class MessengerService : Service() {
         if (!isConnected) return
         scope.launch(Dispatchers.IO) {
             members.filter { it != username }.forEach { memberId ->
-                sendWs(JSONObject().apply {
+                sendAnonOrDirect(memberId, JSONObject().apply {
                     put("type", "group_message_delete")
                     put("from", username)
                     put("to", memberId)
                     put("group_id", groupId)
                     put("message_id", messageId)
-                }.toString())
+                })
             }
         }
     }

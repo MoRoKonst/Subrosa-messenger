@@ -106,16 +106,16 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun handleChannelDeepLink(intent: Intent?) {
-
-        val uri = intent?.data
-        if (uri != null && uri.scheme == "beacon" && uri.host == "channel") {
-            pendingChannelLink.value = uri.toString()
-            return
-        }
-
-        intent?.getStringExtra("open_channel")?.let { channelId ->
-            pendingOpenChannelId.value = channelId
-        }
+        // Channels feature disabled — see plan history to re-enable.
+        // val uri = intent?.data
+        // if (uri != null && uri.scheme == "beacon" && uri.host == "channel") {
+        //     pendingChannelLink.value = uri.toString()
+        //     return
+        // }
+        //
+        // intent?.getStringExtra("open_channel")?.let { channelId ->
+        //     pendingOpenChannelId.value = channelId
+        // }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
