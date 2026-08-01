@@ -169,7 +169,6 @@ cd beacon-messenger
 
 # 3. Configure environment
 cp .env.example .env
-# Edit .env and set CHANNEL_ADMIN_SECRET
 
 # 4. Start server
 docker compose up -d
@@ -207,7 +206,6 @@ You can run your own Beacon server and connect the app to it — no recompilatio
 ```bash
 cd ForEXP
 pip install websockets cryptography
-export CHANNEL_ADMIN_SECRET="your-secret-here"
 python server.py --dev
 ```
 

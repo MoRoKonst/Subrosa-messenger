@@ -69,12 +69,7 @@ suspicious_activity = defaultdict(lambda: {"violations": 0, "last_violation": 0}
 
 # ─── Channels ─────────────────────────────────────────────────────────────────
 # channel_id → {"name", "avatar", "description", "admin", "subscribers": set()}
-channels             = {}
-# one-time invite codes for channel creation
-# code → {"channel_name", "avatar", "description", "expires": timestamp, "used": bool}
-channel_invite_codes = {}
-# Secret for generating channel creation codes (set via env var CHANNEL_ADMIN_SECRET)
-CHANNEL_ADMIN_SECRET = os.getenv("CHANNEL_ADMIN_SECRET", "")
+channels = {}
 
 # ─── User avatars ──────────────────────────────────────────────────────────────
 # username → base64-encoded JPEG avatar (128×128, ~5-8 KB)
@@ -850,7 +845,6 @@ async def handle_client(websocket):
                 "group_key_rotation",
                 "group_invite_accepted",
                 "delivered",
-                "generate_channel_code",
                 "channel_create",
                 "channel_subscribe",
                 "channel_unsubscribe",
@@ -1505,50 +1499,20 @@ async def handle_client(websocket):
                         await db_store(to, gia_payload)
                 continue
 
-            # ─── Generate Channel Invite Code (admin only) ────────────────────
-            if msg_type == "generate_channel_code":
-                admin_secret = message.get("admin_secret", "")
-                if not CHANNEL_ADMIN_SECRET or not hmac.compare_digest(admin_secret, CHANNEL_ADMIN_SECRET):
-                    await websocket.send(json.dumps({"type": "error", "reason": "Unauthorized"}))
-                    continue
-                # Generate a unique one-time code
-                code = secrets.token_urlsafe(12)
-                expires = time.time() + 24 * 3600  # 24 hours
-                async with lock:
-                    channel_invite_codes[code] = {
-                        "expires": expires,
-                        "used": False
-                    }
-                await websocket.send(json.dumps({"type": "channel_code_generated", "code": code}))
-                print(f"[CHANNEL] Invite code generated: {code} by {username}")
-                continue
-
             # ─── Create Channel ───────────────────────────────────────────────
             if msg_type == "channel_create":
-                invite_code   = message.get("invite_code", "")
                 channel_name  = message.get("channel_name", "").strip()
                 channel_desc  = message.get("channel_description", "").strip()
                 channel_avatar = message.get("channel_avatar", "📢")
 
+                if not channel_name:
+                    await websocket.send(json.dumps({"type": "error", "reason": "Название канала не может быть пустым"}))
+                    continue
+                if len(channel_name) > 100:
+                    await websocket.send(json.dumps({"type": "error", "reason": "Слишком длинное название канала"}))
+                    continue
+
                 async with lock:
-                    code_entry = channel_invite_codes.get(invite_code)
-                    if not code_entry:
-                        await websocket.send(json.dumps({"type": "error", "reason": "Неверный инвайт-код"}))
-                        continue
-                    if code_entry["used"]:
-                        await websocket.send(json.dumps({"type": "error", "reason": "Инвайт-код уже использован"}))
-                        continue
-                    if time.time() > code_entry["expires"]:
-                        await websocket.send(json.dumps({"type": "error", "reason": "Инвайт-код истёк"}))
-                        continue
-                    if not channel_name:
-                        await websocket.send(json.dumps({"type": "error", "reason": "Название канала не может быть пустым"}))
-                        continue
-
-                    # Mark code as used
-                    channel_invite_codes[invite_code]["used"] = True
-
-                    # Create channel
                     channel_id = secrets.token_urlsafe(16)
                     channels[channel_id] = {
                         "name": channel_name,
@@ -1972,59 +1936,6 @@ async def handle_client(websocket):
         print(f"[-] Отключился: {ip}")
 
 
-# ─── Admin HTTP API (порт 9001, только localhost) ─────────────────────────────
-# Использование: curl "http://127.0.0.1:9001/channel_code?secret=YOUR_SECRET"
-# Возвращает JSON: {"code": "xxx", "expires_in": "24h"}
-
-ADMIN_PORT = int(os.getenv("ADMIN_PORT", "9001"))
-
-async def handle_admin_http(reader, writer):
-    try:
-        data = await asyncio.wait_for(reader.read(1024), timeout=5)
-        request = data.decode(errors="replace")
-        # Parse simple GET request
-        first_line = request.split("\r\n")[0] if "\r\n" in request else request.split("\n")[0]
-        # e.g. "GET /channel_code?secret=xxx HTTP/1.1"
-        path = first_line.split(" ")[1] if len(first_line.split(" ")) > 1 else ""
-
-        from urllib.parse import urlparse, parse_qs
-        parsed = urlparse(path)
-        params = parse_qs(parsed.query)
-        provided_secret = params.get("secret", [""])[0]
-
-        if parsed.path == "/channel_code":
-            if not CHANNEL_ADMIN_SECRET:
-                body = '{"error": "CHANNEL_ADMIN_SECRET not set"}'
-                status = "503 Service Unavailable"
-            elif not hmac.compare_digest(provided_secret, CHANNEL_ADMIN_SECRET):
-                body = '{"error": "Invalid secret"}'
-                status = "403 Forbidden"
-            else:
-                code = secrets.token_urlsafe(12)
-                expires = time.time() + 24 * 3600
-                async with lock:
-                    channel_invite_codes[code] = {"expires": expires, "used": False}
-                body = f'{{"code": "{code}", "expires_in": "24h"}}'
-                status = "200 OK"
-                print(f"[ADMIN] Channel invite code generated: {code}")
-        else:
-            body = '{"error": "Not found"}'
-            status = "404 Not Found"
-
-        response = (
-            f"HTTP/1.1 {status}\r\n"
-            f"Content-Type: application/json\r\n"
-            f"Content-Length: {len(body)}\r\n"
-            f"Connection: close\r\n\r\n"
-            f"{body}"
-        )
-        writer.write(response.encode())
-        await writer.drain()
-    except Exception as e:
-        print(f"[ADMIN] HTTP error: {e}")
-    finally:
-        writer.close()
-
 # ─── UPnP: автопроброс порта на домашнем роутере ─────────────────────────────
 
 def setup_upnp(port: int = 9000) -> str:
@@ -2156,12 +2067,6 @@ async def main(ssl_context=None):
     if FEDERATION_SECRET:
         asyncio.create_task(federation_watchdog())
         print("[WATCHDOG] Запущен (проверка пиров каждые 3600с)")
-
-    # Admin HTTP API (только localhost, без TLS)
-    if CHANNEL_ADMIN_SECRET:
-        admin_server = await asyncio.start_server(handle_admin_http, "127.0.0.1", ADMIN_PORT)
-        print(f"[ADMIN] HTTP API запущен на 127.0.0.1:{ADMIN_PORT}")
-        print(f"[ADMIN] Генерация кода: curl \"http://127.0.0.1:{ADMIN_PORT}/channel_code?secret=YOUR_SECRET\"")
 
     async with websockets.serve(
         handle_client,

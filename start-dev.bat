@@ -41,9 +41,6 @@ if not exist ".env" (
     echo.
     echo Creating .env from template...
     copy .env.example .env
-    echo Please edit .env and update CHANNEL_ADMIN_SECRET before running again
-    pause
-    exit /b 1
 )
 
 REM Start services

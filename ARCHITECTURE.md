@@ -274,7 +274,6 @@ rate_limits:        {username → {message, reaction, typing, prekey_fetch, ...}
 banned_users:       {username → ban_info}
 banned_ips:         {ip → ban_info}
 channels:           {channel_id → {name, avatar, admin_id, posts: [...]}}
-channel_invite_codes: {code → {channel_id, used_by, ...}}
 channel_subscribers: {channel_id → {username}}
 ```
 

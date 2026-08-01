@@ -42,7 +42,6 @@ if not exist ".env" (
     echo FEDERATION_SECRET=%FED_SECRET%> .env
     echo FEDERATION_PEERS=wss://api.beacon-app.org>> .env
     echo SERVER_URL=%SRV_URL%>> .env
-    echo CHANNEL_ADMIN_SECRET=>> .env
     echo.
     echo [OK] Настройки сохранены в .env
     echo.

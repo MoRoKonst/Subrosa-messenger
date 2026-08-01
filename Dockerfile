@@ -11,7 +11,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ForEXP/server.py .
 
-ENV CHANNEL_ADMIN_SECRET=${CHANNEL_ADMIN_SECRET}
 ENV BEACON_HOST=0.0.0.0
 ENV BEACON_PORT=9000
 

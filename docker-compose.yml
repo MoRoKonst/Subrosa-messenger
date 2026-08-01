@@ -9,7 +9,6 @@ services:
     ports:
       - "9000:9000"
     environment:
-      CHANNEL_ADMIN_SECRET: ${CHANNEL_ADMIN_SECRET:-change-me-in-production}
       BEACON_HOST: "0.0.0.0"
       BEACON_PORT: 9000
     volumes:

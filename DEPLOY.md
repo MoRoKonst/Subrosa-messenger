@@ -24,7 +24,6 @@ This creates `certs/cert.pem` and `certs/key.pem` for local testing.
 
 ```bash
 cp .env.example .env
-# Edit .env and set CHANNEL_ADMIN_SECRET to a strong random value
 nano .env
 ```
 
@@ -83,14 +82,8 @@ sudo chown $(whoami):$(whoami) ./certs/*.pem
 
 ```bash
 # .env
-CHANNEL_ADMIN_SECRET=<generate-with: openssl rand -hex 32>
 BEACON_HOST=0.0.0.0
 BEACON_PORT=9000
-```
-
-Generate a strong secret:
-```bash
-openssl rand -hex 32
 ```
 
 ### 3. Configure Firewall
@@ -137,7 +130,6 @@ docker-compose logs -f
 
 | Variable | Default | Description |
 |---|---|---|
-| `CHANNEL_ADMIN_SECRET` | — | Secret for generating channel invite codes. **MUST be changed for production** |
 | `BEACON_HOST` | `0.0.0.0` | Server bind address |
 | `BEACON_PORT` | `9000` | Server port (internal, not exposed) |
 
@@ -261,34 +253,19 @@ openssl x509 -in certs/cert.pem -noout -dates
 
 ## Security Recommendations
 
-### 1. Change Default Secret
-
-**Before starting in production**, change `CHANNEL_ADMIN_SECRET`:
-
-```bash
-# Generate random secret
-openssl rand -hex 32
-
-# Update .env
-CHANNEL_ADMIN_SECRET=<generated-value>
-
-# Restart
-docker-compose restart beacon-server
-```
-
-### 2. Use Strong TLS Certificates
+### 1. Use Strong TLS Certificates
 
 - Don't use self-signed certs in production
 - Use Let's Encrypt (free) or commercial CA
 - Enable certificate auto-renewal
 
-### 3. Enable Firewall
+### 2. Enable Firewall
 
 - Only expose ports 80 and 443
 - SSH access from trusted IPs only
 - Consider fail2ban for brute-force protection
 
-### 4. Regular Updates
+### 3. Regular Updates
 
 ```bash
 # Weekly: check for Docker/OS updates

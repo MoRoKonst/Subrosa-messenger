@@ -33,8 +33,6 @@ Use this checklist before deploying Beacon to production.
 - [ ] Test certificate: `openssl x509 -in certs/cert.pem -text -noout`
 
 ### Security Configuration
-- [ ] Change CHANNEL_ADMIN_SECRET: `openssl rand -hex 32`
-- [ ] Update .env file
 - [ ] Enable firewall: `ufw allow 22,80,443/tcp`
 - [ ] Disable root SSH login (optional but recommended)
 

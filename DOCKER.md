@@ -57,12 +57,6 @@ cp .env.example .env
 nano .env
 ```
 
-Change `CHANNEL_ADMIN_SECRET` to a secure random value:
-```bash
-openssl rand -hex 32
-# Output example: a3f9e4c1b2d6a8f9e4c1b2d6a8f9e4c1b2d6a8f9e4c1b2d6a8f9e4c1b2
-```
-
 ### Step 4: Start Server
 
 ```bash
@@ -221,7 +215,6 @@ services:
 
 ### Before Production
 
-- [ ] Change `CHANNEL_ADMIN_SECRET` in .env
 - [ ] Use real TLS certificate (not self-signed)
 - [ ] Enable firewall
 - [ ] Run on isolated VPS or internal network

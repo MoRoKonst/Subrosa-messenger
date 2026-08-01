@@ -33,7 +33,6 @@ if [ ! -f ".env" ]; then
     echo ""
     echo "Creating .env from template..."
     cp .env.example .env
-    echo "Please edit .env and update CHANNEL_ADMIN_SECRET"
     echo ""
     read -p "Press Enter to continue or Ctrl+C to edit .env first..."
 fi
