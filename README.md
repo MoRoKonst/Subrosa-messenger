@@ -16,6 +16,7 @@ A self-hosted end-to-end encrypted messenger for Android with metadata protectio
 - [Quick Start](#quick-start)
 - [Security Overview](#security-overview)
 - [Documentation](#documentation)
+- [License](#license)
 
 ---
 
@@ -118,7 +119,10 @@ Noise packets are structurally identical to real messages — same type, random 
 
 ### 4. Tor Hidden Service
 
-The server exposes a `.onion` address. Traffic travels entirely within the Tor network — no exit nodes, no IP exposure, no Cloudflare in the chain. The app uses Orbot and automatically selects the correct proxy mode for `.onion` vs clearnet addresses.
+The server exposes a `.onion` address. Traffic travels entirely within the Tor network — no exit nodes, no IP exposure, no Cloudflare in the chain.
+
+- **Android** uses Orbot and automatically selects the correct proxy mode for `.onion` vs clearnet addresses (Orbot's system-wide VPN mode vs its local SOCKS proxy).
+- **Desktop** routes any `.onion` server URL through a local SOCKS5 proxy on `127.0.0.1:9050` (standard system Tor) or `127.0.0.1:9150` (Tor Browser's bundled tor), detected automatically. There's no VPN-mode ambiguity on desktop — you need Tor (the system service or Tor Browser) already running; the app does not launch it for you.
 
 ### Threat Model Summary
 
@@ -140,6 +144,7 @@ The server exposes a `.onion` address. Traffic travels entirely within the Tor n
 - Google Play Services (optional, for push notifications)
 - Orbot (optional, for Tor hidden service)
 - Camera and microphone permissions for calls
+- Desktop client: system Tor service or Tor Browser (optional, for `.onion` server URLs)
 
 ### Server
 - Python 3.10+
@@ -282,12 +287,12 @@ signingConfigs {
 | Layer | Mechanism |
 |---|---|
 | Transport | WSS (TLS 1.2+) with certificate pinning |
-| Key agreement | X3DH (Identity Key + Signed Prekey + One-Time Prekey) |
+| Key agreement | Hybrid X3DH + ML-KEM-768 (post-quantum, harvest-now-decrypt-later resistant) |
 | Message E2EE | Double Ratchet v3 — DH Ratchet + Symmetric Ratchet, AES-256-GCM |
 | Forward secrecy | Per-message keys; break-in recovery on every DH step |
 | Social graph | Anonymous token routing — server sees no `from → to` pairs |
 | Timing | Constant-rate cover traffic (optional) |
-| IP address | Tor hidden service via Orbot (optional) |
+| IP address | Tor hidden service — via Orbot (Android) or a local SOCKS5 proxy (Desktop), both optional |
 | At-rest (L1) | EncryptedSharedPreferences + AndroidKeyStore |
 | At-rest (L2) | Storage Master Key, AES-256-GCM |
 | Backup | AES-256-GCM + Argon2id (m=64 MB, t=3, p=1) |
@@ -316,3 +321,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the system design and module referenc
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Developers | System design, module reference, data flows |
 | [SECURITY.md](SECURITY.md) | Security analysts | Threat model, cryptographic design, anti-forensics |
 | [CHANGEL_LOG.md](CHANGEL_LOG.md) | Developers | Engineering change log |
+
+---
+
+## License
+
+Beacon Messenger is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0) — see [LICENSE](LICENSE) for the full text.
+
+In short: you're free to run, study, modify, and redistribute this software, including commercially. If you run a modified version as a network service that others interact with remotely (for example, hosting Beacon for clients), AGPL-3.0 §13 requires you to make the corresponding source of your modified version available to those users, free of charge. Every official Beacon client offers this by default via an in-app "Source code" link (Profile → About) pointing to this repository.

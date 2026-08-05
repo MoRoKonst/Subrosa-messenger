@@ -59,6 +59,7 @@ interface IStr3 {
     val profileEmergencyBtnSub: String; val profileNotMe: String
     val profileNotMeTitle: String; val profileNotMeText: String
     val profileNotMeConfirm: String; val profileDiagnostics: String
+    val profileSourceCode: String
     val profilePanicTitle: String; val profilePanicSub: String
     val profilePanicSetStatus: String; val profilePanicEnterLabel: String
     val profilePanicInstruction: String
@@ -352,6 +353,7 @@ private val ru3 = object : IStr3 {
     override val profileNotMeTitle = "⚠️ Это не я!"
     override val profileNotMeText = "Вы уверены? Это удалит ВСЕ данные, чаты, ключи и сбросит приложение!"
     override val profileNotMeConfirm = "Да, сбросить всё"
+    override val profileSourceCode = "📄 Исходный код (AGPL-3.0)"
     override val profileDiagnostics = "🔐 Диагностика безопасности"
     override val profilePanicTitle = "🔑 Panic Password"
     override val profilePanicSub = "Пароль для экстренного удаления всех данных"
@@ -797,6 +799,7 @@ private val en3 = object : IStr3 {
     override val profileNotMeTitle = "⚠️ Not me!"
     override val profileNotMeText = "Are you sure? This will delete ALL data, chats, keys and reset the app!"
     override val profileNotMeConfirm = "Yes, reset everything"
+    override val profileSourceCode = "📄 Source code (AGPL-3.0)"
     override val profileDiagnostics = "🔐 Security diagnostics"
     override val profilePanicTitle = "🔑 Panic Password"
     override val profilePanicSub = "Password for emergency data deletion"

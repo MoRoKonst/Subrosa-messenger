@@ -4,6 +4,7 @@ import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
@@ -204,6 +205,17 @@ fun ProfileScreen(
 
     val inviteCode = remember {
         try {
+            // Clean up the previous invite's mailbox tag before minting a new
+            // one — otherwise every visit to this screen mints a fresh tag
+            // without ever removing the last one (removal only happens when a
+            // real contact actually consumes a tag via mailbox exchange), so
+            // orphaned "real" tags accumulate forever the more times a user
+            // opens their profile.
+            UserStorage.getInviteCode(context)
+                ?.let { InviteCodeManager.parseInviteCode(it) }
+                ?.mailboxTag
+                ?.let { oldTag -> AnonTokenManager.removeMyMailboxTag(context, oldTag) }
+
             val fresh = InviteCodeManager.generateInviteCode(
                 CryptoManager.getPublicKey(),
                 CryptoManager.getPrivateKeyPublic(),
@@ -733,6 +745,18 @@ fun ProfileScreen(
                         PRow(s.profileDiagnostics, onClick = onOpenDiagnostics,         trailing = { PChevron() })
                         PDivider()
                         PRow(s.wipeSettingsTitle,  onClick = onOpenWipeSettings,         trailing = { PChevron() })
+                        PDivider()
+                        PRow(
+                            s.profileSourceCode,
+                            onClick = {
+                                try {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/MoRoKonst/beacon-messenger"))
+                                    )
+                                } catch (_: Exception) {}
+                            },
+                            trailing = { PChevron() }
+                        )
                     }
                 }
 
