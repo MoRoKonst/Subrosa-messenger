@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,14 +22,14 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 
 private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
 
 @Composable
 fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
     val s = LocalStrings.current
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }

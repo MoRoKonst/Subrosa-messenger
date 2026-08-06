@@ -11,8 +11,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ForEXP/server.py .
 
-ENV BEACON_HOST=0.0.0.0
-ENV BEACON_PORT=9000
+ENV SUBROSA_HOST=0.0.0.0
+ENV SUBROSA_PORT=9000
 
 EXPOSE 9000
 

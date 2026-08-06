@@ -1,4 +1,4 @@
-package com.bcon.messenger.ui.theme
+package com.subrosa.messenger.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle

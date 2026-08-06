@@ -1,4 +1,4 @@
-# Beacon Messenger
+# Subrosa Messenger
 
 A self-hosted end-to-end encrypted messenger for Android with metadata protection, anonymous routing, and advanced anti-forensics.
 
@@ -22,7 +22,7 @@ A self-hosted end-to-end encrypted messenger for Android with metadata protectio
 
 ## Overview
 
-Beacon is a self-hosted encrypted messenger built for adversarial environments. Unlike most messengers that protect only message content, Beacon also protects **who talks to whom** — the social graph — through anonymous token routing, cover traffic, and Tor hidden service support.
+Subrosa is a self-hosted encrypted messenger built for adversarial environments. Unlike most messengers that protect only message content, Subrosa also protects **who talks to whom** — the social graph — through anonymous token routing, cover traffic, and Tor hidden service support.
 
 The server never has access to plaintext messages, user identities, keys, or call content. All cryptographic operations happen on the client.
 
@@ -88,7 +88,7 @@ The server never has access to plaintext messages, user identities, keys, or cal
 
 ## Privacy Architecture
 
-Most messengers protect message *content* but not *metadata* — the server still sees who talks to whom, when, and how often. Beacon addresses this with four independent layers:
+Most messengers protect message *content* but not *metadata* — the server still sees who talks to whom, when, and how often. Subrosa addresses this with four independent layers:
 
 ### 1. Anonymous Token Routing
 
@@ -96,18 +96,18 @@ Messages are addressed by single-use random tokens, not by user fingerprints. Th
 
 ```
 Standard:  { "from": "A1B2C3D4", "to": "9F8E7D6C", "text": "<encrypted>" }
-Beacon:    { "type": "anon_message", "token": "e39f0134...", "payload": "<encrypted>" }
+Subrosa:    { "type": "anon_message", "token": "e39f0134...", "payload": "<encrypted>" }
 ```
 
 The server sees an anonymous blob — not a `from → to` pair. Note this hides the *recipient* side of the graph edge, not the sender: the server always knows which authenticated connection (i.e. which fingerprint) sent a given `anon_message`, since sending requires an authenticated WebSocket session. What it can no longer determine is who that message was *for*.
 
 ### 2. Anonymous Mailbox (First Contact)
 
-The first message would normally reveal the `A → B` pair. Beacon solves this with an anonymous mailbox embedded in every invite code. Bob deposits an encrypted blob into Alice's mailbox; Alice fetches it along with 19 fake tags — the server cannot determine which tag is real.
+The first message would normally reveal the `A → B` pair. Subrosa solves this with an anonymous mailbox embedded in every invite code. Bob deposits an encrypted blob into Alice's mailbox; Alice fetches it along with 19 fake tags — the server cannot determine which tag is real.
 
 ### 3. Cover Traffic
 
-Timing correlation attacks remain possible even without identity data. In Aggressive mode, Beacon sends a constant-rate stream (1 packet/sec); real messages replace noise packets. An observer sees a uniform stream regardless of actual communication.
+Timing correlation attacks remain possible even without identity data. In Aggressive mode, Subrosa sends a constant-rate stream (1 packet/sec); real messages replace noise packets. An observer sees a uniform stream regardless of actual communication.
 
 | Mode | Interval | Traffic |
 |---|---|---|
@@ -126,7 +126,7 @@ The server exposes a `.onion` address. Traffic travels entirely within the Tor n
 
 ### Threat Model Summary
 
-| Observer | Without Beacon | With Beacon |
+| Observer | Without Subrosa | With Subrosa |
 |---|---|---|
 | Server / leaked logs | `from → to` graph, content | Sender identity per connection still visible; recipient side hidden (anonymous blobs and tokens) |
 | Malicious server operator | `from → to` graph, content | Token routing table (mitigated by self-hosting) |
@@ -156,13 +156,13 @@ The server exposes a `.onion` address. Traffic travels entirely within the Tor n
 
 ## Docker Deployment (Recommended)
 
-The easiest way to self-host Beacon is with Docker and Docker Compose.
+The easiest way to self-host Subrosa is with Docker and Docker Compose.
 
 **Quick Start:**
 ```bash
 # 1. Clone repository
-git clone https://github.com/MoRoKonst/beacon-messenger
-cd beacon-messenger
+git clone https://github.com/MoRoKonst/Subrosa-messenger
+cd Subrosa-messenger
 
 # 2. Generate TLS certificates (development)
 ./generate-certs.sh
@@ -183,19 +183,19 @@ docker compose up -d
 - ✅ Health checks built-in
 - ✅ Production-ready configuration
 
-**See [DOCKER.md](DOCKER.md) for:**
+**See [DOCKER.md](docs/DOCKER.md) for:**
 - Prerequisites and installation
 - Configuration options
 - TLS certificate setup
 - Troubleshooting
 
-**For production with Let's Encrypt, see [DEPLOY.md](DEPLOY.md)**
+**For production with Let's Encrypt, see [DEPLOY.md](docs/DEPLOY.md)**
 
 ---
 
 ## Self-Hosting (Manual)
 
-You can run your own Beacon server and connect the app to it — no recompilation needed.
+You can run your own Subrosa server and connect the app to it — no recompilation needed.
 
 **Note:** Docker deployment above is recommended. This section documents manual setup.
 
@@ -243,8 +243,8 @@ No rebuild required. In the app:
 ### Steps
 
 ```bash
-git clone https://github.com/MoRoKonst/beacon-messenger
-cd beacon-messenger
+git clone https://github.com/MoRoKonst/Subrosa-messenger
+cd Subrosa-messenger
 
 # Debug APK
 ./gradlew assembleDebug
@@ -272,7 +272,7 @@ signingConfigs {
 
 ## Quick Start
 
-1. Install the APK from [Releases](https://github.com/MoRoKonst/beacon-messenger/releases).
+1. Install the APK from [Releases](https://github.com/MoRoKonst/Subrosa-messenger/releases).
 2. Open the app and register a username and password.
 3. Share your invite code with a contact (`beacon://invite?...`).
 4. Verify your contact's fingerprint out-of-band (optional but recommended).
@@ -299,8 +299,8 @@ signingConfigs {
 | Key authentication | ECDSA (SHA256withECDSA) + out-of-band fingerprint verification |
 | Invalid curve attack | EC point validation on all imported public keys |
 
-See [SECURITY.md](SECURITY.md) for the full threat model and cryptographic specification.  
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the system design and module reference.
+See [SECURITY.md](docs/SECURITY.md) for the full threat model and cryptographic specification.  
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system design and module reference.
 
 ---
 
@@ -310,22 +310,22 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the system design and module referenc
 
 | Document | Audience | Description |
 |---|---|---|
-| [DOCKER.md](DOCKER.md) | All (recommended) | Quick start with Docker — 5 minutes to running server |
-| [DEPLOY.md](DEPLOY.md) | SysAdmins | Production deployment, Let's Encrypt, auto-renewal |
-| [CHECKLIST.md](CHECKLIST.md) | DevOps | Pre/post deployment verification steps |
+| [DOCKER.md](docs/DOCKER.md) | All (recommended) | Quick start with Docker — 5 minutes to running server |
+| [DEPLOY.md](docs/DEPLOY.md) | SysAdmins | Production deployment, Let's Encrypt, auto-renewal |
+| [CHECKLIST.md](docs/CHECKLIST.md) | DevOps | Pre/post deployment verification steps |
 
 ### Technical & Security
 
 | Document | Audience | Description |
 |---|---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Developers | System design, module reference, data flows |
-| [SECURITY.md](SECURITY.md) | Security analysts | Threat model, cryptographic design, anti-forensics |
-| [CHANGEL_LOG.md](CHANGEL_LOG.md) | Developers | Engineering change log |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Developers | System design, module reference, data flows |
+| [SECURITY.md](docs/SECURITY.md) | Security analysts | Threat model, cryptographic design, anti-forensics |
+| [CHANGEL_LOG.md](docs/CHANGEL_LOG.md) | Developers | Engineering change log |
 
 ---
 
 ## License
 
-Beacon Messenger is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0) — see [LICENSE](LICENSE) for the full text.
+Subrosa Messenger is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0) — see [LICENSE](LICENSE) for the full text.
 
-In short: you're free to run, study, modify, and redistribute this software, including commercially. If you run a modified version as a network service that others interact with remotely (for example, hosting Beacon for clients), AGPL-3.0 §13 requires you to make the corresponding source of your modified version available to those users, free of charge. Every official Beacon client offers this by default via an in-app "Source code" link (Profile → About) pointing to this repository.
+In short: you're free to run, study, modify, and redistribute this software, including commercially. If you run a modified version as a network service that others interact with remotely (for example, hosting Subrosa for clients), AGPL-3.0 §13 requires you to make the corresponding source of your modified version available to those users, free of charge. Every official Subrosa client offers this by default via an in-app "Source code" link (Profile → About) pointing to this repository.

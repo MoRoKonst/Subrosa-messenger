@@ -1,9 +1,9 @@
 @echo off
-REM Quick start script for Beacon Messenger on Windows
+REM Quick start script for Subrosa Messenger on Windows
 
 echo.
 echo ========================================
-echo Beacon Messenger Docker Quick Start
+echo Subrosa Messenger Docker Quick Start
 echo ========================================
 echo.
 
@@ -45,7 +45,7 @@ if not exist ".env" (
 
 REM Start services
 echo.
-echo Starting Beacon Messenger services...
+echo Starting Subrosa Messenger services...
 echo.
 
 docker compose up -d

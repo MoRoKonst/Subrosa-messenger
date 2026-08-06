@@ -1,6 +1,6 @@
-﻿# Beacon Messenger — Docker Deployment Guide
+# Subrosa Messenger — Docker Deployment Guide
 
-This guide walks you through deploying Beacon Messenger server using Docker and Docker Compose.
+This guide walks you through deploying Subrosa Messenger server using Docker and Docker Compose.
 
 ## Prerequisites
 
@@ -41,11 +41,11 @@ The server will:
 ### 4. Verify It's Running
 
 ```bash
-docker-compose logs -f beacon-server
+docker-compose logs -f Subrosa-server
 docker-compose ps
 ```
 
-You should see both `beacon-messenger-server` and `beacon-nginx` running.
+You should see both `Subrosa-messenger-server` and `Subrosa-nginx` running.
 
 ### 5. Test WebSocket Connection
 
@@ -82,8 +82,8 @@ sudo chown $(whoami):$(whoami) ./certs/*.pem
 
 ```bash
 # .env
-BEACON_HOST=0.0.0.0
-BEACON_PORT=9000
+SUBROSA_HOST=0.0.0.0
+SUBROSA_PORT=9000
 ```
 
 ### 3. Configure Firewall
@@ -103,16 +103,16 @@ sudo ufw enable
 certbot renew --dry-run
 
 # Create renewal hook script
-sudo tee /etc/letsencrypt/renewal-hooks/post/beacon-renewal.sh << 'EOF'
+sudo tee /etc/letsencrypt/renewal-hooks/post/Subrosa-renewal.sh << 'EOF'
 #!/bin/bash
-cd /path/to/beacon/project
+cd /path/to/Subrosa/project
 cp /etc/letsencrypt/live/your-domain.com/fullchain.pem ./certs/cert.pem
 cp /etc/letsencrypt/live/your-domain.com/privkey.pem ./certs/key.pem
 chown $USER:$USER ./certs/*.pem
 docker-compose restart nginx
 EOF
 
-sudo chmod +x /etc/letsencrypt/renewal-hooks/post/beacon-renewal.sh
+sudo chmod +x /etc/letsencrypt/renewal-hooks/post/Subrosa-renewal.sh
 ```
 
 ### 5. Start Server
@@ -130,20 +130,20 @@ docker-compose logs -f
 
 | Variable | Default | Description |
 |---|---|---|
-| `BEACON_HOST` | `0.0.0.0` | Server bind address |
-| `BEACON_PORT` | `9000` | Server port (internal, not exposed) |
+| `SUBROSA_HOST` | `0.0.0.0` | Server bind address |
+| `SUBROSA_PORT` | `9000` | Server port (internal, not exposed) |
 
 ### Data Persistence
 
-- **SQLite database**: `/app/data/beacon.db` (inside container)
-- **Docker volume**: `beacon-data` (persists across restarts)
+- **SQLite database**: `/app/data/Subrosa.db` (inside container)
+- **Docker volume**: `Subrosa-data` (persists across restarts)
 
 ### Resource Limits
 
 For small deployments (50-100 users), default settings are fine. For larger:
 
 ```yaml
-# In docker-compose.yml, add to beacon-server service:
+# In docker-compose.yml, add to Subrosa-server service:
 resources:
   limits:
     cpus: '2'
@@ -164,7 +164,7 @@ resources:
 docker-compose logs -f
 
 # Specific service
-docker-compose logs -f beacon-server
+docker-compose logs -f Subrosa-server
 docker-compose logs -f nginx
 ```
 
@@ -172,7 +172,7 @@ docker-compose logs -f nginx
 
 ```bash
 docker-compose down
-# Data persists in the beacon-data volume
+# Data persists in the Subrosa-data volume
 ```
 
 ### Restart Server
@@ -199,12 +199,12 @@ docker-compose up -d
 ```bash
 # Extract database from volume
 docker run --rm \
-  -v beacon-data:/data \
+  -v Subrosa-data:/data \
   -v $(pwd):/backup \
   alpine:latest \
-  cp /data/beacon.db /backup/beacon-backup-$(date +%Y%m%d).db
+  cp /data/Subrosa.db /backup/Subrosa-backup-$(date +%Y%m%d).db
 
-# File saved to ./beacon-backup-YYYYMMDD.db
+# File saved to ./Subrosa-backup-YYYYMMDD.db
 ```
 
 ---
@@ -311,15 +311,15 @@ docker-compose down
 docker-compose logs -f
 
 # Restart specific service
-docker-compose restart beacon-server
+docker-compose restart Subrosa-server
 
 # Rebuild after code changes
 docker-compose build --no-cache && docker-compose up -d
 
 # Enter server shell (debug)
-docker-compose exec beacon-server sh
+docker-compose exec Subrosa-server sh
 
 # Backup database
-docker run --rm -v beacon-data:/data -v $(pwd):/backup \
-  alpine:latest cp /data/beacon.db /backup/backup.db
+docker run --rm -v Subrosa-data:/data -v $(pwd):/backup \
+  alpine:latest cp /data/Subrosa.db /backup/backup.db
 ```

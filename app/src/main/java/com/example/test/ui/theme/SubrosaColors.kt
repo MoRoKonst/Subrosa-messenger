@@ -1,11 +1,11 @@
-﻿package com.bcon.messenger.ui.theme
+package com.subrosa.messenger.ui.theme
 
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-enum class BeaconTheme { NAVY, DARK, LIGHT }
+enum class SubrosaTheme { NAVY, DARK, LIGHT }
 
-data class BeaconColors(
+data class subrosaColors(
     val gradientStart: Color,
     val gradientEnd: Color,
     val topBar: Color,
@@ -27,7 +27,7 @@ data class BeaconColors(
     val isDark: Boolean
 )
 
-val NavyBeaconColors = BeaconColors(
+val NavysubrosaColors = subrosaColors(
     gradientStart    = Color(0xFF141e4a),
     gradientEnd      = Color(0xFF0d1238),
     topBar           = Color(0xFF091a66),
@@ -49,7 +49,7 @@ val NavyBeaconColors = BeaconColors(
     isDark           = true
 )
 
-val DarkBeaconColors = BeaconColors(
+val DarksubrosaColors = subrosaColors(
     gradientStart    = Color(0xFF1C1C1C),
     gradientEnd      = Color(0xFF0D0D0D),
     topBar           = Color(0xFF242424),
@@ -71,7 +71,7 @@ val DarkBeaconColors = BeaconColors(
     isDark           = true
 )
 
-val LightBeaconColors = BeaconColors(
+val LightsubrosaColors = subrosaColors(
     gradientStart    = Color(0xFFF0F4FF),
     gradientEnd      = Color(0xFFE4EDFF),
     topBar           = Color(0xFF2481CC),
@@ -93,10 +93,10 @@ val LightBeaconColors = BeaconColors(
     isDark           = false
 )
 
-val LocalBeaconColors = compositionLocalOf<BeaconColors> { NavyBeaconColors }
+val LocalsubrosaColors = compositionLocalOf<subrosaColors> { NavysubrosaColors }
 
-fun beaconColorsFor(theme: BeaconTheme): BeaconColors = when (theme) {
-    BeaconTheme.NAVY  -> NavyBeaconColors
-    BeaconTheme.DARK  -> DarkBeaconColors
-    BeaconTheme.LIGHT -> LightBeaconColors
+fun subrosaColorsFor(theme: SubrosaTheme): subrosaColors = when (theme) {
+    SubrosaTheme.NAVY  -> NavysubrosaColors
+    SubrosaTheme.DARK  -> DarksubrosaColors
+    SubrosaTheme.LIGHT -> LightsubrosaColors
 }

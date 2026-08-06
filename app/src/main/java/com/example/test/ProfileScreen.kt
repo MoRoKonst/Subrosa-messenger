@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
@@ -53,9 +53,9 @@ import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlin.math.absoluteValue
-import com.bcon.messenger.ui.theme.LocalBeaconColors
-import com.bcon.messenger.ui.theme.BeaconTheme
-import com.bcon.messenger.ui.theme.beaconColorsFor
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.SubrosaTheme
+import com.subrosa.messenger.ui.theme.subrosaColorsFor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
@@ -71,7 +71,7 @@ private fun extractFingerprint(inviteCode: String): String? {
 
 @Composable
 private fun PSection(label: String) {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     Text(
         text = label.uppercase(),
         modifier = Modifier
@@ -93,7 +93,7 @@ private fun PRow(
     onClick: (() -> Unit)? = null,
     trailing: @Composable () -> Unit = {}
 ) {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -124,7 +124,7 @@ private fun PRow(
 
 @Composable
 private fun PDivider() {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     HorizontalDivider(
         modifier = Modifier.padding(horizontal = 20.dp),
         color = c.textPrimary.copy(alpha = 0.08f),
@@ -134,7 +134,7 @@ private fun PDivider() {
 
 @Composable
 private fun PChevron() {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     Icon(
         imageVector = Icons.Default.KeyboardArrowRight,
         contentDescription = null,
@@ -163,7 +163,7 @@ fun ProfileScreen(
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
     var showNotMeConfirm   by remember { mutableStateOf(false) }
@@ -205,28 +205,44 @@ fun ProfileScreen(
 
     val inviteCode = remember {
         try {
-            // Clean up the previous invite's mailbox tag before minting a new
-            // one — otherwise every visit to this screen mints a fresh tag
-            // without ever removing the last one (removal only happens when a
-            // real contact actually consumes a tag via mailbox exchange), so
-            // orphaned "real" tags accumulate forever the more times a user
-            // opens their profile.
-            UserStorage.getInviteCode(context)
-                ?.let { InviteCodeManager.parseInviteCode(it) }
-                ?.mailboxTag
-                ?.let { oldTag -> AnonTokenManager.removeMyMailboxTag(context, oldTag) }
-
-            val fresh = InviteCodeManager.generateInviteCode(
-                CryptoManager.getPublicKey(),
-                CryptoManager.getPrivateKeyPublic(),
-                displayName.ifBlank { userId }
-            )
-            UserStorage.saveInviteCode(context, fresh)
-
-            InviteCodeManager.parseInviteCode(fresh)?.mailboxTag?.let { tag ->
+            // Reuse the persisted invite code if one already exists AND hasn't
+            // expired — minting a fresh one on every Profile visit was the actual
+            // bug: a contact who already has your OLD invite code keeps
+            // depositing mailbox tokens under the OLD tag forever, while
+            // regenerating here would swap "my tag to poll for" out from under
+            // them, silently orphaning that exchange (confirmed via live
+            // server-side logs: deposits piling up under a tag neither side was
+            // fetching for anymore). The invite code — and the mailbox tag
+            // embedded in it — needs to stay stable once shared, not rotate on
+            // every screen visit. Still respects the 7-day TTL: an actually-
+            // expired code gets replaced, same as before.
+            val existing = UserStorage.getInviteCode(context)
+            val existingTimestamp = existing?.let { InviteCodeManager.parseInviteCode(it) }?.timestamp
+            val stillValid = existingTimestamp != null &&
+                (System.currentTimeMillis() / 1000 - existingTimestamp) < 7L * 24 * 3600
+            val code = if (existing != null && stillValid) {
+                existing
+            } else {
+                val fresh = InviteCodeManager.generateInviteCode(
+                    CryptoManager.getPublicKey(),
+                    CryptoManager.getPrivateKeyPublic(),
+                    displayName.ifBlank { userId }
+                )
+                UserStorage.saveInviteCode(context, fresh)
+                fresh
+            }
+            // Register the tag unconditionally, even when reusing a persisted code —
+            // addMyMailboxTag() is idempotent (no-ops if already present). Storage for
+            // the invite code text (UserStorage) and for "my mailbox tags"
+            // (AnonTokenManager, a separate encrypted prefs file) can end up out of
+            // sync — e.g. a partial data reset that clears one but not the other —
+            // and only registering the tag in the "generate fresh" branch meant a
+            // reused code's tag could silently never make it into the poll list at
+            // all, leaving pollMailbox() with nothing to check for indefinitely.
+            InviteCodeManager.parseInviteCode(code)?.mailboxTag?.let { tag ->
                 AnonTokenManager.addMyMailboxTag(context, tag)
             }
-            fresh
+            code
         } catch (e: Exception) {
             UserStorage.getInviteCode(context) ?: userId
         }
@@ -584,12 +600,12 @@ fun ProfileScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             listOf(
-                                BeaconTheme.NAVY  to s.profileThemeNavy,
-                                BeaconTheme.DARK  to s.profileThemeDark,
-                                BeaconTheme.LIGHT to s.profileThemeLight
+                                SubrosaTheme.NAVY  to s.profileThemeNavy,
+                                SubrosaTheme.DARK  to s.profileThemeDark,
+                                SubrosaTheme.LIGHT to s.profileThemeLight
                             ).forEach { (theme, label) ->
                                 val isSelected = theme == currentTheme
-                                val previewColors = beaconColorsFor(theme)
+                                val previewColors = subrosaColorsFor(theme)
                                 Surface(
                                     modifier = Modifier
                                         .weight(1f)

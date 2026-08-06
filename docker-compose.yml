@@ -1,21 +1,21 @@
-﻿version: '3.8'
+version: '3.8'
 
 services:
-  beacon-server:
+  subrosa-server:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: beacon-messenger-server
+    container_name: subrosa-messenger-server
     ports:
       - "9000:9000"
     environment:
-      BEACON_HOST: "0.0.0.0"
-      BEACON_PORT: 9000
+      SUBROSA_HOST: "0.0.0.0"
+      SUBROSA_PORT: 9000
     volumes:
-      - beacon-data:/app/data
+      - subrosa-data:/app/data
     restart: unless-stopped
     networks:
-      - beacon-network
+      - subrosa-network
     healthcheck:
       test: ["CMD", "python", "-c", "import asyncio; asyncio.run(asyncio.sleep(0))"]
       interval: 30s
@@ -25,7 +25,7 @@ services:
 
   nginx:
     image: nginx:1.25-alpine
-    container_name: beacon-nginx
+    container_name: subrosa-nginx
     ports:
       - "80:80"
       - "443:443"
@@ -34,17 +34,17 @@ services:
       - ./certs:/etc/nginx/certs:ro
       - nginx-cache:/var/cache/nginx
     depends_on:
-      - beacon-server
+      - subrosa-server
     restart: unless-stopped
     networks:
-      - beacon-network
+      - subrosa-network
 
 volumes:
-  beacon-data:
+  subrosa-data:
     driver: local
   nginx-cache:
     driver: local
 
 networks:
-  beacon-network:
+  subrosa-network:
     driver: bridge

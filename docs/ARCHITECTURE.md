@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the system design, module structure, and data flows of Beacon Messenger.
+This document describes the system design, module structure, and data flows of Subrosa Messenger.
 
 > **Note:** The Channels feature (broadcast channels: `ChannelManager`, `ChannelFeedScreen`, `channel_*` message types and DB tables referenced below) is currently **disabled at the UI layer** on both clients — it didn't fit the product's purpose as a resilient private communication tool rather than a broadcast/social tool, and its metadata wasn't anonymized. The underlying code is left in place, unreachable, in case it's revisited later.
 
@@ -13,6 +13,10 @@ This document describes the system design, module structure, and data flows of B
   - [Layer Model](#layer-model)
   - [Navigation](#navigation)
   - [Module Reference](#module-reference)
+- [Desktop Client Architecture](#desktop-client-architecture)
+  - [Module Reference (Desktop)](#module-reference-desktop)
+  - [Tor Support](#tor-support)
+  - [Machine-Bound Keystore](#machine-bound-keystore)
 - [Server Architecture](#server-architecture)
   - [State Model](#state-model)
   - [Message Protocol](#message-protocol)
@@ -157,11 +161,12 @@ The private key is stored wrapped with the Storage Master Key (SMK) when the use
 
 #### `SessionKeyManager.kt`
 Manages per-contact Double Ratchet session states. Initialized at app start (before login) from persisted state. Handles:
-- X3DH initial key agreement using identity key + signed prekey + one-time prekeys (OPKs)
+- Hybrid X3DH initial key agreement: classical ECDH (identity key + signed prekey + one-time prekeys) combined with an ML-KEM-768 (`PqCrypto.kt`) encapsulation over HKDF, so the derived root key resists a future quantum adversary even if session transcripts are harvested today
 - Ratchet step on each message send/receive
 - Session state serialization
+- Publishing an anonymous **bootstrap token** (from `AnonTokenManager`'s pool) alongside the prekey bundle, letting a fetcher's `session_init` reply be delivered via `anon_message` instead of direct fingerprint addressing (see [SECURITY.md](SECURITY.md) item 11)
 
-> SPK and OPK private keys are intentionally **not** wrapped by the SMK layer because they are needed at cold start before the user logs in.
+> SPK, OPK, and the PQ (ML-KEM) prekey pair are intentionally **not** wrapped by the SMK layer because they are needed at cold start before the user logs in.
 
 #### `GroupManager.kt`
 Manages encrypted group state.
@@ -228,11 +233,7 @@ Tamper detection via canary values. A HMAC of a known set of values is stored at
 Scheduled wipe if the user fails to check in within a configured interval. Uses `AlarmManager.setExactAndAllowWhileIdle`. On alarm fire, `WipeReceiver` triggers `WipeManager.wipe()`.
 
 #### `InviteCodeManager.kt`
-Generates and verifies ECDSA-signed contact invitation deep links:
-```
-beacon://invite?key=<pubKeyB64>&fp=<fingerprint>&nonce=<nonce>&name=<nameB64>&ts=<timestamp>&sig=<sigB64>
-```
-Signature covers all fields. TTL: 7 days from `ts`. Backward compatible with unsigned codes (no `ts` field).
+Generates and verifies ECDSA-signed contact invitations as a binary blob, prefixed `bc:` and Base64url-encoded — not a URL with individually encoded fields. See [SECURITY.md](SECURITY.md) "Invite Codes" for the exact byte layout. Signature covers the whole pre-signature payload. TTL: 7 days from `ts`. Backward compatible with the older `0x02` format (no mailbox tag field) generated before the anonymous-mailbox feature existed. Desktop and Android share this exact binary format byte-for-byte.
 
 #### `BackupManager.kt`
 Exports all user data to an encrypted binary blob:
@@ -257,6 +258,81 @@ Password hashing:
 - Legacy: `SHA-256(password)` (read-only, migrated on login)
 - Current: `"v2:<saltB64>:<hashB64>"` — PBKDF2-SHA256, 16-byte salt, 100 000 iterations
 - Panic password uses the same scheme; matching panic password on login triggers wipe
+
+---
+
+## Desktop Client Architecture
+
+The desktop client (`desktop/src/main/kotlin/com/bcon/desktop/`) is a Compose Multiplatform / Compose Desktop port of the Android app, sharing the same wire protocol, cryptographic scheme, and package/module naming pattern (everything lives under `com.bcon.desktop`, including files physically under a `ui/`, `network/`, or `platform/` subfolder). It talks to the same server over the same JSON-over-WebSocket protocol — an Android client and a Desktop client can message each other directly.
+
+It is not built or distributed alongside the Android app; the `desktop/` folder is excluded from the published repository until it is release-ready.
+
+Where Android and Desktop diverge architecturally:
+
+| Concern | Android | Desktop |
+|---|---|---|
+| Persistent storage | `EncryptedSharedPreferences` (AndroidKeyStore-backed) | `DesktopStorage.kt` — a single AES-256-GCM encrypted JSON blob at `%APPDATA%\BeaconMessenger\storage.enc` |
+| Key storage | `AndroidKeyStore` | `DesktopKeyStore.kt` — a PKCS12 keystore (`BEACON.p12`), password machine-derived (see [Machine-Bound Keystore](#machine-bound-keystore)) |
+| Anonymity network | Orbot (system-level Tor VPN) | `DesktopTorManager.kt` — local SOCKS5 proxy detection, no VPN (see [Tor Support](#tor-support)) |
+| WebRTC | `stream-webrtc-android` | `webrtc-java` (JNI wrapper around native libwebrtc), Windows-only native binaries currently bundled |
+| Screen-capture / anti-forensics | OS-level `FLAG_SECURE`, root/ADB detection | `NativeProtection.kt` (JNA): `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` on Windows, `VirtualLock`/`VirtualUnlock` for non-pageable SMK storage; Linux/macOS support is partial |
+
+Cryptography, X3DH/Double-Ratchet session logic, the hybrid ML-KEM-768 post-quantum layer, group encryption, and the invite-code/anonymous-token-routing/mailbox metadata protections are the same design on both platforms — `SessionKeyManager.kt`, `GroupManager.kt`, `AnonTokenManager.kt`, `InviteCodeManager.kt`, and `PqCrypto.kt` are independent ports with matching wire-level behavior, not shared code (Kotlin/JVM allows near-identical source but Android and Desktop are separate Gradle modules with no common module today).
+
+### Module Reference (Desktop)
+
+**Entry & navigation**
+- `main.kt` — process entry point; initializes `NativeProtection`, `DesktopStorage`, `DesktopKeyStore`, `CryptoManager`, `SessionKeyManager`, then launches the Compose window via `AppNavigation`.
+- `AppNavigation.kt` — Compose router (Material3), analogous to Android's `MainActivity` `screen` state machine.
+
+**Storage & keys**
+- `DesktopStorage.kt` — AES-256-GCM encrypted JSON key-value store; Desktop's equivalent of `EncryptedSharedPreferences`.
+- `DesktopKeyStore.kt` — PKCS12 keystore (`BEACON.p12`), machine-bound password (see [Machine-Bound Keystore](#machine-bound-keystore)); stores the storage key and the EC identity keypair.
+- `StorageKeyManager.kt` — the same SMK (Storage Master Key) at-rest double-encryption layer as Android, ported: PBKDF2(password, 300k) + keystore-wrapped copy, locked native buffer where the platform allows it.
+- `UserStorage.kt`, `ChatStorage.kt`, `GroupManager.kt`, `ChannelManager.kt` — same responsibilities as their Android namesakes (credentials/settings, 1:1 messages, groups, channels — channels disabled at the UI layer, same as Android).
+
+**Cryptography**
+- `DesktopCryptoManager.kt` — EC P-256 identity keypair, ECDH, peer-public-key cache, image/file encryption; Desktop's `CryptoManager` equivalent.
+- `PqCrypto.kt` — ML-KEM-768 wrapper (BouncyCastle 1.79+): `generateKeyPair()` / `encapsulate()` / `decapsulate()`, combined with classical ECDH via HKDF in `SessionKeyManager.kt` for hybrid post-quantum X3DH — identical design to Android's `PqCrypto.kt`.
+- `SecureMemory.kt` — zeroing helpers for `ByteArray`/`CharArray` key material (no `String` equivalent exists — the JVM string intern pool and JIT can retain copies outside the caller's control).
+
+**Anonymity & invites**
+- `AnonTokenManager.kt` — Desktop port of Android's anonymous token-routing pool (register ~50 tokens with the server, refill at a low-watermark, share with contacts for `anon_message` delivery).
+- `InviteCodeManager.kt` — binary `bc:<base64url>` invite-code format, byte-for-byte identical to Android (see [SECURITY.md](SECURITY.md) "Invite Codes").
+- `DesktopTorManager.kt` — see [Tor Support](#tor-support).
+
+**Calls**
+- `network/WebSocketClient.kt` — OkHttp-based WebSocket client: handshake, message routing (direct + `anon_message`/batched-fetch anonymization), reconnect, Tor-aware client selection.
+- `network/DesktopCallManager.kt` — 1:1 audio/video signaling (`call_offer`/`call_answer`/`call_ice`/`call_end`) over the same WebSocket relay as Android, using `webrtc-java`. Group (mesh) calls are not implemented on Desktop yet.
+
+**Security & diagnostics**
+- `NativeProtection.kt` — JNA bindings for OS-level anti-forensics: Windows screen-capture exclusion and non-pageable memory locking; degrades to a warning (no enforcement) on platforms without an equivalent API.
+- `SecurityDiagnostics.kt` — startup debugger/instrumentation detection (JDWP, Frida argument signatures); can be configured to abort startup if triggered.
+
+**UI** (`ui/`)
+- `LoginScreen.kt`, `RegisterScreen.kt`, `ChatsScreen.kt`, `ChatScreen.kt`, `GroupChatScreen.kt`, `ChannelFeedScreen.kt`, `CallScreen.kt`, `ProfileScreen.kt` — Compose screens mirroring the Android screen set (Channels UI present but unreachable, same as Android).
+- `SecureTextField.kt` — password-entry field pairing with the on-screen keyboard described in [SECURITY.md](SECURITY.md) item 8.
+
+**Testing**
+- `IntegrationSmokeTest.kt` — headless two-process integration test (no GUI): runs the real `WebSocketClient`/`SessionKeyManager`/`CryptoManager` stack end-to-end (connect → register → publish hybrid-PQ prekey bundle → X3DH → Double-Ratchet round trip) with file-based identity exchange instead of the invite-code UI. Invoked via the `smokeTest` Gradle task; `printRuntimeClasspath` supports running it as two separate `java -cp` processes with distinct `APPDATA` for isolated identities. This exists because none of this project's wire-format or crypto work had ever been exercised against a second real process before it was added — compiling successfully is not the same as two independent clients actually completing a handshake.
+
+### Tor Support
+
+Android reaches Tor via Orbot, a system-level VPN that transparently routes all app traffic — no in-app SOCKS handling needed. Desktop has no VPN layer available, so it implements SOCKS5 proxying directly in `WebSocketClient.kt`:
+
+- `DesktopTorManager.detectSocksPort()` probes `127.0.0.1:9050` (standalone Tor) and `127.0.0.1:9150` (Tor Browser's bundled Tor) and returns whichever is listening.
+- When the configured server URL is a `.onion` address, `WebSocketClient` builds a second OkHttp client (`torClient`) whose socket factory routes through `Proxy(Proxy.Type.SOCKS, ...)` using a raw `Socket(proxy).connect(InetSocketAddress.createUnresolved(host, port), ...)` — deliberately using the *unresolved* address form so hostname resolution (including the `.onion` address itself) happens inside the Tor circuit, never via the local/system DNS resolver.
+- If no local Tor SOCKS proxy is found for a `.onion` server URL, the connection attempt fails fast with a clear error rather than silently falling back to a direct (non-anonymized) connection.
+- Non-`.onion` server URLs use the regular direct OkHttp client; Tor is opt-in per configured server, not a global toggle.
+
+### Machine-Bound Keystore
+
+`DesktopKeyStore.kt` stores the storage key and EC identity keypair in a PKCS12 file (`BEACON.p12`), protected by a password that is *derived*, not user-chosen — the same purpose AndroidKeyStore serves on Android (a hardware/OS-backed secret the app never has to ask the user for), adapted to a desktop OS with no equivalent hardware-backed keystore API:
+
+- **Windows**: a random 32-byte seed is generated once and protected with DPAPI (`CryptProtectData`, machine or user scope depending on configuration) via JNA's `Crypt32Util`; the PKCS12 password is `SHA-256(seed)`.
+- **Linux**: `SHA-256("BEACON-ks-v2:" + /etc/machine-id)` (falling back to `/var/lib/dbus/machine-id`) — stable across reboots and reinstalls of the app, but tied to that specific machine's OS installation.
+
+This means the PKCS12 file cannot be decrypted if copied to a different machine (Windows: DPAPI-protected seed doesn't unwrap without the original machine/user context; Linux: the machine-id won't match) — a deliberate anti-exfiltration property, at the cost of there being no built-in way to migrate an identity to new hardware other than the normal backup/restore flow (see `BackupManager.kt`).
 
 ---
 
@@ -296,6 +372,7 @@ All messages are JSON objects over WebSocket. Every message has a `type` field.
 | `ice_candidate` | WebRTC ICE candidate |
 | `call_end` | Terminate call |
 | `fetch_prekey_bundle` | Request OPK bundle for X3DH |
+| `get_prekey_bundles_batch` | Anonymized prekey fetch: real target padded with decoy fingerprints (own contacts) so the server can't tell which one is real; see [SECURITY.md](SECURITY.md) item 11 |
 | `upload_prekeys` | Push new OPK bundle to server |
 | `typing` | Typing indicator |
 | `reaction` | Message reaction |

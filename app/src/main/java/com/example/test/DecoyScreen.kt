@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import androidx.activity.compose.BackHandler
 import android.database.ContentObserver
@@ -37,7 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 import kotlin.math.absoluteValue
 
 private data class FakeMsg(val text: String, val fromMe: Boolean, val time: String)
@@ -307,7 +307,7 @@ private fun DecoyListScreen(
     onOpenChat: (ChatTemplate) -> Unit
 ) {
     val context = LocalContext.current
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
     val myDisplayName = remember { UserStorage.getUserDisplayName(context) }
@@ -426,7 +426,7 @@ private fun DecoyChatScreen(
     chat: ChatTemplate,
     onBack: () -> Unit
 ) {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     val avatarColor = avatarColorFor(chat.name)
 

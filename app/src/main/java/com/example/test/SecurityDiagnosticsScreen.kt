@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -23,8 +23,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import com.bcon.messenger.ui.theme.BeaconColors
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.subrosaColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,7 +32,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val scope = rememberCoroutineScope()
 
     val testLines = remember { mutableStateListOf<String>() }
@@ -330,7 +330,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun TestLine(line: String, c: BeaconColors) {
+private fun TestLine(line: String, c: subrosaColors) {
     val t = line.trimEnd()
 
     if (t.isEmpty()) {

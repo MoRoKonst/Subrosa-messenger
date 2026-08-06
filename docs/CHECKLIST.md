@@ -1,17 +1,17 @@
-﻿# Beacon Messenger — Deployment Checklist
+# Subrosa Messenger — Deployment Checklist
 
-Use this checklist before deploying Beacon to production.
+Use this checklist before deploying Subrosa to production.
 
 ## Pre-Deployment (Development)
 
-- [ ] Clone repository: `git clone https://github.com/MoRoKonst/beacon-messenger`
-- [ ] Enter directory: `cd beacon-messenger`
+- [ ] Clone repository: `git clone https://github.com/MoRoKonst/Subrosa-messenger`
+- [ ] Enter directory: `cd Subrosa-messenger`
 - [ ] Verify Docker installed: `docker --version && docker compose version`
 - [ ] Generate certificates: `./generate-certs.sh`
 - [ ] Copy environment: `cp .env.example .env`
 - [ ] Test locally: `docker compose up -d`
 - [ ] Verify running: `docker compose ps`
-- [ ] Check logs: `docker compose logs beacon-server`
+- [ ] Check logs: `docker compose logs Subrosa-server`
 
 ## Production Deployment
 
@@ -22,7 +22,7 @@ Use this checklist before deploying Beacon to production.
 - [ ] Firewall enabled (only ports 22, 80, 443)
 
 ### Domain & DNS
-- [ ] Register domain (e.g., beacon.your-company.com)
+- [ ] Register domain (e.g., Subrosa.your-company.com)
 - [ ] DNS A record points to VPS IP
 - [ ] DNS propagated (wait 24h if needed)
 
@@ -56,8 +56,8 @@ Use this checklist before deploying Beacon to production.
 
 ### Monitoring & Maintenance
 - [ ] Set up log rotation (optional)
-- [ ] Schedule daily backups: `docker run --rm ... cp /data/beacon.db ...`
-- [ ] Monitor disk space: `docker compose exec beacon-server df -h`
+- [ ] Schedule daily backups: `docker run --rm ... cp /data/Subrosa.db ...`
+- [ ] Monitor disk space: `docker compose exec Subrosa-server df -h`
 - [ ] Set certificate renewal reminder (Let's Encrypt: 30 days before expiry)
 - [ ] Weekly: `docker compose logs | grep -i error`
 - [ ] Monthly: Update Docker images and test in staging
@@ -85,7 +85,7 @@ Use this checklist before deploying Beacon to production.
 - [ ] Backup certs/ directory
 - [ ] Weekly full database backup
 - [ ] If issues: `docker compose down && docker compose up -d`
-- [ ] To restore from backup: restore beacon.db volume
+- [ ] To restore from backup: restore Subrosa.db volume
 
 ## Security Hardening (Optional)
 - [ ] Enable firewall rules: `ufw enable`
@@ -116,7 +116,7 @@ Use this checklist before deploying Beacon to production.
 | High memory | `docker stats` | Check concurrent connections |
 | Disk full | `df -h` | Backup and clean old messages |
 | Certificate expired | `openssl x509 -dates -noout -in certs/cert.pem` | Renew with certbot |
-| Messages accumulating | `sqlite3 /path/to/beacon.db "SELECT COUNT(*) FROM messages"` | Archive old data |
+| Messages accumulating | `sqlite3 /path/to/Subrosa.db "SELECT COUNT(*) FROM messages"` | Archive old data |
 
 ## Support & Documentation
 
@@ -127,6 +127,6 @@ Use this checklist before deploying Beacon to production.
 
 ---
 
-**After completing this checklist, your Beacon server is production-ready.**
+**After completing this checklist, your Subrosa server is production-ready.**
 
 Last updated: 2025-02-15

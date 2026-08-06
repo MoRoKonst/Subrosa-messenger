@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
@@ -61,7 +61,7 @@ class EmergencyService : AccessibilityService() {
                 wakeLock.acquire(10000)
             }
 
-            val intent = Intent("com.bcon.messenger.EMERGENCY_WIPE").apply {
+            val intent = Intent("com.subrosa.messenger.EMERGENCY_WIPE").apply {
                 setPackage(packageName)
                 addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
             }

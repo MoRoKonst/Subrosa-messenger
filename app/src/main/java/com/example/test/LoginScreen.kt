@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.content.Context
 import androidx.compose.foundation.background
@@ -25,7 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 
 private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
 
@@ -33,7 +33,7 @@ private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
 fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }

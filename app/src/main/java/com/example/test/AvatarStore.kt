@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.graphics.Bitmap
 import androidx.compose.runtime.mutableStateMapOf

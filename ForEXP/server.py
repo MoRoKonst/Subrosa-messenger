@@ -54,14 +54,19 @@ MAX_BUNDLE_SIZE_BYTES  = 64  * 1024
 MAX_PACKET_SIZE_BYTES  = 6 * 1024 * 1024
 OPK_LOW_WATERMARK      = 5
 HANDSHAKE_TIMEOUT_SEC  = 15
+# Cap on get_prekey_bundles_batch — bundles now carry an ML-KEM key, so kept
+# smaller than the mailbox's 20-tag padding to bound bandwidth/server work.
+MAX_BATCH_BUNDLE_TARGETS = 10
 
-rate_limits = defaultdict(lambda: {
-    "message":      {"count": 0, "reset_time": time.time()},
-    "reaction":     {"count": 0, "reset_time": time.time()},
-    "typing":       {"count": 0, "reset_time": time.time()},
-    "prekey_fetch": {"count": 0, "reset_time": time.time()},
-    "disconnected_at": 0
-})
+rate_limits = defaultdict(lambda: defaultdict(lambda: {"count": 0, "reset_time": time.time()}))
+# Note: per-user dict is itself a defaultdict — missing message types self-heal
+# instead of KeyError'ing (bit us once: the old fixed-key dict only listed
+# message/reaction/typing/prekey_fetch, so adding a new rate-limited type to
+# default_limits in rate_limit_check() without also touching this factory
+# crashed with KeyError on that type — e.g. 'register_bundle').
+# "disconnected_at" isn't pre-seeded: every write is a plain assignment
+# (rate_limits[username]["disconnected_at"] = ...) and every read goes
+# through .get(..., 0), so it never needs to exist ahead of time.
 
 banned_users        = {}
 banned_ips          = {}
@@ -647,7 +652,20 @@ def report_violation(username, reason):
     return False
 
 def rate_limit_check(username, msg_type, limit=None, window=60):
-    default_limits = {"message": 50, "reaction": 100, "typing": 200, "prekey_fetch": 10}
+    default_limits = {
+        "message": 50, "reaction": 100, "typing": 200, "prekey_fetch": 10,
+        "anon_message": 100, "mailbox_put": 20, "subscribe_tokens": 10,
+        "channel_create": 5, "register_bundle": 20, "profile_update": 10,
+        # Call signaling: call_ice legitimately fires many times per single call
+        # (one message per ICE candidate, several restarts possible) so it needs
+        # a generous ceiling; call_offer is the tightest, since each one can also
+        # trigger missed-call storage + an FCM wakeup push to the offline target.
+        "call_offer": 20, "call_answer": 30, "call_ice": 300, "call_end": 30,
+        "call_ringing": 30, "call_ice_restart": 30,
+        "call_group_invite": 20, "call_group_join": 30, "call_group_answer": 30,
+        "call_group_ice": 300, "call_group_leave": 30, "call_group_peer_list": 30,
+        "call_request_audio": 20, "call_request_video": 20, "call_response": 30,
+    }
     max_count = limit or default_limits.get(msg_type)
     if not max_count:
         return True
@@ -661,6 +679,25 @@ def rate_limit_check(username, msg_type, limit=None, window=60):
         print(f"[RATE_LIMIT] {username} превысил лимит {msg_type}")
         return False
     return True
+
+def pick_bootstrap_token(target: str):
+    """Hands a requester one of `target`'s currently-registered anon tokens,
+    without consuming it — it stays valid (token_to_ws/known_tokens
+    untouched) until actually used in an anon_message, exactly like a token
+    shared peer-to-peer via the existing sendAnonTokensTo flow. Lets a fresh
+    X3DH handshake's session_init be delivered anonymously instead of
+    directly addressed, whether this bundle was fetched directly or as part
+    of an anonymous batched fetch (see get_prekey_bundles_batch below).
+    Returns None if target is offline or has no registered tokens.
+    """
+    target_data = clients.get(target)
+    if not target_data:
+        return None
+    target_ws = target_data.get("ws")
+    owned = ws_to_tokens.get(target_ws)
+    if not owned:
+        return None
+    return next(iter(owned))
 
 def cleanup_stale_rate_limits():
     now = time.time()
@@ -739,10 +776,11 @@ async def handle_client(websocket):
         await websocket.close()
         return
 
-    username      = None
-    authenticated = False
-    is_fed        = False
-    challenge     = None
+    username             = None
+    authenticated        = False
+    is_fed               = False
+    challenge            = None
+    verified_public_key  = None  # raw key bytes proven via challenge_response; register must match this
 
     try:
         print(f"[+] Новое подключение от {ip}")
@@ -797,6 +835,7 @@ async def handle_client(websocket):
                 sig_bytes  = base64.b64decode(signature_b64)
                 public_key.verify(sig_bytes, challenge, ec.ECDSA(hashes.SHA256()))
 
+                verified_public_key = key_bytes
                 authenticated = True
                 print(f"[HANDSHAKE] Успешно: {ip}")
                 await websocket.send(json.dumps({"type": "handshake_ok"}))
@@ -838,7 +877,7 @@ async def handle_client(websocket):
                 "image_chunk", "file_chunk", "video_chunk", "chunk_ack",
                 "read",
                 "publish_prekey_bundle",
-                "get_prekey_bundle", "group_reaction",
+                "get_prekey_bundle", "get_prekey_bundles_batch", "group_reaction",
                 "group_create",
                 "group_message",
                 "group_member_removed",
@@ -856,6 +895,8 @@ async def handle_client(websocket):
                 "call_group_invite", "call_group_join",
                 "call_group_answer", "call_group_ice", "call_group_leave",
                 "call_group_peer_list", "call_ice_restart",
+                # ── Two-phase call flow (request/response before real signaling) ──
+                "call_request_audio", "call_request_video", "call_response",
                 # ── Chat features ──
                 "message_delete", "disappear_timer",
                 "group_message_delete",
@@ -880,7 +921,22 @@ async def handle_client(websocket):
                 public_key = message.get("public_key")
                 device_id  = message.get("device_id")
 
-                key_bytes   = base64.b64decode(public_key)
+                try:
+                    key_bytes = base64.b64decode(public_key)
+                except Exception:
+                    continue
+
+                # The identity (fingerprint) must be derived from the same key that
+                # was cryptographically proven in the challenge_response handshake —
+                # otherwise a client could pass the handshake with a throwaway key it
+                # owns, then register under someone else's (public) public key value
+                # and hijack that fingerprint's connection slot. Federation peers are
+                # exempt: they authenticate via a separate HMAC-based mechanism, not
+                # per-user ECDSA proof-of-possession.
+                if not is_fed and (verified_public_key is None or key_bytes != verified_public_key):
+                    print(f"[SECURITY] register: public_key не совпадает с ключом handshake'а от {ip}")
+                    continue
+
                 fingerprint = hashlib.sha256(key_bytes).digest()[:8].hex().upper()
                 username    = fingerprint
 
@@ -969,7 +1025,15 @@ async def handle_client(websocket):
 
             # ─── Register Bundle ──────────────────────────────────────────────
             if msg_type == "register_bundle":
-                bundle = message.get("bundle")
+                if not rate_limit_check(username, "register_bundle"):
+                    await send_safe(websocket, json.dumps({"type": "error", "reason": "Rate limit exceeded"}))
+                    continue
+                bundle     = message.get("bundle")
+                bundle_str = json.dumps(bundle) if bundle else ""
+                if len(bundle_str) > MAX_BUNDLE_SIZE_BYTES:
+                    print(f"[SECURITY] Слишком большой bundle (register_bundle) от {username}")
+                    report_violation(username, "oversized bundle")
+                    continue
                 if bundle and username:
                     async with lock:
                         prekey_bundles[username] = bundle
@@ -986,6 +1050,9 @@ async def handle_client(websocket):
 
             # ─── Profile Update (аватар) ──────────────────────────────────────
             if msg_type == "profile_update":
+                if not rate_limit_check(username, "profile_update"):
+                    await send_safe(websocket, json.dumps({"type": "error", "reason": "Rate limit exceeded"}))
+                    continue
                 new_avatar = message.get("avatar", "")
                 if new_avatar and len(new_avatar) < 200_000:
                     user_avatars[username] = new_avatar
@@ -1051,7 +1118,7 @@ async def handle_client(websocket):
                     "bundle": bundle
                 }
                 await websocket.send(json.dumps(response))
-                print(f"[PREKEY] Отправлен bundle {target} -> {username}")
+                print("[PREKEY] Bundle отправлен по запросу request_prekey")
                 continue
 
             # ─── Publish Prekey Bundle ────────────────────────────────────────
@@ -1103,6 +1170,14 @@ async def handle_client(websocket):
                         bundle_to_send["opks"] = [used_opk] if used_opk else []
                     else:
                         bundle_to_send = bundle_data
+                    # Attached fresh at serve time (not stored with the bundle,
+                    # so it can never go stale between publishes) — lets the
+                    # requester deliver session_init anonymously via anon_message
+                    # instead of a directly-addressed packet. Omitted if target
+                    # is offline or has no currently-registered tokens.
+                    bootstrap_token = pick_bootstrap_token(target)
+                    if bootstrap_token:
+                        bundle_to_send["bootstrap_token"] = bootstrap_token
                     response = json.dumps({"type": "prekey_bundle_response", "from": target, "bundle": bundle_to_send})
                     await websocket.send(response)
                 else:
@@ -1116,6 +1191,49 @@ async def handle_client(websocket):
                         response = json.dumps({"type": "prekey_bundle_response", "from": target, "bundle": None})
                     await websocket.send(response)
 
+                continue
+
+            # ─── Get Prekey Bundles (batched, anonymous) ───────────────────────
+            # Client fetches bundles for a real target PLUS decoy targets
+            # (its own existing contacts, shuffled together) so the server
+            # cannot tell which one it actually wants. Mirrors the anonymous
+            # mailbox's fake-tag padding, but decoys here must be real
+            # fingerprints (bundles are keyed by identity, unlike mailbox
+            # tags). Never consumes an OPK — a decoy fetch must not burn a
+            # stranger's one-time prekey; the resulting X3DH falls back to
+            # the existing no-OPK path.
+            if msg_type == "get_prekey_bundles_batch":
+                if not rate_limit_check(username, "prekey_fetch"):
+                    await websocket.send(json.dumps({"type": "error", "reason": "Rate limit exceeded"}))
+                    continue
+
+                targets = message.get("targets")
+                if not isinstance(targets, list) or not targets:
+                    continue
+                targets = [t for t in targets if isinstance(t, str)][:MAX_BATCH_BUNDLE_TARGETS]
+
+                results = {}
+                async with lock:
+                    for t in targets:
+                        bundle_data = prekey_bundles.get(t)
+                        if not bundle_data:
+                            results[t] = None
+                            continue
+                        if isinstance(bundle_data, dict) and "bundle" in bundle_data:
+                            bundle_to_send = dict(bundle_data["bundle"])
+                        else:
+                            bundle_to_send = dict(bundle_data)
+                        bundle_to_send["opks"] = []  # never consumed for batched/anonymous fetches
+                        bootstrap_token = pick_bootstrap_token(t)
+                        if bootstrap_token:
+                            bundle_to_send["bootstrap_token"] = bootstrap_token
+                        results[t] = bundle_to_send
+
+                await websocket.send(json.dumps({
+                    "type": "prekey_bundles_batch_response",
+                    "bundles": results
+                }))
+                print(f"[PREKEY] Batch bundle-fetch обслужен ({len(targets)} целей)")
                 continue
 
             # ─── Get Public Key (legacy) ──────────────────────────────────────
@@ -1501,6 +1619,9 @@ async def handle_client(websocket):
 
             # ─── Create Channel ───────────────────────────────────────────────
             if msg_type == "channel_create":
+                if not rate_limit_check(username, "channel_create"):
+                    await websocket.send(json.dumps({"type": "error", "reason": "Rate limit exceeded"}))
+                    continue
                 channel_name  = message.get("channel_name", "").strip()
                 channel_desc  = message.get("channel_description", "").strip()
                 channel_avatar = message.get("channel_avatar", "📢")
@@ -1670,9 +1791,17 @@ async def handle_client(websocket):
                 "call_end", "call_ringing",
                 "call_group_invite", "call_group_join",
                 "call_group_answer", "call_group_ice", "call_group_leave",
-                "call_group_peer_list", "call_ice_restart"
+                "call_group_peer_list", "call_ice_restart",
+                # Two-phase call flow: usually anon-routed (opaque inside anon_message,
+                # never reaches this block), but sendAnonOrDirect() falls back to sending
+                # these directly when no anon token is available yet — same relay/offline-
+                # queue/FCM-wake treatment as the rest of call signaling in that case.
+                "call_request_audio", "call_request_video", "call_response",
             }
             if msg_type in CALL_RELAY_TYPES:
+                if not rate_limit_check(username, msg_type):
+                    await send_safe(websocket, json.dumps({"type": "error", "reason": "Rate limit exceeded"}))
+                    continue
                 target = message.get("to", "")
                 if not target:
                     continue
@@ -1754,6 +1883,9 @@ async def handle_client(websocket):
 
             # ─── Anonymous Token Routing ──────────────────────────────────────
             if msg_type == "subscribe_tokens":
+                if not rate_limit_check(username, "subscribe_tokens"):
+                    await send_safe(websocket, json.dumps({"type": "error", "reason": "Rate limit exceeded"}))
+                    continue
                 raw_tokens = message.get("tokens", [])
                 if isinstance(raw_tokens, list):
                     valid = [t for t in raw_tokens
@@ -1841,15 +1973,18 @@ async def handle_client(websocket):
                         or not all(c in "0123456789abcdef" for c in tag)
                         or not isinstance(blob, str)
                         or len(blob) > MAILBOX_MAX_BLOB):
+                    print(f"[DEBUG-MAILBOX] put REJECTED from {username}: tag_len={len(tag)} blob_len={len(blob) if isinstance(blob, str) else 'N/A'} tag_hex_ok={all(c in '0123456789abcdef' for c in tag) if tag else False}")
                     continue
                 now = time.time()
                 async with lock:
                     # Чистим устаревшие блобы в этом слоте
                     existing = [e for e in mailbox.get(tag, []) if now - e["ts"] < MAILBOX_TTL]
                     if len(existing) >= 5:  # max 5 блобов на тег — защита от DoS
+                        print(f"[DEBUG-MAILBOX] put DROPPED (slot full, {len(existing)} blobs) from {username}: tag=...{tag[-8:]}")
                         continue
                     existing.append({"blob": blob, "ts": now})
                     mailbox[tag] = existing
+                print(f"[DEBUG-MAILBOX] put OK from {username}: tag=...{tag[-8:]} slot_now_has={len(existing)} blob_len={len(blob)}")
                 continue
 
             if msg_type == "mailbox_fetch":
@@ -1869,6 +2004,9 @@ async def handle_client(websocket):
                             result[tag] = [e["blob"] for e in blobs]
                             # Удаляем доставленные
                             del mailbox[tag]
+                queried_suffixes = ",".join(t[-8:] for t in tags)
+                stored_suffixes = ",".join(t[-8:] for t in mailbox.keys())
+                print(f"[DEBUG-MAILBOX] fetch by {username}: {len(tags)} tags queried [{queried_suffixes}], {len(result)} matched, mailbox currently has [{stored_suffixes}]")
                 if result:
                     await send_safe(websocket, json.dumps({"type": "mailbox_result", "blobs": result}))
                 continue
@@ -1962,7 +2100,7 @@ def setup_upnp(port: int = 9000) -> str:
             upnp.deleteportmapping(port, "TCP")
         except Exception:
             pass
-        upnp.addportmapping(port, "TCP", upnp.lanaddr, port, "Beacon Messenger", "")
+        upnp.addportmapping(port, "TCP", upnp.lanaddr, port, "Subrosa Messenger", "")
         url = f"ws://{public_ip}:{port}"
         print(f"[UPnP] Порт {port} открыт автоматически. Адрес этого сервера: {url}")
         return url

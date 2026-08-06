@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.annotation.SuppressLint
 import android.media.MediaCodec

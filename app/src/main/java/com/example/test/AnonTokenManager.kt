@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.content.Context
 import org.json.JSONArray
@@ -10,7 +10,12 @@ object AnonTokenManager {
     private const val PREFS_NAME = "anon_token_store"
     private const val PREF_CT_PREFIX = "anon_ct_"
     private const val POOL_SIZE = 50
-    private const val REFILL_THRESHOLD = 10
+    // 16, not just "some low number" — refilling isn't instant: it takes a round
+    // trip (I send my batch → they receive it → THEY reciprocate with a fresh
+    // batch of theirs, which is what actually replenishes my supply). Needs
+    // enough headroom that typing + a couple of messages don't outrun that
+    // round trip before it completes.
+    private const val REFILL_THRESHOLD = 16
     private const val BATCH_TO_SHARE = 20
 
     private val rng = SecureRandom()

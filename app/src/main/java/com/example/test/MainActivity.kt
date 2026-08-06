@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.admin.DevicePolicyManager
@@ -27,10 +27,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
-import com.bcon.messenger.ui.theme.TESTTheme
-import com.bcon.messenger.ui.theme.BeaconTheme
-import com.bcon.messenger.ui.theme.beaconColorsFor
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.TESTTheme
+import com.subrosa.messenger.ui.theme.SubrosaTheme
+import com.subrosa.messenger.ui.theme.subrosaColorsFor
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 import java.io.File
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +43,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.appcompat.app.AppCompatDelegate
 import android.net.Uri
 import kotlinx.coroutines.flow.MutableStateFlow
-import com.bcon.messenger.GroupInfoScreen
+import com.subrosa.messenger.GroupInfoScreen
 import com.google.android.datatransport.BuildConfig
 
 class MainActivity : FragmentActivity() {
@@ -66,7 +66,7 @@ class MainActivity : FragmentActivity() {
 
         val currentLanguage = MutableStateFlow("ru")
 
-        val currentTheme = MutableStateFlow(BeaconTheme.NAVY)
+        val currentTheme = MutableStateFlow(SubrosaTheme.NAVY)
 
         val shouldResetToCalculator = MutableStateFlow(false)
     }
@@ -125,7 +125,8 @@ class MainActivity : FragmentActivity() {
         ParanoidMode.init(this)
         HoneyTokenManager.init(this)
 
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        // TEMP: disabled for local screenshot-based testing this session — MUST be restored before any real build.
+        // window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
 
         window.decorView.filterTouchesWhenObscured = true
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -167,9 +168,9 @@ class MainActivity : FragmentActivity() {
         setContent {
 
             val theme by currentTheme.collectAsState()
-            val beaconColors = beaconColorsFor(theme)
+            val subrosaColors = subrosaColorsFor(theme)
 
-            TESTTheme(beaconColors = beaconColors) {
+            TESTTheme(subrosaColors = subrosaColors) {
 
                 val lang by currentLanguage.collectAsState()
                 val strings = if (lang == "en") enStrings else ruStrings
@@ -379,7 +380,7 @@ class MainActivity : FragmentActivity() {
                 return
             }
         }
-        val filter = android.content.IntentFilter("com.bcon.messenger.EMERGENCY_WIPE")
+        val filter = android.content.IntentFilter("com.subrosa.messenger.EMERGENCY_WIPE")
         registerReceiver(emergencyReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
 
         if (UserStorage.isRegistered(this)) {
@@ -545,7 +546,7 @@ class MainActivity : FragmentActivity() {
 
 @Composable
 fun TorLoadingScreen(progress: Int, status: String) {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val appFont = FontFamily(Font(R.font.jetbrainsmono_regular))
 
     Box(

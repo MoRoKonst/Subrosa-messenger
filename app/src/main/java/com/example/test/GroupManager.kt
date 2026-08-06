@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.content.Context
 import android.util.Base64
@@ -55,9 +55,9 @@ object GroupManager {
         return keyGen.generateKey().encoded
     }
 
-    fun encryptGroupKeyForMember(groupKey: ByteArray, memberPublicKey: String): String {
+    fun encryptGroupKeyForMember(groupKey: ByteArray, memberPublicKey: String, memberPqPublicKey: ByteArray): String {
         val keyBase64 = Base64.encodeToString(groupKey, Base64.NO_WRAP)
-        return CryptoManager.encrypt(keyBase64, memberPublicKey)
+        return CryptoManager.encrypt(keyBase64, memberPublicKey, memberPqPublicKey)
     }
 
     fun decryptGroupKey(encryptedGroupKey: String): ByteArray {

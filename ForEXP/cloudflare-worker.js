@@ -1,9 +1,9 @@
 /**
- * Beacon Messenger — Cloudflare Worker WebSocket Proxy
+ * Subrosa Messenger — Cloudflare Worker WebSocket Proxy
  *
  * Назначение:
  *   Проксирует WebSocket-соединения клиентов через Cloudflare на реальный
- *   сервер Beacon. С точки зрения любого фаервола/белого списка — это обычный
+ *   сервер Subrosa. С точки зрения любого фаервола/белого списка — это обычный
  *   HTTPS-запрос к Cloudflare IP на порту 443.
  *
  * Деплой:
@@ -18,7 +18,7 @@
  * Адрес для клиентов:
  *   wss://your-worker.your-subdomain.workers.dev
  *   или
- *   wss://beacon.yourdomain.com  (если привязал кастомный домен)
+ *   wss://Subrosa.yourdomain.com  (если привязал кастомный домен)
  *
  * Важно:
  *   - Cloudflare Workers поддерживают WebSocket нативно (Durable Objects не нужны)
@@ -40,7 +40,7 @@ export default {
         // ── Обычный HTTP (healthcheck) ────────────────────────────────────────
         return new Response(JSON.stringify({
             status: "ok",
-            service: "Beacon Proxy",
+            service: "Subrosa Proxy",
             timestamp: Date.now()
         }), {
             headers: { "Content-Type": "application/json" }
@@ -55,7 +55,7 @@ async function handleWebSocket(request, backendHost, backendPort) {
     // Принимаем соединение от клиента
     serverSocket.accept();
 
-    // Подключаемся к реальному серверу Beacon
+    // Подключаемся к реальному серверу Subrosa
     const backendUrl = `wss://${backendHost}:${backendPort === "443" ? "" : ":" + backendPort}`;
 
     let backend;

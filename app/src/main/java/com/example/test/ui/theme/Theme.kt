@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger.ui.theme
+package com.subrosa.messenger.ui.theme
 
 import android.app.Activity
 import androidx.compose.material3.MaterialTheme
@@ -14,28 +14,28 @@ import androidx.core.view.WindowCompat
 
 @Composable
 fun TESTTheme(
-    beaconColors: BeaconColors = NavyBeaconColors,
+    subrosaColors: subrosaColors = NavysubrosaColors,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (beaconColors.isDark) {
+    val colorScheme = if (subrosaColors.isDark) {
         darkColorScheme(
-            primary        = beaconColors.primaryBlue,
-            secondary      = beaconColors.accent,
-            background     = beaconColors.gradientEnd,
-            surface        = beaconColors.card,
+            primary        = subrosaColors.primaryBlue,
+            secondary      = subrosaColors.accent,
+            background     = subrosaColors.gradientEnd,
+            surface        = subrosaColors.card,
             onPrimary      = Color.White,
-            onBackground   = beaconColors.textPrimary,
-            onSurface      = beaconColors.textPrimary
+            onBackground   = subrosaColors.textPrimary,
+            onSurface      = subrosaColors.textPrimary
         )
     } else {
         lightColorScheme(
-            primary        = beaconColors.primaryBlue,
-            secondary      = beaconColors.accent,
-            background     = beaconColors.gradientStart,
-            surface        = beaconColors.card,
+            primary        = subrosaColors.primaryBlue,
+            secondary      = subrosaColors.accent,
+            background     = subrosaColors.gradientStart,
+            surface        = subrosaColors.card,
             onPrimary      = Color.White,
-            onBackground   = beaconColors.textPrimary,
-            onSurface      = beaconColors.textPrimary
+            onBackground   = subrosaColors.textPrimary,
+            onSurface      = subrosaColors.textPrimary
         )
     }
 
@@ -43,16 +43,16 @@ fun TESTTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = beaconColors.topBar.toArgb()
-            window.navigationBarColor = beaconColors.gradientEnd.toArgb()
+            window.statusBarColor = subrosaColors.topBar.toArgb()
+            window.navigationBarColor = subrosaColors.gradientEnd.toArgb()
             WindowCompat.getInsetsController(window, view).apply {
-                isAppearanceLightStatusBars     = !beaconColors.isDark
-                isAppearanceLightNavigationBars = !beaconColors.isDark
+                isAppearanceLightStatusBars     = !subrosaColors.isDark
+                isAppearanceLightNavigationBars = !subrosaColors.isDark
             }
         }
     }
 
-    CompositionLocalProvider(LocalBeaconColors provides beaconColors) {
+    CompositionLocalProvider(LocalsubrosaColors provides subrosaColors) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography  = Typography,

@@ -1,9 +1,9 @@
-﻿#!/bin/bash
+#!/bin/bash
 set -e
 
 echo ""
 echo "========================================"
-echo "Beacon Messenger Docker Quick Start"
+echo "Subrosa Messenger Docker Quick Start"
 echo "========================================"
 echo ""
 
@@ -39,7 +39,7 @@ fi
 
 # Start services
 echo ""
-echo "Starting Beacon Messenger services..."
+echo "Starting Subrosa Messenger services..."
 echo ""
 
 docker compose up -d

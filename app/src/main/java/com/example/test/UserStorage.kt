@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.content.Context
 import android.util.Base64
@@ -351,18 +351,18 @@ object UserStorage {
             .edit().putString("app_language", langCode).apply()
     }
 
-    fun getTheme(context: Context): com.bcon.messenger.ui.theme.BeaconTheme {
+    fun getTheme(context: Context): com.subrosa.messenger.ui.theme.SubrosaTheme {
         val name = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-            .getString("app_theme", com.bcon.messenger.ui.theme.BeaconTheme.NAVY.name)
-            ?: com.bcon.messenger.ui.theme.BeaconTheme.NAVY.name
+            .getString("app_theme", com.subrosa.messenger.ui.theme.SubrosaTheme.NAVY.name)
+            ?: com.subrosa.messenger.ui.theme.SubrosaTheme.NAVY.name
         return try {
-            com.bcon.messenger.ui.theme.BeaconTheme.valueOf(name)
+            com.subrosa.messenger.ui.theme.SubrosaTheme.valueOf(name)
         } catch (e: Exception) {
-            com.bcon.messenger.ui.theme.BeaconTheme.NAVY
+            com.subrosa.messenger.ui.theme.SubrosaTheme.NAVY
         }
     }
 
-    fun setTheme(context: Context, theme: com.bcon.messenger.ui.theme.BeaconTheme) {
+    fun setTheme(context: Context, theme: com.subrosa.messenger.ui.theme.SubrosaTheme) {
         context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             .edit().putString("app_theme", theme.name).apply()
     }

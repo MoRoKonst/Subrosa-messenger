@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 val EMOJI_SET = listOf(
     "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼",

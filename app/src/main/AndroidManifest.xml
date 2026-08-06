@@ -133,10 +133,10 @@
             android:name=".WipeReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.bcon.messenger.DMS_FIRE" />
-                <action android:name="com.bcon.messenger.DMS_WIPE" />
-                <action android:name="com.bcon.messenger.DMS_CHECKIN" />
-                <action android:name="com.bcon.messenger.EMERGENCY_WIPE" />
+                <action android:name="com.subrosa.messenger.DMS_FIRE" />
+                <action android:name="com.subrosa.messenger.DMS_WIPE" />
+                <action android:name="com.subrosa.messenger.DMS_CHECKIN" />
+                <action android:name="com.subrosa.messenger.EMERGENCY_WIPE" />
             </intent-filter>
         </receiver>
 

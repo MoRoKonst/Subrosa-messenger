@@ -1,10 +1,10 @@
-﻿# Beacon Messenger — Self-Hosting Setup
+# Subrosa Messenger — Self-Hosting Setup
 
-This directory contains everything needed to self-host a Beacon Messenger server.
+This directory contains everything needed to self-host a Subrosa Messenger server.
 
-## What is Beacon?
+## What is Subrosa?
 
-Beacon is an end-to-end encrypted messenger with metadata protection. This deployment contains:
+Subrosa is an end-to-end encrypted messenger with metadata protection. This deployment contains:
 - **Python WebSocket server** for message relay and signaling
 - **nginx reverse proxy** with TLS termination
 - **Docker containerization** for easy deployment
@@ -67,7 +67,7 @@ sleep 10
 
 # Verify running
 docker compose ps
-# You should see beacon-messenger-server and beacon-nginx both Up
+# You should see Subrosa-messenger-server and Subrosa-nginx both Up
 ```
 
 ### Step 5: Test Connection
@@ -110,7 +110,7 @@ For real-world use, follow [DEPLOY.md](DEPLOY.md):
 ├── generate-certs.sh       # TLS certificate generator
 ├── DEPLOY.md               # Production deployment guide
 └── ForEXP/
-    ├── server.py           # Beacon WebSocket server
+    ├── server.py           # Subrosa WebSocket server
     └── requirements.txt    # Python dependencies
 ```
 
@@ -123,7 +123,7 @@ For real-world use, follow [DEPLOY.md](DEPLOY.md):
 docker compose up -d
 
 # View logs
-docker compose logs -f beacon-server
+docker compose logs -f Subrosa-server
 
 # Stop server
 docker compose down
@@ -135,14 +135,14 @@ docker compose restart
 docker compose build --no-cache && docker compose up -d
 
 # Access server shell (debug)
-docker compose exec beacon-server sh
+docker compose exec Subrosa-server sh
 
 # Export database backup
 docker run --rm \
-  -v beacon-data:/data \
+  -v Subrosa-data:/data \
   -v $(pwd):/backup \
   alpine:latest \
-  cp /data/beacon.db /backup/beacon-$(date +%Y%m%d_%H%M%S).db
+  cp /data/Subrosa.db /backup/Subrosa-$(date +%Y%m%d_%H%M%S).db
 ```
 
 ---
@@ -203,7 +203,7 @@ sudo lsof -i :443
 Container defaults are reasonable. If needed, add to `docker-compose.yml`:
 ```yaml
 services:
-  beacon-server:
+  Subrosa-server:
     resources:
       limits:
         memory: 1G

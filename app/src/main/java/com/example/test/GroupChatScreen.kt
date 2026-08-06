@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -36,9 +36,9 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import com.bcon.messenger.ui.theme.BubbleOwn
-import com.bcon.messenger.ui.theme.BubbleOther
-import com.bcon.messenger.ui.theme.Primary
+import com.subrosa.messenger.ui.theme.BubbleOwn
+import com.subrosa.messenger.ui.theme.BubbleOther
+import com.subrosa.messenger.ui.theme.Primary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext

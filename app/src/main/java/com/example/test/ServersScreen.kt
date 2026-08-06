@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -22,7 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.clickable
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 import kotlinx.coroutines.delay
 
 private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
@@ -33,7 +33,7 @@ fun ServersScreen(onBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     var servers by remember { mutableStateOf(ServerManager.getServers(context)) }
     var fixedMode by remember { mutableStateOf(ServerManager.isFixedMode(context)) }

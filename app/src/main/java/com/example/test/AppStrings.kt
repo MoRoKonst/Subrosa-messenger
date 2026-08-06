@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import androidx.compose.runtime.compositionLocalOf
 
@@ -122,6 +122,7 @@ interface IStr5 {
     val incomingAudioCall: String; val incomingGroupCallHint: String
     val incomingCallHint: String; val incomingDecline: String
     val incomingAccept: String; val incomingNoCameraPermission: String
+    val incomingNoAudioPermission: String
     val activeGroupCallLabel: String; val activeGroupLabel: String
     val activeWaitingPeers: String; val activeConnecting: String
     val activeMute: String; val activeUnmute: String
@@ -150,7 +151,7 @@ interface IStr6 {
     val chatAttachPhoto: String; val chatAttachMedia: String; val chatAttachFile: String
     val chatGeo: String; val chatGeoPermission: String
     val chatGeoFail: String; val chatGeoTap: String; val chatGeoDisabled: String
-    val chatEditHint: String; val chatInputHint: String
+    val chatEditHint: String; val chatInputHint: String; val chatEstablishingChannel: String
     val chatPhotoTooBig: String; val chatFileTooBig: String
     val chatMediaOffline: String
     val chatFileSending: (String, Int) -> String
@@ -467,6 +468,7 @@ private val ru5 = object : IStr5 {
     override val incomingDecline = "Отклонить"
     override val incomingAccept = "Принять"
     override val incomingNoCameraPermission = "Разрешение камеры не дано — только аудио"
+    override val incomingNoAudioPermission = "Без доступа к микрофону звонок принять нельзя"
     override val activeGroupCallLabel = "Групповой звонок"
     override val activeGroupLabel = "Группа"
     override val activeWaitingPeers = "Ожидание участников..."
@@ -528,6 +530,7 @@ private val ru6 = object : IStr6 {
     override val chatGeoDisabled = "Включи геолокацию в настройках телефона"
     override val chatEditHint = "Изменить..."
     override val chatInputHint = "Сообщение..."
+    override val chatEstablishingChannel = "Устанавливаем защищённый канал..."
     override val chatPhotoTooBig = "Фото слишком большое для обработки"
     override val chatFileTooBig = "Файл слишком большой (макс 20 МБ)"
     override val chatMediaOffline = "Нет соединения — медиафайл не отправлен"
@@ -689,7 +692,7 @@ private val ru9 = object : IStr9 {
     override val panicButtonSubtitle = "Показывает уведомление с кнопкой вайпа, доступной без разблокировки. Нажимайте быстро, не считая нажатий — каждое засчитывается мгновенно. Минимум 5 нажатий."
     override val panicButtonDecoyLabel = "Режим Decoy после вайпа"
     override val panicButtonDecoySubtitle = "После нажатия кнопки — показать фейковый экран чатов вместо немедленного закрытия"
-    override val panicNotifTitle = "🔴 Beacon — Экстренный вайп"
+    override val panicNotifTitle = "🔴 Subrosa — Экстренный вайп"
     override val panicNotifText = "Нажмите «УНИЧТОЖИТЬ» для немедленного стирания всех данных"
     override val panicNotifButton = "УНИЧТОЖИТЬ"
     override val calcDisguiseLabel = "Маскировка под калькулятор"
@@ -913,6 +916,7 @@ private val en5 = object : IStr5 {
     override val incomingDecline = "Decline"
     override val incomingAccept = "Accept"
     override val incomingNoCameraPermission = "Camera permission denied — audio only"
+    override val incomingNoAudioPermission = "Can't accept the call without microphone access"
     override val activeGroupCallLabel = "Group call"
     override val activeGroupLabel = "Group"
     override val activeWaitingPeers = "Waiting for participants..."
@@ -974,6 +978,7 @@ private val en6 = object : IStr6 {
     override val chatGeoDisabled = "Enable location in phone settings"
     override val chatEditHint = "Edit message..."
     override val chatInputHint = "Message..."
+    override val chatEstablishingChannel = "Establishing secure channel..."
     override val chatPhotoTooBig = "Photo is too large to process"
     override val chatFileTooBig = "File too large (max 20MB)"
     override val chatMediaOffline = "No connection — media not sent"
@@ -1135,7 +1140,7 @@ private val en9 = object : IStr9 {
     override val panicButtonSubtitle = "Shows a notification with a wipe button accessible without unlocking. Tap quickly without counting — each press registers immediately."
     override val panicButtonDecoyLabel = "Decoy mode after wipe"
     override val panicButtonDecoySubtitle = "After tapping — show fake chat screen instead of closing immediately"
-    override val panicNotifTitle = "🔴 Beacon — Emergency Wipe"
+    override val panicNotifTitle = "🔴 Subrosa — Emergency Wipe"
     override val panicNotifText = "Tap DESTROY to immediately erase all data"
     override val panicNotifButton = "DESTROY"
     override val calcDisguiseLabel = "Calculator disguise"

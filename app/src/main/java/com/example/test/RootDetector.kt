@@ -1,7 +1,7 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.os.Build
-import com.bcon.messenger.BuildConfig
+import com.subrosa.messenger.BuildConfig
 import java.io.File
 
 object RootDetector {

@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.size
 import androidx.core.content.FileProvider
 import java.io.File
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -36,7 +36,7 @@ fun BackupScreen(onBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val scope = rememberCoroutineScope()
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     var password by remember { mutableStateOf("") }

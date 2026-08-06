@@ -212,7 +212,7 @@ The solution is a **Tor Hidden Service**. Regular Tor through exit nodes has a p
 Server configuration is minimal:
 
 ```
-HiddenServiceDir /var/lib/tor/beacon/
+HiddenServiceDir /var/lib/tor/Subrosa/
 HiddenServicePort 80 127.0.0.1:9000
 ```
 
@@ -248,4 +248,4 @@ This is not a mix network and not absolute anonymity. But for protection against
 
 ---
 
-*Reference implementation: [github.com/MoRoKonst/beacon-messenger](https://github.com/MoRoKonst/beacon-messenger) — open-source Android messenger with self-hosting support.*
+*Reference implementation: [github.com/MoRoKonst/Subrosa-messenger](https://github.com/MoRoKonst/Subrosa-messenger) — open-source Android messenger with self-hosting support.*

@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -73,7 +73,7 @@ import android.content.ServiceConnection
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.IBinder
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -172,7 +172,7 @@ fun ChatScreen(
         )
     }
     val s = LocalStrings.current
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     val userId = UserStorage.getUserId(context)
 
@@ -216,6 +216,11 @@ fun ChatScreen(
     var historyDisplayStart by remember { mutableIntStateOf(0) }
     var hasMoreHistory by remember { mutableStateOf(false) }
     var isLoadingMoreHistory by remember { mutableStateOf(false) }
+    // True once this contact can be messaged anonymously (or wasn't a
+    // mailbox-bootstrapped contact to begin with). Starts optimistic (true) so
+    // existing/established chats never flash a "connecting" state; flipped to
+    // false below once the service confirms this is a genuinely pending contact.
+    var channelReady by remember { mutableStateOf(true) }
 
     val sendGeo: () -> Unit = {
         scope.launch {
@@ -353,6 +358,17 @@ fun ChatScreen(
                 isOnline = service.isOnline()
                 service.clearNotifLines("dm_$recipient")
 
+                // If this contact's anonymous channel isn't confirmed established yet,
+                // show the connecting state and (re-)kick the bootstrap immediately —
+                // opening the chat is exactly the moment the user wants to write, per
+                // the "retry on demand" half of the schedule (background timer covers
+                // the rest even if the chat is never reopened).
+                channelReady = service.isChannelReady(recipient)
+                if (!channelReady) service.bootstrapChannelFor(recipient)
+                service.onChannelReady = { contact ->
+                    if (contact == recipient) channelReady = true
+                }
+
                 service.onTypingReceived = { from ->
                     if (from == recipient) {
                         isTyping = true
@@ -368,10 +384,22 @@ fun ChatScreen(
                     if (contactId == recipient) showKeyWarning = true
                 }
 
-                service.onReadReceived = { _ ->
-                    messages.forEachIndexed { i, msg ->
-                        if (msg.isOwn && !msg.isRead)
-                            messages[i] = msg.copy(isRead = true, isDelivered = true)
+                service.onReadReceived = { messageId ->
+                    // The peer only acks the newest message it actually read (watermark
+                    // semantics — see sendRead() call sites), implying everything at or
+                    // before it was read too. But only sweep messages that were genuinely
+                    // delivered: a message that failed to decrypt on the peer's end (e.g.
+                    // BAD_DECRYPT from a stale ratchet) never reached "delivered" and must
+                    // not be marked "read" just because a later, unrelated message succeeded.
+                    val readIndex = messages.indexOfFirst { it.id == messageId }
+                    if (readIndex != -1) {
+                        for (i in 0..readIndex) {
+                            val msg = messages[i]
+                            if (msg.isOwn && msg.isDelivered && !msg.isRead) {
+                                messages[i] = msg.copy(isRead = true)
+                            }
+                        }
+                        messages[readIndex] = messages[readIndex].copy(isRead = true, isDelivered = true)
                     }
                 }
 
@@ -1419,13 +1447,13 @@ fun ChatScreen(
                             .size(44.dp)
                             .clip(CircleShape)
                             .background(Color(0x18FFFFFF))
-                            .clickable { showAttachMenu = true },
+                            .clickable(enabled = channelReady) { showAttachMenu = true },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_attach),
                             contentDescription = null,
-                            tint = c.textPrimary.copy(alpha = 0.85f),
+                            tint = c.textPrimary.copy(alpha = if (channelReady) 0.85f else 0.3f),
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -1457,24 +1485,39 @@ fun ChatScreen(
                             },
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                             maxLines = 4,
+                            readOnly = !channelReady,
                             textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, color = Color.White),
                             cursorBrush = androidx.compose.ui.graphics.SolidColor(c.accent),
                             interactionSource = inputInteraction,
                             decorationBox = { innerTextField ->
                                 if (inputText.isEmpty()) {
-                                    Text(
-                                        if (isEditMode) s.chatEditHint else s.chatInputHint,
-                                        fontSize = 15.sp,
-                                        color = Color(0x66FFFFFF),
-                                        fontFamily = JetBrainsMono
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (!channelReady) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(13.dp),
+                                                strokeWidth = 1.5.dp,
+                                                color = c.accent.copy(alpha = 0.7f)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                        }
+                                        Text(
+                                            when {
+                                                !channelReady -> s.chatEstablishingChannel
+                                                isEditMode -> s.chatEditHint
+                                                else -> s.chatInputHint
+                                            },
+                                            fontSize = 15.sp,
+                                            color = Color(0x66FFFFFF),
+                                            fontFamily = JetBrainsMono
+                                        )
+                                    }
                                 }
                                 innerTextField()
                             }
                         )
                     }
 
-                    if (inputText.isNotEmpty() || isEditMode) {
+                    if ((inputText.isNotEmpty() || isEditMode) && channelReady) {
                         PortholeSendButton(
                             enabled = inputText.isNotEmpty(),
                             onClick = {
@@ -1536,6 +1579,7 @@ fun ChatScreen(
                             isVideoMode = isVideoMode,
                             onToggleMode = { isVideoMode = !isVideoMode },
                             onStartVoice = {
+                                if (!channelReady) return@CombinedMediaButton
                                 when {
                                     context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
                                         android.content.pm.PackageManager.PERMISSION_GRANTED -> {
@@ -1545,7 +1589,7 @@ fun ChatScreen(
                                     else -> audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                                 }
                             },
-                            onStartVideo = { showVideoCircleRecorder = true },
+                            onStartVideo = { if (channelReady) showVideoCircleRecorder = true },
                             size = 44
                         )
                     }
@@ -1719,7 +1763,7 @@ fun MessageBubble(
 ) {
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     var showMapDialog by remember { mutableStateOf(false) }
 
     val isGeoLocation = msg.text == s.chatGeo || msg.text == "📍 Геопозиция"

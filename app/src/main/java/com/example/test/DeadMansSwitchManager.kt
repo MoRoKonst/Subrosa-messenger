@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.app.AlarmManager
 import android.app.NotificationChannel
@@ -12,9 +12,9 @@ import androidx.core.app.NotificationManagerCompat
 
 object DeadMansSwitchManager {
 
-    const val ACTION_DMS_FIRE    = "com.bcon.messenger.DMS_FIRE"
-    const val ACTION_DMS_WIPE    = "com.bcon.messenger.DMS_WIPE"
-    const val ACTION_DMS_CHECKIN = "com.bcon.messenger.DMS_CHECKIN"
+    const val ACTION_DMS_FIRE    = "com.subrosa.messenger.DMS_FIRE"
+    const val ACTION_DMS_WIPE    = "com.subrosa.messenger.DMS_WIPE"
+    const val ACTION_DMS_CHECKIN = "com.subrosa.messenger.DMS_CHECKIN"
 
     private const val NOTIF_CHANNEL_ID  = "dms_alert"
     private const val NOTIF_WARNING_ID  = 9001

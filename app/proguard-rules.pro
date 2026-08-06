@@ -26,8 +26,8 @@
 -dontwarn androidx.compose.**
 
 # ─── Все классы приложения (сохраняем полностью) ──────────────────────────────
--keep class com.example.test.** { *; }
--keepclassmembers class com.example.test.** { *; }
+-keep class com.subrosa.messenger.** { *; }
+-keepclassmembers class com.subrosa.messenger.** { *; }
 
 # ─── OkHttp & WebSocket ───────────────────────────────────────────────────────
 -dontwarn okhttp3.**
@@ -108,6 +108,13 @@
     java.lang.Object writeReplace();
     java.lang.Object readResolve();
 }
+
+# ─── BouncyCastle (EC + ML-KEM/postquantum — PqCrypto.kt relies on this
+#     directly, not just via javax.crypto provider lookup; R8 must not
+#     strip/rename any of it) ────────────────────────────────────────────────
+-keep class org.bouncycastle.** { *; }
+-keepclassmembers class org.bouncycastle.** { *; }
+-keepnames class org.bouncycastle.** { *; }
 
 # ─── Подавление предупреждений (сторонние библиотеки) ─────────────────────────
 -dontwarn org.bouncycastle.**

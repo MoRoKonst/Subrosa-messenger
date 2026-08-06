@@ -13,7 +13,7 @@ if (localPropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.bcon.messenger"
+    namespace = "com.subrosa.messenger"
     compileSdk = 34
 
 
@@ -29,7 +29,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.bcon.messenger"
+        applicationId = "com.subrosa.messenger"
         minSdk = 26
         versionCode = 2
         versionName = "1.039"
@@ -78,7 +78,7 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
     // WebSocket
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.79") // 1.79+ required for org.bouncycastle.pqc.crypto.mlkem (ML-KEM)
 
     // Тесты
     testImplementation(libs.junit)

@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.media.AudioAttributes
 import android.media.AudioFormat

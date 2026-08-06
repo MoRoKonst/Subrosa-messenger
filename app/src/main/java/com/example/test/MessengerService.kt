@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.app.*
 import android.content.Context
@@ -131,6 +131,10 @@ class MessengerService : Service() {
     private var username = ""
 
     private val publicKeys = mutableMapOf<String, String>()
+    // Peer ML-KEM public keys, sourced from prekey bundles — required to
+    // hybridize the legacy ephemeral-ECDH path (encrypt/decrypt, voice, group
+    // key distribution) against harvest-now-decrypt-later, same as X3DH.
+    private val publicKeysPq = mutableMapOf<String, ByteArray>()
     private val tokensSentThisSession = mutableSetOf<String>()
     private val pendingMessages = mutableMapOf<String, MutableList<Pair<String, String>>>()
 
@@ -140,6 +144,20 @@ class MessengerService : Service() {
 
     private data class PendingVideoCircle(val to: String, val videoId: String, val encFilePath: String, val duration: Int)
     private val pendingVideoCircles = mutableListOf<PendingVideoCircle>()
+
+    // Same pattern as pendingVideoCircles: sendImage/sendFile require BOTH the
+    // contact's classical AND PQ public key cached in-memory (a one-shot hybrid
+    // encrypt, not the session-based Double Ratchet text uses — which is why text
+    // worked fine while photos silently vanished). The PQ key is only ever
+    // populated by actually fetching a prekey bundle; a passively-received
+    // session_init only carries the classical key. Confirmed live: sendImage
+    // logged "нет ключа" and gave up with no retry at all. Queuing here and
+    // flushing once the bundle arrives (see flushPendingImages/flushPendingFileSends,
+    // called from the same spot as flushPendingVideoCircles) closes that gap.
+    private data class PendingImage(val to: String, val chunks: List<String>)
+    private val pendingImages = mutableListOf<PendingImage>()
+    private data class PendingFileSend(val to: String, val fileName: String, val chunks: List<String>, val fileId: String)
+    private val pendingFileSends = mutableListOf<PendingFileSend>()
 
     private val receivedMessageIds = HashMap<String, Long>()
     private val REPLAY_WINDOW_MS = 60 * 60 * 1000L
@@ -408,6 +426,7 @@ class MessengerService : Service() {
         CryptoManager.init(this)
         SessionKeyManager.initialize(this)
         Log.d(TAG, "SessionKeyManager инициализирован")
+        ensureMyMailboxTagRegistered()
         createNotificationChannel()
         TorManager.onTorReady = {
             if (!isConnected && !isConnecting) {
@@ -437,6 +456,42 @@ class MessengerService : Service() {
         )
     }
 
+    /** Ensures the account's invite code (and the mailbox tag embedded in it) is
+     *  generated and registered as early as possible — previously this only
+     *  happened lazily inside ProfileScreen's `remember {}` block, meaning a user
+     *  who added contacts without ever opening their own Profile screen first
+     *  never registered a mailbox tag for themselves at all. Confirmed live: a
+     *  fresh reinstall that only used the "add contact" dialog (never opened
+     *  Profile) showed `pollMailbox: 20 тегов (0 реальных)` indefinitely — the
+     *  device could deposit tokens for contacts, but had nothing of its own for
+     *  contacts to deposit into, so its side of the channel could never complete.
+     *  Mirrors ProfileScreen.kt's reuse-until-TTL-expiry logic so both call sites
+     *  stay consistent and idempotent. */
+    private fun ensureMyMailboxTagRegistered() {
+        try {
+            val existing = UserStorage.getInviteCode(this)
+            val existingTimestamp = existing?.let { InviteCodeManager.parseInviteCode(it) }?.timestamp
+            val stillValid = existingTimestamp != null &&
+                (System.currentTimeMillis() / 1000 - existingTimestamp) < 7L * 24 * 3600
+            val code = if (existing != null && stillValid) {
+                existing
+            } else {
+                val fresh = InviteCodeManager.generateInviteCode(
+                    CryptoManager.getPublicKey(),
+                    CryptoManager.getPrivateKeyPublic(),
+                    UserStorage.getUsername(this).ifBlank { UserStorage.getUserId(this) }
+                )
+                UserStorage.saveInviteCode(this, fresh)
+                fresh
+            }
+            InviteCodeManager.parseInviteCode(code)?.mailboxTag?.let { tag ->
+                AnonTokenManager.addMyMailboxTag(this, tag)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureMyMailboxTagRegistered: ${e.message}")
+        }
+    }
+
     override fun onDestroy() {
         PanicNotificationManager.dismiss(this)
         stopSilentAudio()
@@ -464,25 +519,18 @@ class MessengerService : Service() {
             }
             override fun onLost(network: android.net.Network) {
 
-                Log.d(TAG, "Сеть потеряна — закрываем соединение")
-                if (CallManager.callId.isNotEmpty() && username.isNotEmpty()) {
-                    val peers = CallManager.peerConnections.keys.toList()
-                    val cid   = CallManager.callId
-                    peers.forEach { peerId ->
-                        try {
-                            sendAnonOrDirect(peerId, JSONObject().apply {
-                                put("type", if (CallManager.isGroupCall) "call_group_leave" else "call_end")
-                                put("from", username)
-                                put("to",   peerId)
-                                put("call_id", cid)
-                                put("reason", "network_lost")
-                            })
-                        } catch (_: Exception) {}
-                    }
-                    android.os.Handler(android.os.Looper.getMainLooper()).post {
-                        CallManager.release()
-                    }
-                }
+                // Deliberately NOT touching any active call here anymore. This callback
+                // used to instantly send call_end + CallManager.release() on ANY network
+                // loss — but onLost() fires on brief, harmless transitions too (network
+                // handoff, momentary blips), often followed by onAvailable() within
+                // milliseconds. Killing the call unconditionally here pre-empted
+                // CallManager's own, more patient network callback (registerNetworkCallback
+                // in CallManager.kt), which waits for the network to come back and only
+                // gives up after a real ICE restart attempt plus a 10s grace period.
+                // Confirmed via live device testing: a call would connect over ICE and then
+                // get torn down within ~1-2 seconds by this handler, well before
+                // CallManager's own recovery logic ever got a chance to run.
+                Log.d(TAG, "Сеть потеряна")
                 isConnected = false
                 webSocket?.close(1000, "network lost")
             }
@@ -536,6 +584,11 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
+        intent?.getStringExtra("bootstrap_channel_for")?.let { contact ->
+            if (isConnected) bootstrapChannelFor(contact)
+            return START_STICKY
+        }
+
         if (intent?.getBooleanExtra("reload_cover_traffic", false) == true) {
             if (!isConnected) {
                 scope.launch(Dispatchers.IO) { connect() }
@@ -554,6 +607,7 @@ class MessengerService : Service() {
                 scope.launch(Dispatchers.IO) {
                     sendAnonOrDirect(contactId, JSONObject().apply {
                         put("type", "session_reset")
+                        put("from", username)
                         put("to", contactId)
                     })
                 }
@@ -629,14 +683,30 @@ class MessengerService : Service() {
         }
 
         intent?.getStringExtra("call_signal")?.let { signalJson ->
+            if (!isConnected) {
+                Log.w(TAG, "DEBUG-BOOTSTRAP call_signal dropped — not connected: $signalJson")
+            }
             if (isConnected) {
                 scope.launch(Dispatchers.IO) {
                     try {
-                        val obj = JSONObject(signalJson)
-                        val to = obj.optString("to")
-                        if (to.isNotBlank()) sendAnonOrDirect(to, obj)
-                        else sendWs(signalJson)
-                    } catch (_: Exception) { sendWs(signalJson) }
+                        val packet = JSONObject(signalJson)
+                        val sigType = packet.optString("type")
+                        val to = packet.optString("to")
+                        if (sigType.startsWith("call_group_")) {
+                            // Group calls skip the request/response phase entirely — always direct.
+                            sendWs(signalJson)
+                        } else {
+                            // call_end's one-shot-no-redundancy reliability gap (confirmed via live
+                            // testing: "сброс у одного не долетает до другого") is now covered by
+                            // CallManager's in-band "bye" over the P2P heartbeat DataChannel, sent
+                            // right before this server-routed call_end — see hangUp()/
+                            // sendByeOverDataChannel(). This anon-routed send is now just the
+                            // fallback for when the DataChannel isn't open yet (still connecting).
+                            sendAnonOrDirect(to, packet)
+                        }
+                    } catch (e: Exception) {
+                        sendWs(signalJson)
+                    }
                 }
             }
             return START_STICKY
@@ -1555,89 +1625,23 @@ class MessengerService : Service() {
             "prekey_bundle_response" -> {
                 val from = json.getString("from")
                 val bundleJsonRaw = if (json.isNull("bundle")) null else json.getJSONObject("bundle")
-                if (bundleJsonRaw == null) {
-                    Log.w(TAG, "Пустой prekey bundle от $from — fallback на legacy")
-                    pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
-                        if (text.startsWith("__voice__|")) {
-                            val parts = text.removePrefix("__voice__|").split("|", limit = 3)
-                            sendVoice(from, parts[2], parts[0], parts[1].toIntOrNull() ?: 0)
-                        } else {
-                            val key = publicKeys[from]
-                                ?: ChatStorage.getContactPublicKey(this@MessengerService, from)
-                                    ?.also { publicKeys[from] = it }
-                            if (key != null) sendEncrypted(from, text, key, msgId)
-                            else Log.e(TAG, "Нет ключа для $from — сообщение не отправлено")
-                        }
-                    }
-                } else {
-                    try {
-                        val rawBundle = SessionKeyManager.parsePrekeyBundle(bundleJsonRaw)
+                handleFetchedPrekeyBundle(from, bundleJsonRaw)
+            }
 
-                        fun String.toStdB64() = replace('-', '+').replace('_', '/')
-                        val bundle = rawBundle.copy(
-                            identityKey    = rawBundle.identityKey.toStdB64(),
-                            signedPrekey   = rawBundle.signedPrekey.toStdB64(),
-                            spkSignature   = rawBundle.spkSignature.toStdB64(),
-                            oneTimePrekeys = rawBundle.oneTimePrekeys.map { opk ->
-                                val ci = opk.indexOf(':')
-                                if (ci >= 0) "${opk.substring(0, ci + 1)}${opk.substring(ci + 1).toStdB64()}"
-                                else opk.toStdB64()
-                            }
-                        )
-
-                        publicKeys[from] = bundle.identityKey
-                        ChatStorage.saveContactPublicKey(this@MessengerService, from, bundle.identityKey)
-                        if (KeyHistoryManager.checkKeyChange(this@MessengerService, from, bundle.identityKey)) {
-                            Log.w(TAG, "⚠️ TOFU: ключ контакта $from изменился при получении bundle!")
-                            withContext(Dispatchers.Main) { onKeyChanged?.invoke(from) }
-                        }
-                        Log.d(TAG, "Публичный ключ из bundle сохранён: $from")
-
-                        val (_, x3dhHeader) = SessionKeyManager.initiateSession(from, bundle)
-                        Log.d(TAG, "X3DH сессия с $from инициирована")
-
-                        pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
-                            if (text.startsWith("__voice__|")) {
-                                val parts = text.removePrefix("__voice__|").split("|", limit = 3)
-                                sendVoice(from, parts[2], parts[0], parts[1].toIntOrNull() ?: 0)
-                            } else {
-                                sendWithForwardSecrecy(from, text, msgId, x3dhHeader, isFirst = true)
-                            }
-                        }
-                    } catch (e: SecurityException) {
-                        Log.e(TAG, "X3DH FAIL с $from: ${e.message}")
-
-                        pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
-                            if (text.startsWith("__voice__|")) {
-                                val parts = text.removePrefix("__voice__|").split("|", limit = 3)
-                                sendVoice(from, parts[2], parts[0], parts[1].toIntOrNull() ?: 0)
-                            } else {
-                                val key = publicKeys[from]
-                                    ?: ChatStorage.getContactPublicKey(this@MessengerService, from)
-                                        ?.also { publicKeys[from] = it }
-                                if (key != null) sendEncrypted(from, text, key, msgId)
-                                else Log.e(TAG, "X3DH failed и нет ключа для $from — сообщение потеряно")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "prekey_bundle_response error: ${e.message}")
-
-                        pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
-                            if (text.startsWith("__voice__|")) {
-                                val parts = text.removePrefix("__voice__|").split("|", limit = 3)
-                                sendVoice(from, parts[2], parts[0], parts[1].toIntOrNull() ?: 0)
-                            } else {
-                                val key = publicKeys[from]
-                                    ?: ChatStorage.getContactPublicKey(this@MessengerService, from)
-                                        ?.also { publicKeys[from] = it }
-                                if (key != null) sendEncrypted(from, text, key, msgId)
-                                else Log.e(TAG, "Bundle error и нет ключа для $from — сообщение потеряно")
-                            }
-                        }
+            // ── Anonymous batched prekey-bundle fetch response ─────────────────
+            // Only entries matching a fingerprint we're actually waiting on
+            // (pendingSessionMessages) are processed — decoy entries (present
+            // in the batch purely as cover) are discarded outright, since we
+            // never asked for a session with them.
+            "prekey_bundles_batch_response" -> {
+                val bundlesObj = json.optJSONObject("bundles")
+                if (bundlesObj != null) {
+                    for (target in pendingSessionMessages.keys.toList()) {
+                        if (!bundlesObj.has(target)) continue
+                        val bundleJsonRaw = if (bundlesObj.isNull(target)) null else bundlesObj.getJSONObject(target)
+                        handleFetchedPrekeyBundle(target, bundleJsonRaw)
                     }
                 }
-
-                flushPendingVideoCircles(from)
             }
 
             "session_init" -> {
@@ -1687,6 +1691,7 @@ class MessengerService : Service() {
                     requestPrekeyBundle(from)
                     sendAnonOrDirect(from, JSONObject().apply {
                         put("type", "session_reset")
+                        put("from", username)
                         put("to", from)
                     })
                 }
@@ -1728,6 +1733,7 @@ class MessengerService : Service() {
                                 requestPrekeyBundle(from)
                                 sendAnonOrDirect(from, JSONObject().apply {
                                     put("type", "session_reset")
+                                    put("from", username)
                                     put("to", from)
                                 })
                             }
@@ -1749,6 +1755,7 @@ class MessengerService : Service() {
 
                     sendAnonOrDirect(from, JSONObject().apply {
                         put("type", "session_reset")
+                        put("from", username)
                         put("to", from)
                     })
                 }
@@ -2210,17 +2217,24 @@ class MessengerService : Service() {
                     val isGroup = json.optBoolean("is_group", false)
                     val gId     = json.optString("group_id", "")
                     CallManager.init(this@MessengerService)
-                    CallManager.handleOffer(from, sdp, callId, isVideo, isGroup, gId)
+                    val isFreshIncomingCall = CallManager.handleOffer(from, sdp, callId, isVideo, isGroup, gId)
 
-                    val peerName = ChatStorage.getContactName(this@MessengerService, from).ifBlank { from }
-                    startService(Intent(this@MessengerService, CallService::class.java).apply {
-                        action = CallService.ACTION_INCOMING
-                        putExtra(CallService.EXTRA_PEER_NAME, peerName)
-                        putExtra(CallService.EXTRA_IS_VIDEO,  isVideo)
-                        putExtra(CallService.EXTRA_IS_GROUP,  isGroup)
-                    })
-                    withContext(Dispatchers.Main) {
-                        MainActivity.pendingIncomingCall.value = Triple(callId, isVideo, from)
+                    // A call_offer for a request the user already accepted is handled
+                    // entirely inside CallManager (auto-proceeds to answering) — showing
+                    // the incoming-call UI again here would create a second, stale screen
+                    // instance whose eventual dispose would kill the call already in
+                    // progress. Only show it for a genuinely fresh incoming offer.
+                    if (isFreshIncomingCall) {
+                        val peerName = ChatStorage.getContactName(this@MessengerService, from).ifBlank { from }
+                        startService(Intent(this@MessengerService, CallService::class.java).apply {
+                            action = CallService.ACTION_INCOMING
+                            putExtra(CallService.EXTRA_PEER_NAME, peerName)
+                            putExtra(CallService.EXTRA_IS_VIDEO,  isVideo)
+                            putExtra(CallService.EXTRA_IS_GROUP,  isGroup)
+                        })
+                        withContext(Dispatchers.Main) {
+                            MainActivity.pendingIncomingCall.value = Triple(callId, isVideo, from)
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "call_offer error: ${e.message}")
@@ -2326,6 +2340,40 @@ class MessengerService : Service() {
 
             "call_ringing" -> {  }
 
+            "call_request_audio", "call_request_video" -> {
+                try {
+                    val from    = json.getString("from")
+                    val callId  = json.getString("call_id")
+                    val isVideo = type == "call_request_video"
+                    CallManager.init(this@MessengerService)
+                    CallManager.handleIncomingCallRequest(from, callId, isVideo)
+
+                    val peerName = ChatStorage.getContactName(this@MessengerService, from).ifBlank { from }
+                    startService(Intent(this@MessengerService, CallService::class.java).apply {
+                        action = CallService.ACTION_INCOMING
+                        putExtra(CallService.EXTRA_PEER_NAME, peerName)
+                        putExtra(CallService.EXTRA_IS_VIDEO,  isVideo)
+                        putExtra(CallService.EXTRA_IS_GROUP,  false)
+                    })
+                    withContext(Dispatchers.Main) {
+                        MainActivity.pendingIncomingCall.value = Triple(callId, isVideo, from)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "call_request error: ${e.message}")
+                }
+            }
+
+            "call_response" -> {
+                try {
+                    val from     = json.getString("from")
+                    val callId   = json.getString("call_id")
+                    val accepted = json.optBoolean("accepted", false)
+                    CallManager.handleCallResponse(this@MessengerService, from, callId, accepted)
+                } catch (e: Exception) {
+                    Log.e(TAG, "call_response error: ${e.message}")
+                }
+            }
+
             "status" -> {
                 val status = json.optString("status", "")
                 val id = json.optString("id", null)
@@ -2386,7 +2434,8 @@ class MessengerService : Service() {
     fun sendWithForwardSecrecy(
         to: String, text: String, msgId: String? = null,
         x3dhHeaderOverride: JSONObject? = null, isFirst: Boolean = false,
-        replyToId: String? = null, useAnonRouting: Boolean = true
+        replyToId: String? = null, useAnonRouting: Boolean = true,
+        bootstrapToken: String? = null
     ): String {
         val id = msgId ?: UUID.randomUUID().toString()
         scope.launch(Dispatchers.IO) {
@@ -2417,7 +2466,14 @@ class MessengerService : Service() {
                         }
                     }
 
-                    val anonToken = AnonTokenManager.consumeNextContactToken(this@MessengerService, to)
+                    // A bootstrap token attached to a freshly-fetched prekey bundle
+                    // (see requestPrekeyBundlesBatch / prekey_bundle_response) takes
+                    // priority for the very first session_init — it's a one-off,
+                    // separate from the ordinary per-contact token pool, and lets
+                    // this first message be delivered anonymously even though no
+                    // regular anon token has been exchanged with this contact yet.
+                    val anonToken = bootstrapToken
+                        ?: AnonTokenManager.consumeNextContactToken(this@MessengerService, to)
 
                     if (anonToken != null) {
                         val anonPacket = JSONObject().apply {
@@ -2469,8 +2525,15 @@ class MessengerService : Service() {
     private fun sendEncrypted(to: String, text: String, publicKey: String, messageId: String? = null) {
         val id = messageId ?: UUID.randomUUID().toString()
         MessageQueue.remove(this@MessengerService, id)
+        val pqKey = publicKeysPq[to]
+        if (pqKey == null) {
+            Log.w(TAG, "sendEncrypted: нет PQ-ключа для $to, запрашиваем бандл и откладываем")
+            pendingMessages.getOrPut(to) { mutableListOf() }.add(Pair(to, text))
+            requestPrekeyBundle(to)
+            return
+        }
         try {
-            val encrypted = CryptoManager.encrypt(text, publicKey)
+            val encrypted = CryptoManager.encrypt(text, publicKey, pqKey)
             val signature = CryptoManager.sign(encrypted)
             scope.launch(Dispatchers.IO) {
                 sendWs(addPadding(JSONObject().apply {
@@ -2492,16 +2555,17 @@ class MessengerService : Service() {
         scope.launch(Dispatchers.IO) {
             try {
                 val cachedKey = publicKeys[to] ?: ChatStorage.getContactPublicKey(this@MessengerService, to)?.also { publicKeys[to] = it }
-                if (cachedKey == null) {
+                val cachedPqKey = publicKeysPq[to]
+                if (cachedKey == null || cachedPqKey == null) {
                     Log.w(TAG, "sendVoice: нет ключа $to — запрашиваем")
                     requestPrekeyBundle(to)
                     pendingSessionMessages.getOrPut(to) { mutableListOf() }
                         .add("__voice__|${voiceId}|${duration}|$voiceBase64" to voiceId)
                     return@launch
                 }
-                val encrypted = CryptoManager.encrypt(voiceBase64, cachedKey)
+                val encrypted = CryptoManager.encrypt(voiceBase64, cachedKey, cachedPqKey)
                 val signature = CryptoManager.sign(encrypted)
-                sendWs(JSONObject().apply {
+                sendAnonOrDirect(to, JSONObject().apply {
                     put("type", "voice")
                     put("from", username)
                     put("to", to)
@@ -2509,21 +2573,36 @@ class MessengerService : Service() {
                     put("voice_data", encrypted)
                     put("signature", signature)
                     put("duration", duration)
-                }.toString())
+                })
             } catch (e: Exception) {
                 Log.e(TAG, "sendVoice error: ${e.message}")
             }
         }
     }
 
+    private val lastTypingSentAt = mutableMapOf<String, Long>()
+
+    /** Debounced to once per ~3s per contact — sent per-keystroke it would burn
+     *  through the (finite, 50-slot) anon token pool almost instantly, since it
+     *  routes through sendAnonOrDirect just like real messages. The receiving
+     *  side already holds its "is typing" indicator for 3s regardless, so this
+     *  debounce is invisible to the recipient. Refill is checked here too (not
+     *  just after real sends) so a long typing burst between messages can't
+     *  quietly drain the pool with nothing ever noticing it needs topping up. */
     fun sendTyping(to: String) {
         if (!isConnected) return
+        val now = System.currentTimeMillis()
+        if (now - (lastTypingSentAt[to] ?: 0L) < 3_000L) return
+        lastTypingSentAt[to] = now
         val packet = JSONObject().apply {
             put("type", "typing")
             put("from", username)
             put("to", to)
         }
         sendAnonOrDirect(to, packet)
+        if (AnonTokenManager.needsRefill(this, to)) {
+            scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
+        }
     }
 
     fun sendRead(to: String, messageId: String) {
@@ -2554,7 +2633,8 @@ class MessengerService : Service() {
         scope.launch(Dispatchers.IO) {
             try {
                 val cachedKey = publicKeys[to] ?: return@launch
-                val encrypted = CryptoManager.encrypt(emoji, cachedKey)
+                val cachedPqKey = publicKeysPq[to] ?: return@launch
+                val encrypted = CryptoManager.encrypt(emoji, cachedKey, cachedPqKey)
                 val signature = CryptoManager.sign(encrypted)
                 sendAnonOrDirect(to, JSONObject().apply {
                     put("type", "reaction")
@@ -2573,9 +2653,10 @@ class MessengerService : Service() {
     fun sendEdit(to: String, messageId: String, newText: String) {
         if (!isConnected) return
         val cachedKey = publicKeys[to] ?: return
+        val cachedPqKey = publicKeysPq[to] ?: return
         scope.launch(Dispatchers.IO) {
             try {
-                val encrypted = CryptoManager.encrypt(newText, cachedKey)
+                val encrypted = CryptoManager.encrypt(newText, cachedKey, cachedPqKey)
                 val signature = CryptoManager.sign(encrypted)
                 sendAnonOrDirect(to, JSONObject().apply {
                     put("type", "edit")
@@ -2646,8 +2727,11 @@ class MessengerService : Service() {
                 publicKeys[to] = it
             }
 
-        if (cachedKey == null) {
-            Log.w(TAG, "sendImage: нет ключа для $to")
+        val cachedPqKey = publicKeysPq[to]
+        if (cachedKey == null || cachedPqKey == null) {
+            synchronized(pendingImages) { pendingImages.add(PendingImage(to, chunks)) }
+            Log.w(TAG, "sendImage: нет ключа для $to — запрашиваем, изображение в очереди")
+            requestPrekeyBundle(to)
             return
         }
 
@@ -2661,7 +2745,7 @@ class MessengerService : Service() {
                 val base64Data = chunks.joinToString("")
                 val imageBytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
 
-                val encryptedFileData = CryptoManager.encryptFile(imageBytes, cachedKey)
+                val encryptedFileData = CryptoManager.encryptFile(imageBytes, cachedKey, cachedPqKey)
                 val packedData = CryptoManager.packEncryptedFile(encryptedFileData)
 
                 val encryptedChunks = packedData.chunked(120_000)
@@ -2711,8 +2795,10 @@ class MessengerService : Service() {
             publicKeys[to] = it
         }
 
-        if (cachedKey == null) {
-            Log.w(TAG, "sendFile: нет ключа для $to — запрашиваем")
+        val cachedPqKey = publicKeysPq[to]
+        if (cachedKey == null || cachedPqKey == null) {
+            synchronized(pendingFileSends) { pendingFileSends.add(PendingFileSend(to, fileName, chunks, fileId)) }
+            Log.w(TAG, "sendFile: нет ключа для $to — запрашиваем, файл в очереди")
             requestPrekeyBundle(to)
             return
         }
@@ -2729,7 +2815,7 @@ class MessengerService : Service() {
 
                 Log.d(TAG, "Файл декодирован: ${fileBytes.size} байт")
 
-                val encryptedFileData = CryptoManager.encryptFile(fileBytes, cachedKey)
+                val encryptedFileData = CryptoManager.encryptFile(fileBytes, cachedKey, cachedPqKey)
                 val packedData = CryptoManager.packEncryptedFile(encryptedFileData)
 
                 Log.d(TAG, "Файл зашифрован: ${packedData.length} символов base64")
@@ -2793,7 +2879,8 @@ class MessengerService : Service() {
                 publicKeys[to] = it
             }
 
-        if (cachedKey == null) {
+        val cachedPqKey = publicKeysPq[to]
+        if (cachedKey == null || cachedPqKey == null) {
             if (encFilePath.isNotEmpty()) {
                 synchronized(pendingVideoCircles) {
                     pendingVideoCircles.add(PendingVideoCircle(to, videoId, encFilePath, duration))
@@ -2810,7 +2897,7 @@ class MessengerService : Service() {
         scope.launch(Dispatchers.IO) {
             try {
                 Log.d(TAG, "Отправка видеокружка: $videoId, duration=$duration, size=${videoBytes.size}")
-                val encryptedFileData = CryptoManager.encryptFile(videoBytes, cachedKey)
+                val encryptedFileData = CryptoManager.encryptFile(videoBytes, cachedKey, cachedPqKey)
                 val packedData = CryptoManager.packEncryptedFile(encryptedFileData)
 
                 val encryptedChunks = packedData.chunked(120_000)
@@ -2883,6 +2970,40 @@ class MessengerService : Service() {
         }
     }
 
+    private fun flushPendingImages(forContact: String? = null) {
+        val toFlush = synchronized(pendingImages) {
+            if (forContact != null) {
+                val filtered = pendingImages.filter { it.to == forContact }
+                pendingImages.removeAll { it.to == forContact }
+                filtered
+            } else {
+                val all = pendingImages.toList()
+                pendingImages.clear()
+                all
+            }
+        }
+        if (toFlush.isEmpty()) return
+        Log.d(TAG, "flushPendingImages: отправляем ${toFlush.size} изображений (contact=$forContact)")
+        toFlush.forEach { sendImage(it.to, it.chunks) }
+    }
+
+    private fun flushPendingFileSends(forContact: String? = null) {
+        val toFlush = synchronized(pendingFileSends) {
+            if (forContact != null) {
+                val filtered = pendingFileSends.filter { it.to == forContact }
+                pendingFileSends.removeAll { it.to == forContact }
+                filtered
+            } else {
+                val all = pendingFileSends.toList()
+                pendingFileSends.clear()
+                all
+            }
+        }
+        if (toFlush.isEmpty()) return
+        Log.d(TAG, "flushPendingFileSends: отправляем ${toFlush.size} файлов (contact=$forContact)")
+        toFlush.forEach { sendFile(it.to, it.fileName, it.chunks, it.fileId) }
+    }
+
     fun flushPendingReactions() {
         val iterator = pendingReactions.iterator()
         while (iterator.hasNext()) {
@@ -2906,32 +3027,288 @@ class MessengerService : Service() {
         }
     }
 
-    private fun requestPrekeyBundle(contactId: String) {
-        scope.launch(Dispatchers.IO) {
-            sendWs(JSONObject().apply {
-                put("type", "get_prekey_bundle")
-                put("target", contactId)
-            }.toString())
+    private val MAX_BATCH_BUNDLE_TARGETS = 10
+
+    /** Shared by both prekey_bundle_response and prekey_bundles_batch_response:
+     *  parses [bundleJsonRaw] (or handles its absence), initiates X3DH, and
+     *  flushes anything queued in pendingSessionMessages for [from] — sending
+     *  session_init anonymously via the bundle's bootstrap token when present. */
+    private suspend fun handleFetchedPrekeyBundle(from: String, bundleJsonRaw: JSONObject?) {
+        if (bundleJsonRaw == null) {
+            Log.w(TAG, "Пустой prekey bundle от $from — fallback на legacy")
+            pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
+                if (text.startsWith("__voice__|")) {
+                    val parts = text.removePrefix("__voice__|").split("|", limit = 3)
+                    sendVoice(from, parts[2], parts[0], parts[1].toIntOrNull() ?: 0)
+                } else {
+                    val key = publicKeys[from]
+                        ?: ChatStorage.getContactPublicKey(this@MessengerService, from)
+                            ?.also { publicKeys[from] = it }
+                    if (key != null) sendEncrypted(from, text, key, msgId)
+                    else Log.e(TAG, "Нет ключа для $from — сообщение не отправлено")
+                }
+            }
+        } else {
+            // Captured once, before the try — both the success path and the
+            // catch blocks below need the SAME queued list. Re-querying
+            // pendingSessionMessages.remove(from) again inside a catch block
+            // would find nothing (already removed here) and silently drop
+            // messages that should have fallen back to legacy encryption.
+            val queued = pendingSessionMessages.remove(from)
+            try {
+                val rawBundle = SessionKeyManager.parsePrekeyBundle(bundleJsonRaw)
+
+                fun String.toStdB64() = replace('-', '+').replace('_', '/')
+                val bundle = rawBundle.copy(
+                    identityKey    = rawBundle.identityKey.toStdB64(),
+                    signedPrekey   = rawBundle.signedPrekey.toStdB64(),
+                    spkSignature   = rawBundle.spkSignature.toStdB64(),
+                    oneTimePrekeys = rawBundle.oneTimePrekeys.map { opk ->
+                        val ci = opk.indexOf(':')
+                        if (ci >= 0) "${opk.substring(0, ci + 1)}${opk.substring(ci + 1).toStdB64()}"
+                        else opk.toStdB64()
+                    },
+                    pqKemPublicKey = rawBundle.pqKemPublicKey.toStdB64(),
+                    pqKemSignature = rawBundle.pqKemSignature.toStdB64()
+                )
+
+                publicKeys[from] = bundle.identityKey
+                publicKeysPq[from] = android.util.Base64.decode(bundle.pqKemPublicKey, android.util.Base64.NO_WRAP)
+                ChatStorage.saveContactPublicKey(this@MessengerService, from, bundle.identityKey)
+                if (KeyHistoryManager.checkKeyChange(this@MessengerService, from, bundle.identityKey)) {
+                    Log.w(TAG, "⚠️ TOFU: ключ контакта $from изменился при получении bundle!")
+                    withContext(Dispatchers.Main) { onKeyChanged?.invoke(from) }
+                }
+                Log.d(TAG, "Публичный ключ из bundle сохранён: $from")
+
+                if (queued.isNullOrEmpty()) {
+                    // Nothing queued to send — this fetch only wanted the identity
+                    // key (e.g. a chunk-signature check that lacked it), which is
+                    // already cached above. Initiating an X3DH session here with
+                    // nothing to transmit would consume one of the peer's OPKs and
+                    // create local session state the peer is never told about via
+                    // session_init — desynchronizing the two sides until a later
+                    // real message collides with the orphaned session and forces
+                    // a session_reset round-trip.
+                    return
+                }
+
+                val (_, x3dhHeader) = SessionKeyManager.initiateSession(from, bundle)
+                Log.d(TAG, "X3DH сессия с $from инициирована")
+                markChannelReady(from)
+                withContext(Dispatchers.Main) { onChannelReady?.invoke(from) }
+
+                queued.forEach { (text, msgId) ->
+                    if (text.startsWith("__voice__|")) {
+                        val parts = text.removePrefix("__voice__|").split("|", limit = 3)
+                        sendVoice(from, parts[2], parts[0], parts[1].toIntOrNull() ?: 0)
+                    } else {
+                        sendWithForwardSecrecy(from, text, msgId, x3dhHeader, isFirst = true, bootstrapToken = bundle.bootstrapToken)
+                    }
+                }
+            } catch (e: SecurityException) {
+                Log.e(TAG, "X3DH FAIL с $from: ${e.message}")
+
+                queued?.forEach { (text, msgId) ->
+                    if (text.startsWith("__voice__|")) {
+                        val parts = text.removePrefix("__voice__|").split("|", limit = 3)
+                        sendVoice(from, parts[2], parts[0], parts[1].toIntOrNull() ?: 0)
+                    } else {
+                        val key = publicKeys[from]
+                            ?: ChatStorage.getContactPublicKey(this@MessengerService, from)
+                                ?.also { publicKeys[from] = it }
+                        if (key != null) sendEncrypted(from, text, key, msgId)
+                        else Log.e(TAG, "X3DH failed и нет ключа для $from — сообщение потеряно")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "prekey_bundle_response error: ${e.message}")
+
+                queued?.forEach { (text, msgId) ->
+                    if (text.startsWith("__voice__|")) {
+                        val parts = text.removePrefix("__voice__|").split("|", limit = 3)
+                        sendVoice(from, parts[2], parts[0], parts[1].toIntOrNull() ?: 0)
+                    } else {
+                        val key = publicKeys[from]
+                            ?: ChatStorage.getContactPublicKey(this@MessengerService, from)
+                                ?.also { publicKeys[from] = it }
+                        if (key != null) sendEncrypted(from, text, key, msgId)
+                        else Log.e(TAG, "Bundle error и нет ключа для $from — сообщение потеряно")
+                    }
+                }
+            }
         }
+
+        flushPendingVideoCircles(from)
+        flushPendingImages(from)
+        flushPendingFileSends(from)
+    }
+
+    /** Fetches [contactId]'s prekey bundle. Uses the anonymous batched fetch
+     *  (real target padded with decoys drawn from our own contacts, mirroring
+     *  the anonymous-mailbox fake-tag pattern in AnonTokenManager) whenever we
+     *  have at least one other contact to use as a decoy — a batch of size 1
+     *  provides no cover, so a lone/contact-less new install falls back to the
+     *  direct, non-anonymous fetch instead of pretending otherwise. */
+    private fun requestPrekeyBundle(contactId: String) {
+        val decoys = ChatStorage.getContacts(this).filter { it != contactId }
+        scope.launch(Dispatchers.IO) {
+            if (decoys.isNotEmpty()) {
+                val batch = (decoys.shuffled().take(MAX_BATCH_BUNDLE_TARGETS - 1) + contactId).shuffled()
+                sendWs(JSONObject().apply {
+                    put("type", "get_prekey_bundles_batch")
+                    put("targets", org.json.JSONArray(batch))
+                }.toString())
+            } else {
+                sendWs(JSONObject().apply {
+                    put("type", "get_prekey_bundle")
+                    put("target", contactId)
+                }.toString())
+            }
+        }
+    }
+
+    // ── Channel establishment (auto token bootstrap) ────────────────────────────
+    // A fresh contact (added via invite code) can't be anonymously messaged until
+    // both sides have exchanged AnonTokenManager token pools — and that exchange
+    // itself can only be kicked off via the mailbox (it's the one path that needs
+    // no pre-existing token, just the invite-code-derived tag + the contact's
+    // public key). Waiting for the user to type a real first message to trigger
+    // this is bad UX (their message may sit "connecting" for no visible reason)
+    // and risky (if it falls through to a non-anonymous path meanwhile, the
+    // server sees the real fingerprint pair for that first exchange). Instead,
+    // this deposits tokens the moment a contact is added, invisibly, and keeps
+    // retrying until confirmed — the UI shows a plain "connecting" state and only
+    // allows sending once isChannelReady() is true.
+    private val pendingChannelJobs = mutableMapOf<String, Job>()
+    var onChannelReady: ((contact: String) -> Unit)? = null
+
+    /** True once this contact can be messaged anonymously (or was never a
+     *  mailbox-bootstrapped contact to begin with — e.g. restored from backup). */
+    fun isChannelReady(contact: String): Boolean {
+        val mailboxTag = AnonTokenManager.getContactMailboxTag(this, contact) ?: return true
+        return AnonTokenManager.getContactTokens(this, contact).isNotEmpty() ||
+            SessionKeyManager.hasSession(contact)
+    }
+
+    private fun depositTokensViaMailbox(contact: String, mailboxTag: String, publicKey: String) {
+        val tokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
+        Log.d(TAG, "DEBUG-BOOTSTRAP depositTokensViaMailbox: contact=$contact tag=$mailboxTag tokens=${tokens.size}")
+        if (tokens.isEmpty()) return
+        try {
+            val inner = JSONObject().apply {
+                put("from", username)
+                put("name", UserStorage.getUsername(this@MessengerService))
+                put("text", "__beacon_tokens_only__")
+                put("tokens", org.json.JSONArray(tokens))
+                put("id", UUID.randomUUID().toString())
+            }.toString()
+            val blob = CryptoManager.encryptClassicalOnly(inner, publicKey)
+            sendWs(addPadding(JSONObject().apply {
+                put("type", "mailbox_put")
+                put("tag", mailboxTag)
+                put("blob", blob)
+            }).toString())
+            Log.d(TAG, "DEBUG-BOOTSTRAP mailbox_put sent for $contact")
+        } catch (e: Exception) {
+            Log.e(TAG, "depositTokensViaMailbox: $contact — ${e.message}")
+        }
+    }
+
+    private fun attemptChannelBootstrap(contact: String) {
+        val mailboxTag = AnonTokenManager.getContactMailboxTag(this, contact)
+        val publicKey = publicKeys[contact] ?: ChatStorage.getContactPublicKey(this, contact)
+        Log.d(TAG, "DEBUG-BOOTSTRAP attemptChannelBootstrap: contact=$contact tag=$mailboxTag hasKey=${publicKey != null}")
+        if (mailboxTag == null || publicKey == null) return
+        depositTokensViaMailbox(contact, mailboxTag, publicKey)
+    }
+
+    /** Call right after adding a contact (invite-code flow), and again whenever
+     *  the user opens a chat with a still-pending contact — safe to call
+     *  repeatedly, a retry loop only ever runs once per contact at a time. */
+    fun bootstrapChannelFor(contact: String) {
+        if (isChannelReady(contact)) return
+        scope.launch(Dispatchers.IO) { attemptChannelBootstrap(contact) }
+        if (pendingChannelJobs.containsKey(contact)) return
+        pendingChannelJobs[contact] = scope.launch(Dispatchers.IO) {
+            for (d in longArrayOf(30_000L, 30_000L, 30_000L)) {
+                delay(d)
+                if (isChannelReady(contact)) { pendingChannelJobs.remove(contact); return@launch }
+                attemptChannelBootstrap(contact)
+            }
+            while (isActive && !isChannelReady(contact)) {
+                delay(90_000L)
+                if (isChannelReady(contact)) break
+                attemptChannelBootstrap(contact)
+            }
+            pendingChannelJobs.remove(contact)
+        }
+    }
+
+    private fun markChannelReady(contact: String) {
+        pendingChannelJobs.remove(contact)?.cancel()
     }
 
     private suspend fun sendAnonTokensTo(contact: String) {
         val tokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
         if (tokens.isEmpty()) return
 
+        val recipientKey = publicKeys[contact]
+            ?: ChatStorage.getContactPublicKey(this@MessengerService, contact)?.also { publicKeys[contact] = it }
+        val recipientPqKey = publicKeysPq[contact]
+
+        // anon_message requires a hybrid (classical+PQ) encryption key for the recipient.
+        // A brand-new contact whose channel was established purely via mailbox (no
+        // X3DH/prekey-bundle exchange has happened yet) won't have a cached PQ key —
+        // checked BEFORE consuming an anon token below, so a doomed send doesn't burn
+        // one for nothing. Falls back to mailbox, which only needs the classical key.
+        if (recipientPqKey == null) {
+            val mailboxTag = AnonTokenManager.getContactMailboxTag(this@MessengerService, contact)
+            if (mailboxTag != null && recipientKey != null) {
+                Log.d(TAG, "sendAnonTokensTo: нет PQ-ключа для $contact — бутстрап токенов через mailbox")
+                depositTokensViaMailbox(contact, mailboxTag, recipientKey)
+            } else {
+                Log.d(TAG, "sendAnonTokensTo: нет токенов/ключей для $contact, ждём mailbox-обмена")
+            }
+            return
+        }
+
         val anonToken = AnonTokenManager.consumeNextContactToken(this@MessengerService, contact)
         if (anonToken == null) {
-            Log.d(TAG, "sendAnonTokensTo: нет токенов для $contact, ждём mailbox-обмена")
+            // Bootstrapping tokens via anon_message is circular: sending my tokens
+            // this way requires a token FROM this contact, which they can only ever
+            // give me the same way. The one way to break the cycle is mailbox — but
+            // send()'s mailbox branch only fires while `!SessionKeyManager.hasSession(to)`,
+            // so if a session got established some other way (e.g. both sides raced
+            // to fetch each other's prekey bundle) before mailbox had a chance to run
+            // even once, this contact's token pool could otherwise never bootstrap —
+            // not "hasn't happened yet", but structurally can't happen. Fall back to
+            // the same mailbox bootstrap used on contact-add (see bootstrapChannelFor).
+            val mailboxTag = AnonTokenManager.getContactMailboxTag(this@MessengerService, contact)
+            if (mailboxTag != null && recipientKey != null) {
+                Log.d(TAG, "sendAnonTokensTo: нет anon-токена для $contact — бутстрап токенов через mailbox")
+                depositTokensViaMailbox(contact, mailboxTag, recipientKey)
+            } else {
+                Log.d(TAG, "sendAnonTokensTo: нет токенов для $contact, ждём mailbox-обмена")
+            }
+            return
+        }
+        if (recipientKey == null) {
+            // Deliberately NOT calling requestPrekeyBundle() here: handleFetchedPrekeyBundle()
+            // unconditionally calls SessionKeyManager.initiateSession() once a bundle arrives,
+            // regardless of whether anything is actually queued to send. Since this call site
+            // never queues into pendingSessionMessages, that would silently create local X3DH
+            // session state (consuming one of the peer's OPKs) without ever transmitting a
+            // session_init to the peer — leaving the two sides desynchronized until a real
+            // message later collides with the orphaned session and forces a session_reset
+            // round-trip. Every call site of sendAnonTokensTo() runs right after a message was
+            // just sent or received with this contact, so publicKeys[contact] is normally
+            // already populated by then; if not, this just retries on the next message.
+            Log.w(TAG, "sendAnonTokensTo: нет ключа для $contact, пропускаем — попробуем при следующем сообщении")
             return
         }
         val systemText = "__beacon_tokens__:${org.json.JSONArray(tokens)}"
-        val recipientKey = publicKeys[contact]
-            ?: ChatStorage.getContactPublicKey(this@MessengerService, contact)?.also { publicKeys[contact] = it }
-        if (recipientKey == null) {
-            Log.w(TAG, "sendAnonTokensTo: нет ключа для $contact")
-            return
-        }
-        val encrypted = CryptoManager.encrypt(systemText, recipientKey)
+        val encrypted = CryptoManager.encrypt(systemText, recipientKey, recipientPqKey)
         val signature = CryptoManager.sign(encrypted)
         val payload = JSONObject().apply {
             put("type", "message")
@@ -2995,6 +3372,7 @@ class MessengerService : Service() {
         if (messageId != null) {
             sendAnonOrDirect(from, JSONObject().apply {
                 put("type", "delivered")
+                put("from", username)
                 put("to",   from)
                 put("id",   messageId)
             })
@@ -3048,7 +3426,7 @@ class MessengerService : Service() {
                     put("tokens", org.json.JSONArray(myTokens))
                     put("id", id)
                 }.toString()
-                val blob = CryptoManager.encrypt(inner, publicKey)
+                val blob = CryptoManager.encryptClassicalOnly(inner, publicKey)
                 sendWs(addPadding(JSONObject().apply {
                     put("type", "mailbox_put")
                     put("tag", mailboxTag)
@@ -3062,20 +3440,39 @@ class MessengerService : Service() {
 
     private suspend fun handleMailboxResult(json: org.json.JSONObject) {
         val blobsMap = json.optJSONObject("blobs") ?: return
+        Log.d(TAG, "DEBUG-BOOTSTRAP handleMailboxResult: tags=${blobsMap.keys().asSequence().toList()}")
         blobsMap.keys().forEach { tag ->
             val arr = blobsMap.optJSONArray(tag) ?: return@forEach
+            Log.d(TAG, "DEBUG-BOOTSTRAP tag=$tag blobCount=${arr.length()}")
             for (i in 0 until arr.length()) {
                 val blob = arr.optString(i) ?: continue
                 try {
-                    val inner = CryptoManager.decrypt(blob)
+                    val inner = CryptoManager.decryptClassicalOnly(blob)
                     val innerJson = org.json.JSONObject(inner)
                     val from = innerJson.getString("from")
+
+                    // Spam gate: mailbox deposits are reachable by anyone who has
+                    // your invite code, which isn't the same as *you* having chosen
+                    // to add *them* — the original design was that a message never
+                    // reaches the user unless the user added the sender back
+                    // themselves (mutual/reciprocal add), otherwise it's dropped
+                    // outright. getContactMailboxTag(from) is only ever set by the
+                    // "add contact via invite code" flow, so its presence is exactly
+                    // the signal that this recipient independently redeemed the
+                    // sender's invite code too — not just the other way around.
+                    if (AnonTokenManager.getContactMailboxTag(this@MessengerService, from) == null) {
+                        Log.d(TAG, "mailbox: депозит от $from проигнорирован — контакт не добавлен взаимно")
+                        continue
+                    }
+
                     val text = innerJson.getString("text")
                     val msgId = innerJson.optString("id")
                     val tokensArr = innerJson.optJSONArray("tokens")
                     if (tokensArr != null) {
                         val tokens = (0 until tokensArr.length()).map { tokensArr.getString(it) }
                         AnonTokenManager.addContactTokens(this@MessengerService, from, tokens)
+                        markChannelReady(from)
+                        withContext(Dispatchers.Main) { onChannelReady?.invoke(from) }
                         if (tokensSentThisSession.add(from)) {
                             scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
                         }
@@ -3084,6 +3481,17 @@ class MessengerService : Service() {
                     AnonTokenManager.removeMyMailboxTag(this@MessengerService, tag)
 
                     ChatStorage.addContact(this@MessengerService, from)
+                    // A mailbox deposit auto-creates the contact (mutual add: if
+                    // someone adds you, you see them too) — but until now it never
+                    // carried a display name, so it showed up nameless until the
+                    // user separately redeemed that contact's invite code, which
+                    // does carry a name. Only set it if empty, to not clobber a
+                    // name the user may have already customized.
+                    innerJson.optString("name").takeIf { it.isNotBlank() }?.let { name ->
+                        if (ChatStorage.getContactName(this@MessengerService, from).isBlank()) {
+                            ChatStorage.saveContactName(this@MessengerService, from, name)
+                        }
+                    }
                     if (!text.startsWith("__beacon_")) {
                         val storedId = msgId.ifEmpty { java.util.UUID.randomUUID().toString() }
                         ChatStorage.saveOrUpdateMessage(
@@ -3095,7 +3503,7 @@ class MessengerService : Service() {
                         withContext(Dispatchers.Main) { onMessageReceived?.invoke(from, text) }
                     }
                 } catch (e: Exception) {
-
+                    Log.e(TAG, "DEBUG-BOOTSTRAP handleMailboxResult decrypt/process failed for tag=$tag: ${e.message}", e)
                 }
             }
         }
@@ -3305,7 +3713,7 @@ class MessengerService : Service() {
     }
 
     private fun createNotification(): Notification {
-        val emergencyIntent = Intent("com.bcon.messenger.EMERGENCY_WIPE").apply { setPackage(packageName) }
+        val emergencyIntent = Intent("com.subrosa.messenger.EMERGENCY_WIPE").apply { setPackage(packageName) }
         val emergencyPending = PendingIntent.getBroadcast(this, 999, emergencyIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val fullScreenIntent = Intent(this, MainActivity::class.java)
         val fullScreenPending = PendingIntent.getActivity(this, 0, fullScreenIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -3342,9 +3750,10 @@ class MessengerService : Service() {
                             publicKeys[memberId] = it
                         }
 
-                    if (memberPublicKey != null) {
+                    val memberPqKey = publicKeysPq[memberId]
+                    if (memberPublicKey != null && memberPqKey != null) {
 
-                        val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, memberPublicKey)
+                        val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, memberPublicKey, memberPqKey)
                         val signature = CryptoManager.sign(encryptedGroupKey)
 
                         sendAnonOrDirect(memberId, JSONObject().apply {
@@ -3451,8 +3860,9 @@ class MessengerService : Service() {
                         publicKeys[newMemberId] = it
                     }
 
-                if (memberPublicKey != null) {
-                    val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, memberPublicKey)
+                val memberPqKey = publicKeysPq[newMemberId]
+                if (memberPublicKey != null && memberPqKey != null) {
+                    val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, memberPublicKey, memberPqKey)
                     val signature = CryptoManager.sign(encryptedGroupKey)
 
                     sendAnonOrDirect(newMemberId, JSONObject().apply {
@@ -3511,8 +3921,9 @@ class MessengerService : Service() {
                             publicKeys[memberId] = it
                         }
 
-                    if (memberPublicKey != null) {
-                        val encryptedNewKey = GroupManager.encryptGroupKeyForMember(newGroupKey, memberPublicKey)
+                    val memberPqKey = publicKeysPq[memberId]
+                    if (memberPublicKey != null && memberPqKey != null) {
+                        val encryptedNewKey = GroupManager.encryptGroupKeyForMember(newGroupKey, memberPublicKey, memberPqKey)
                         val signature = CryptoManager.sign(encryptedNewKey)
 
                         sendAnonOrDirect(memberId, JSONObject().apply {

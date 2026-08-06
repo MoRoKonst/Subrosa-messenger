@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -178,7 +178,114 @@ object CryptoManager {
         }
     }
 
-    fun encrypt(plaintext: String, recipientPublicKeyStr: String): String {
+    // Combines a classical ephemeral-ECDH shared secret with an ML-KEM
+    // encapsulated shared secret (PqCrypto) so this path — used for the
+    // pre-session fallback, edit messages, and group key distribution — is
+    // hardened against harvest-now-decrypt-later the same way the X3DH
+    // handshake is (see SessionKeyManager.kt). Breaking either component
+    // alone is not enough to recover the AES key.
+    //
+    // Wire format: [2B ephKeyLen][ephKey][2B pqCtLen][pqCiphertext][iv+ciphertext]
+
+    fun encrypt(plaintext: String, recipientPublicKeyStr: String, recipientPqPublicKey: ByteArray): String {
+        val ephemeralKeyPair = generateEphemeralKeyPair()
+        val classicalSecret = ecdh(ephemeralKeyPair.private, loadPublicKey(recipientPublicKeyStr))
+        val encapsulated = PqCrypto.encapsulate(recipientPqPublicKey)
+        val combinedSecret = classicalSecret + encapsulated.sharedSecret
+        val aesKey = deriveAesKey(combinedSecret, "BeaconECDHpq")
+        val encrypted = aesEncrypt(plaintext, aesKey)
+
+        SecureMemory.wipe(classicalSecret)
+        SecureMemory.wipe(encapsulated.sharedSecret)
+        SecureMemory.wipe(combinedSecret)
+        SecureMemory.wipe(aesKey)
+
+        val ephemeralPublicBytes = ephemeralKeyPair.public.encoded
+        val keyLen = ephemeralPublicBytes.size
+        val pqCtLen = encapsulated.ciphertext.size
+
+        val combined = ByteArray(2 + keyLen + 2 + pqCtLen + encrypted.size)
+        var pos = 0
+        combined[pos++] = (keyLen shr 8).toByte()
+        combined[pos++] = (keyLen and 0xFF).toByte()
+        System.arraycopy(ephemeralPublicBytes, 0, combined, pos, keyLen); pos += keyLen
+        combined[pos++] = (pqCtLen shr 8).toByte()
+        combined[pos++] = (pqCtLen and 0xFF).toByte()
+        System.arraycopy(encapsulated.ciphertext, 0, combined, pos, pqCtLen); pos += pqCtLen
+        System.arraycopy(encrypted, 0, combined, pos, encrypted.size)
+
+        return Base64.encodeToString(combined, Base64.NO_WRAP)
+    }
+
+    fun decrypt(ciphertext: String): String {
+        val combined = Base64.decode(ciphertext, Base64.NO_WRAP)
+        var pos = 0
+
+        if (combined.size < pos + 2) throw IllegalArgumentException("Пакет слишком короткий")
+        val keyLen = ((combined[pos].toInt() and 0xFF) shl 8) or (combined[pos + 1].toInt() and 0xFF)
+        pos += 2
+        if (combined.size < pos + keyLen) throw IllegalArgumentException("Пакет повреждён (ephemeral key)")
+        val ephemeralPublicBytes = combined.copyOfRange(pos, pos + keyLen)
+        pos += keyLen
+
+        if (combined.size < pos + 2) throw IllegalArgumentException("Пакет повреждён (pq ciphertext length)")
+        val pqCtLen = ((combined[pos].toInt() and 0xFF) shl 8) or (combined[pos + 1].toInt() and 0xFF)
+        pos += 2
+        if (combined.size < pos + pqCtLen) throw IllegalArgumentException("Пакет повреждён (pq ciphertext)")
+        val pqCiphertext = combined.copyOfRange(pos, pos + pqCtLen)
+        pos += pqCtLen
+
+        val encrypted = combined.copyOfRange(pos, combined.size)
+        val ephemeralPublicKey = loadPublicKey(Base64.encodeToString(ephemeralPublicBytes, Base64.NO_WRAP))
+        val classicalSecret = ecdh(getPrivateKey(), ephemeralPublicKey)
+
+        try {
+            // ML-KEM has implicit rejection — decapsulating with the wrong key
+            // still returns *a* secret, never an error — so we can't know which
+            // PQ key version (current vs. still-in-grace-period previous) was
+            // used just from decapsulating. Try both and let AES-GCM's tag
+            // check decide which one was actually correct.
+            val candidates = listOfNotNull(
+                SessionKeyManager.getCurrentPqPrivateKey(),
+                SessionKeyManager.getPreviousPqPrivateKeyIfValid()
+            )
+            if (candidates.isEmpty()) throw IllegalStateException("Нет PQ KEM ключа для расшифровки")
+
+            var lastError: Exception? = null
+            for (pqPrivateKey in candidates) {
+                var pqSharedSecret: ByteArray? = null
+                var combinedSecret: ByteArray? = null
+                var aesKey: ByteArray? = null
+                try {
+                    pqSharedSecret = PqCrypto.decapsulate(pqPrivateKey, pqCiphertext)
+                    combinedSecret = classicalSecret + pqSharedSecret
+                    aesKey = deriveAesKey(combinedSecret, "BeaconECDHpq")
+                    return aesDecrypt(encrypted, aesKey)
+                } catch (e: Exception) {
+                    lastError = e
+                } finally {
+                    pqSharedSecret?.let { SecureMemory.wipe(it) }
+                    combinedSecret?.let { SecureMemory.wipe(it) }
+                    aesKey?.let { SecureMemory.wipe(it) }
+                }
+            }
+            throw lastError ?: IllegalStateException("Расшифровка не удалась")
+        } finally {
+            SecureMemory.wipe(classicalSecret)
+            SecureMemory.wipe(encrypted)
+        }
+    }
+
+    // ─── Classical-only variant — anonymous-mailbox first-contact bootstrap ───
+    //
+    // The invite code that seeds a mailbox exchange carries only a classical
+    // EC identity key (no PQ key — embedding a ~1.2 KB ML-KEM key would make
+    // invite links/QR codes impractically large). This one bootstrap message
+    // is therefore classical-only; the session established immediately after
+    // it is full PQ-hybrid X3DH. Documented as a known, narrow exception in
+    // SECURITY.md. Do not use this for anything else.
+
+    fun encryptClassicalOnly(plaintext: String, recipientPublicKeyStr: String): String {
         val ephemeralKeyPair = generateEphemeralKeyPair()
         val sharedSecret = ecdh(ephemeralKeyPair.private, loadPublicKey(recipientPublicKeyStr))
         val aesKey = deriveAesKey(sharedSecret, "BeaconECDH")
@@ -199,7 +306,7 @@ object CryptoManager {
         return Base64.encodeToString(combined, Base64.NO_WRAP)
     }
 
-    fun decrypt(ciphertext: String): String {
+    fun decryptClassicalOnly(ciphertext: String): String {
         val combined = Base64.decode(ciphertext, Base64.NO_WRAP)
 
         if (combined.size < 2) throw IllegalArgumentException("Пакет слишком короткий")
@@ -444,7 +551,8 @@ object CryptoManager {
     data class EncryptedFileData(
         val encryptedData: ByteArray,
         val iv: ByteArray,
-        val ephemeralPublicKey: ByteArray
+        val ephemeralPublicKey: ByteArray,
+        val pqCiphertext: ByteArray
     ) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -453,6 +561,7 @@ object CryptoManager {
             if (!encryptedData.contentEquals(other.encryptedData)) return false
             if (!iv.contentEquals(other.iv)) return false
             if (!ephemeralPublicKey.contentEquals(other.ephemeralPublicKey)) return false
+            if (!pqCiphertext.contentEquals(other.pqCiphertext)) return false
             return true
         }
 
@@ -460,14 +569,20 @@ object CryptoManager {
             var result = encryptedData.contentHashCode()
             result = 31 * result + iv.contentHashCode()
             result = 31 * result + ephemeralPublicKey.contentHashCode()
+            result = 31 * result + pqCiphertext.contentHashCode()
             return result
         }
     }
 
-    fun encryptFile(fileData: ByteArray, recipientPublicKeyStr: String): EncryptedFileData {
+    // Hybridized with ML-KEM (PqCrypto) the same way as encrypt()/decrypt() —
+    // see there for the harvest-now-decrypt-later rationale.
+
+    fun encryptFile(fileData: ByteArray, recipientPublicKeyStr: String, recipientPqPublicKey: ByteArray): EncryptedFileData {
         val ephemeralKeyPair = generateEphemeralKeyPair()
-        val sharedSecret = ecdh(ephemeralKeyPair.private, loadPublicKey(recipientPublicKeyStr))
-        val aesKey = deriveAesKey(sharedSecret, "BeaconFileEncryption")
+        val classicalSecret = ecdh(ephemeralKeyPair.private, loadPublicKey(recipientPublicKeyStr))
+        val encapsulated = PqCrypto.encapsulate(recipientPqPublicKey)
+        val combinedSecret = classicalSecret + encapsulated.sharedSecret
+        val aesKey = deriveAesKey(combinedSecret, "BeaconFileEncryptionPq")
 
         val iv = ByteArray(12).also { secureRandom.nextBytes(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -477,7 +592,9 @@ object CryptoManager {
         val padded = addFilePadding(fileData)
         val encryptedData = cipher.doFinal(padded)
 
-        SecureMemory.wipe(sharedSecret)
+        SecureMemory.wipe(classicalSecret)
+        SecureMemory.wipe(encapsulated.sharedSecret)
+        SecureMemory.wipe(combinedSecret)
         SecureMemory.wipe(aesKey)
         SecureMemory.wipe(padded)
 
@@ -486,7 +603,8 @@ object CryptoManager {
         return EncryptedFileData(
             encryptedData = encryptedData,
             iv = iv,
-            ephemeralPublicKey = ephemeralPublicBytes
+            ephemeralPublicKey = ephemeralPublicBytes,
+            pqCiphertext = encapsulated.ciphertext
         )
     }
 
@@ -494,22 +612,42 @@ object CryptoManager {
         val ephemeralPublicKey = loadPublicKey(
             Base64.encodeToString(encryptedFileData.ephemeralPublicKey, Base64.NO_WRAP)
         )
+        val classicalSecret = ecdh(getPrivateKey(), ephemeralPublicKey)
 
-        val sharedSecret = ecdh(getPrivateKey(), ephemeralPublicKey)
-        val aesKey = deriveAesKey(sharedSecret, "BeaconFileEncryption")
+        // ML-KEM has implicit rejection — try current, then previous
+        // (grace-period) PQ key and let AES-GCM's tag check decide.
+        val candidates = listOfNotNull(
+            SessionKeyManager.getCurrentPqPrivateKey(),
+            SessionKeyManager.getPreviousPqPrivateKeyIfValid()
+        )
+        if (candidates.isEmpty()) throw IllegalStateException("Нет PQ KEM ключа для расшифровки файла")
 
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        val secretKey = SecretKeySpec(aesKey, 0, 32, "AES")
-        cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, encryptedFileData.iv))
-        val paddedData = cipher.doFinal(encryptedFileData.encryptedData)
+        var lastError: Exception? = null
+        for (pqPrivateKey in candidates) {
+            try {
+                val pqSharedSecret = PqCrypto.decapsulate(pqPrivateKey, encryptedFileData.pqCiphertext)
+                val combinedSecret = classicalSecret + pqSharedSecret
+                val aesKey = deriveAesKey(combinedSecret, "BeaconFileEncryptionPq")
 
-        val originalData = removeFilePadding(paddedData)
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                val secretKey = SecretKeySpec(aesKey, 0, 32, "AES")
+                cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, encryptedFileData.iv))
+                val paddedData = cipher.doFinal(encryptedFileData.encryptedData)
 
-        SecureMemory.wipe(sharedSecret)
-        SecureMemory.wipe(aesKey)
-        SecureMemory.wipe(paddedData)
+                val originalData = removeFilePadding(paddedData)
 
-        return originalData
+                SecureMemory.wipe(pqSharedSecret)
+                SecureMemory.wipe(combinedSecret)
+                SecureMemory.wipe(aesKey)
+                SecureMemory.wipe(paddedData)
+                SecureMemory.wipe(classicalSecret)
+                return originalData
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        SecureMemory.wipe(classicalSecret)
+        throw lastError ?: IllegalStateException("Расшифровка файла не удалась")
     }
 
     private fun addFilePadding(data: ByteArray): ByteArray {
@@ -544,10 +682,11 @@ object CryptoManager {
 
     fun packEncryptedFile(encryptedFileData: EncryptedFileData): String {
         val ephemeralKeyLen = encryptedFileData.ephemeralPublicKey.size
+        val pqCtLen = encryptedFileData.pqCiphertext.size
         val ivLen = encryptedFileData.iv.size
 
         val packed = ByteArray(
-            2 + ephemeralKeyLen + 1 + ivLen + encryptedFileData.encryptedData.size
+            2 + ephemeralKeyLen + 2 + pqCtLen + 1 + ivLen + encryptedFileData.encryptedData.size
         )
 
         var offset = 0
@@ -557,6 +696,12 @@ object CryptoManager {
 
         System.arraycopy(encryptedFileData.ephemeralPublicKey, 0, packed, offset, ephemeralKeyLen)
         offset += ephemeralKeyLen
+
+        packed[offset++] = (pqCtLen shr 8).toByte()
+        packed[offset++] = (pqCtLen and 0xFF).toByte()
+
+        System.arraycopy(encryptedFileData.pqCiphertext, 0, packed, offset, pqCtLen)
+        offset += pqCtLen
 
         packed[offset++] = ivLen.toByte()
 
@@ -578,12 +723,22 @@ object CryptoManager {
         val keyLen = ((packed[offset++].toInt() and 0xFF) shl 8) or
                 (packed[offset++].toInt() and 0xFF)
 
-        if (packed.size < offset + keyLen + 1) {
+        if (packed.size < offset + keyLen + 2) {
             throw IllegalArgumentException("Пакет файла повреждён (ключ)")
         }
 
         val ephemeralPublicKey = packed.copyOfRange(offset, offset + keyLen)
         offset += keyLen
+
+        val pqCtLen = ((packed[offset++].toInt() and 0xFF) shl 8) or
+                (packed[offset++].toInt() and 0xFF)
+
+        if (packed.size < offset + pqCtLen + 1) {
+            throw IllegalArgumentException("Пакет файла повреждён (PQ ciphertext)")
+        }
+
+        val pqCiphertext = packed.copyOfRange(offset, offset + pqCtLen)
+        offset += pqCtLen
 
         val ivLen = packed[offset++].toInt() and 0xFF
 
@@ -599,7 +754,8 @@ object CryptoManager {
         return EncryptedFileData(
             encryptedData = encryptedData,
             iv = iv,
-            ephemeralPublicKey = ephemeralPublicKey
+            ephemeralPublicKey = ephemeralPublicKey,
+            pqCiphertext = pqCiphertext
         )
     }
 
@@ -743,7 +899,8 @@ object CryptoManager {
             emit(tr("  Длина оригинала: ${testMessage.length} символов", "  Original length: ${testMessage.length} characters"))
             emit(tr("  Байты оригинала: ${testMessage.toByteArray(Charsets.UTF_8).size} байт", "  Original bytes: ${testMessage.toByteArray(Charsets.UTF_8).size} bytes"))
 
-            val encrypted = encrypt(testMessage, currentPublicKey)
+            val currentPqPublicKey = Base64.decode(SessionKeyManager.getLocalPrekeyBundle().pqKemPublicKey, Base64.NO_WRAP)
+            val encrypted = encrypt(testMessage, currentPublicKey, currentPqPublicKey)
             emit(tr("  Зашифровано: ${encrypted.take(50)}...", "  Encrypted: ${encrypted.take(50)}..."))
 
             val decrypted = decrypt(encrypted)
@@ -823,8 +980,9 @@ object CryptoManager {
         try {
             val testData = tr("Содержимое тестового файла 📄", "Test file contents 📄").toByteArray()
             val publicKey = getPublicKeyString()
+            val pqPublicKeyFile = Base64.decode(SessionKeyManager.getLocalPrekeyBundle().pqKemPublicKey, Base64.NO_WRAP)
 
-            val encrypted = encryptFile(testData, publicKey)
+            val encrypted = encryptFile(testData, publicKey, pqPublicKeyFile)
             emit(tr("  Файл зашифрован: ${encrypted.encryptedData.size} байт", "  File encrypted: ${encrypted.encryptedData.size} bytes"))
             emit(tr("  IV: ${encrypted.iv.size} байт", "  IV: ${encrypted.iv.size} bytes"))
             emit(tr("  Ephemeral key: ${encrypted.ephemeralPublicKey.size} байт", "  Ephemeral key: ${encrypted.ephemeralPublicKey.size} bytes"))
@@ -919,7 +1077,8 @@ object CryptoManager {
         try {
             val originalMessage = tr("Важное сообщение", "Important message")
             val publicKey = getPublicKeyString()
-            val encrypted = encrypt(originalMessage, publicKey)
+            val pqPublicKey = Base64.decode(SessionKeyManager.getLocalPrekeyBundle().pqKemPublicKey, Base64.NO_WRAP)
+            val encrypted = encrypt(originalMessage, publicKey, pqPublicKey)
 
             val corrupted = encrypted.toCharArray()
             corrupted[corrupted.size / 2] = 'X'
@@ -946,8 +1105,9 @@ object CryptoManager {
             val savedPubStress4  = encPrefsStress4.getString(SW_PUB_KEY,  null)
 
             val key1 = getPublicKeyString()
+            val pqKey1 = Base64.decode(SessionKeyManager.getLocalPrekeyBundle().pqKemPublicKey, Base64.NO_WRAP)
             val testMessage = tr("Тест", "Test")
-            val encrypted1 = encrypt(testMessage, key1)
+            val encrypted1 = encrypt(testMessage, key1, pqKey1)
 
             deleteKeys()
 
@@ -983,14 +1143,16 @@ object CryptoManager {
         try {
             val testData = tr("Секретный файл", "Secret file").toByteArray()
             val publicKey = getPublicKeyString()
+            val pqPublicKeyFile2 = Base64.decode(SessionKeyManager.getLocalPrekeyBundle().pqKemPublicKey, Base64.NO_WRAP)
 
-            val encrypted = encryptFile(testData, publicKey)
+            val encrypted = encryptFile(testData, publicKey, pqPublicKeyFile2)
 
             val fakeIV = ByteArray(12) { 0xFF.toByte() }
             val corrupted = EncryptedFileData(
                 encryptedData = encrypted.encryptedData,
                 iv = fakeIV,
-                ephemeralPublicKey = encrypted.ephemeralPublicKey
+                ephemeralPublicKey = encrypted.ephemeralPublicKey,
+                pqCiphertext = encrypted.pqCiphertext
             )
 
             try {
@@ -1072,9 +1234,10 @@ object CryptoManager {
         try {
             val short = "Hi"
             val long = "A".repeat(1000)
+            val selfPqKey = Base64.decode(SessionKeyManager.getLocalPrekeyBundle().pqKemPublicKey, Base64.NO_WRAP)
 
-            val encShort = encrypt(short, getPublicKeyString())
-            val encLong = encrypt(long, getPublicKeyString())
+            val encShort = encrypt(short, getPublicKeyString(), selfPqKey)
+            val encLong = encrypt(long, getPublicKeyString(), selfPqKey)
 
             val sizeShort = Base64.decode(encShort, Base64.NO_WRAP).size
             val sizeLong = Base64.decode(encLong, Base64.NO_WRAP).size
@@ -1206,7 +1369,8 @@ object CryptoManager {
             }
 
             val myPublicKey = getPublicKeyString()
-            val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, myPublicKey)
+            val myPqPublicKey = Base64.decode(SessionKeyManager.getLocalPrekeyBundle().pqKemPublicKey, Base64.NO_WRAP)
+            val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, myPublicKey, myPqPublicKey)
             emit(tr("  Зашифрованный групповой ключ: ${encryptedGroupKey.take(40)}...", "  Encrypted group key: ${encryptedGroupKey.take(40)}..."))
 
             val decryptedGroupKey = GroupManager.decryptGroupKey(encryptedGroupKey)
@@ -1376,10 +1540,44 @@ object CryptoManager {
         }
 
         emit()
+
+        emit(tr("📋 ТЕСТ 17: ML-KEM — постквантовый гибрид", "📋 TEST 17: ML-KEM — post-quantum hybrid"))
+        try {
+            val pqKp = PqCrypto.generateKeyPair()
+            val encapsulated = PqCrypto.encapsulate(pqKp.publicKey)
+            val recovered = PqCrypto.decapsulate(pqKp.privateKey, encapsulated.ciphertext)
+
+            if (encapsulated.sharedSecret.contentEquals(recovered)) {
+                emit(tr("  ✅ ML-KEM-768: encapsulate/decapsulate совпадают (${encapsulated.sharedSecret.size} байт секрета, ${encapsulated.ciphertext.size} байт ciphertext)",
+                        "  ✅ ML-KEM-768: encapsulate/decapsulate match (${encapsulated.sharedSecret.size} bytes secret, ${encapsulated.ciphertext.size} bytes ciphertext)"))
+            } else {
+                emit(tr("  ❌ ПРОВАЛ: расшифрованный секрет не совпал с исходным!", "  ❌ FAIL: recovered secret did not match the original!"))
+            }
+
+            // Hybrid combiner sanity: flipping the classical half of the
+            // combined secret must change the derived key — both the
+            // classical and PQ components must be broken to recover it.
+            val classical = ByteArray(32) { it.toByte() }
+            val combined1 = classical + encapsulated.sharedSecret
+            val tamperedClassical = classical.copyOf().also { it[0] = (it[0] + 1).toByte() }
+            val combined2 = tamperedClassical + encapsulated.sharedSecret
+            val derived1 = deriveAesKey(combined1, "BeaconTestPq")
+            val derived2 = deriveAesKey(combined2, "BeaconTestPq")
+
+            if (!derived1.contentEquals(derived2)) {
+                emit(tr("  ✅ Hybrid KDF: чувствителен к классическому компоненту секрета", "  ✅ Hybrid KDF: sensitive to the classical secret component"))
+            } else {
+                emit(tr("  ❌ ПРОВАЛ: изменение классического секрета не повлияло на производный ключ!", "  ❌ FAIL: changing the classical secret did not affect the derived key!"))
+            }
+        } catch (e: Exception) {
+            emit(tr("  ❌ ОШИБКА: ${e.message}", "  ❌ ERROR: ${e.message}"))
+        }
+        emit()
+
         emit("═══════════════════════════════════════")
         emit(tr("📊 ИТОГ РАСШИРЕННЫХ ТЕСТОВ", "📊 ADVANCED TEST SUMMARY"))
         emit("═══════════════════════════════════════")
-        emit(tr("Покрыто: HKDF · AES-GCM · GroupManager · X3DH · Ratchet · Out-of-order", "Covered: HKDF · AES-GCM · GroupManager · X3DH · Ratchet · Out-of-order"))
+        emit(tr("Покрыто: HKDF · AES-GCM · GroupManager · X3DH · Ratchet · Out-of-order · ML-KEM", "Covered: HKDF · AES-GCM · GroupManager · X3DH · Ratchet · Out-of-order · ML-KEM"))
         emit(tr("Если видишь ❌ ПРОВАЛ — это критическая проблема!", "If you see ❌ FAIL — that's a critical problem!"))
         emit("═══════════════════════════════════════")
 

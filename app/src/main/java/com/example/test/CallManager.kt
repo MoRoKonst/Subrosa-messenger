@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.content.Context
 import android.content.Intent
@@ -94,6 +94,17 @@ object CallManager {
 
     private const val RINGING_TIMEOUT_MS = 45_000L
     private var ringingTimeoutRunnable: Runnable? = null
+    private var incomingRingTimeoutRunnable: Runnable? = null
+
+    // Two-phase call flow: a lightweight call_request_audio/video (anon-routed,
+    // tolerant of a queued/delayed delivery) is sent first; only once the other
+    // side answers with call_response(accepted=true) does real SDP signaling
+    // start. This lets 1:1 call signaling be anonymized again — see MessengerService's
+    // call_signal handler — without reintroducing the missed-call reliability bug,
+    // because by the time call_offer fires, liveness was just confirmed.
+    private var pendingRequestTarget: String? = null
+    private var incomingRequestFrom: String? = null
+    private val preAcceptedCallIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     fun init(context: Context) {
         if (factory != null) return
@@ -377,23 +388,39 @@ object CallManager {
         isGroupCall = false
         callId = UUID.randomUUID().toString()
         callActive.set(true)
+        pendingRequestTarget = targetId
         setupAudioForCall(context, isVideo)
         createLocalTracks(context, isVideo)
         CallSoundManager.startRingback()
 
+        sendSignal(JSONObject().apply {
+            put("type", if (isVideo) "call_request_video" else "call_request_audio")
+            put("to", targetId)
+            put("call_id", callId)
+        })
+
+        val cId = callId
         val timeoutRunnable = Runnable {
-            if (callActive.get()) {
-                Log.w(TAG, "Ringing timeout: абонент не ответил, завершаем")
-                hangUp()
+            if (callActive.get() && pendingRequestTarget == targetId && callId == cId) {
+                Log.w(TAG, "Call request timeout: абонент не ответил за ${RINGING_TIMEOUT_MS / 1000}с")
+                pendingRequestTarget = null
+                if (release()) {
+                    onCallEnded?.invoke("no_answer")
+                }
             }
         }
         ringingTimeoutRunnable = timeoutRunnable
         mainHandler.postDelayed(timeoutRunnable, RINGING_TIMEOUT_MS)
+    }
 
+    // Only called after the target replied call_response(accepted=true) — liveness
+    // is already confirmed, so this is the real SDP offer, sent via the same
+    // anon-capable path as the request that preceded it.
+    private fun proceedWithRealOffer(targetId: String) {
         val pc = createPeerConnection(targetId, isOffer = true) ?: return
         val sdpConstraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (isVideo) "true" else "false"))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (isVideoCall) "true" else "false"))
         }
         pc.createOffer(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription) {
@@ -404,7 +431,7 @@ object CallManager {
                             put("to", targetId)
                             put("call_id", callId)
                             put("sdp", sdp.description)
-                            put("is_video", isVideo)
+                            put("is_video", isVideoCall)
                             put("is_group", false)
                         })
                     }
@@ -417,6 +444,53 @@ object CallManager {
             override fun onSetSuccess() {}
             override fun onSetFailure(p0: String?) {}
         }, sdpConstraints)
+    }
+
+    // Caller side: the target answered our call_request_audio/video.
+    fun handleCallResponse(context: Context, from: String, cId: String, accepted: Boolean) {
+        if (callId != cId || pendingRequestTarget != from) return
+        ringingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        ringingTimeoutRunnable = null
+        pendingRequestTarget = null
+        if (accepted) {
+            CallSoundManager.stopAll()
+            proceedWithRealOffer(from)
+        } else {
+            if (release()) {
+                onCallEnded?.invoke("declined")
+            }
+        }
+    }
+
+    // Callee side: someone sent us a call_request_audio/video — same ring UI/timeout
+    // as a real incoming call (reuses onIncomingCall / acceptCall / declineCall).
+    fun handleIncomingCallRequest(from: String, cId: String, isVideo: Boolean) {
+        if (callId.isNotEmpty() || pendingOffer != null || pendingRequestTarget != null) {
+            sendSignal(JSONObject().apply {
+                put("type", "call_response")
+                put("to", from)
+                put("call_id", cId)
+                put("accepted", false)
+                put("reason", "busy")
+            })
+            return
+        }
+        callId = cId
+        callActive.set(true)
+        isVideoCall = isVideo
+        isGroupCall = false
+        incomingRequestFrom = from
+        appContext?.let { CallSoundManager.startRingtone(it) }
+        onIncomingCall?.invoke(cId, from, isVideo, false, "")
+
+        val timeoutRunnable = Runnable {
+            if (callId == cId && incomingRequestFrom == from) {
+                Log.w(TAG, "Incoming call request timeout: не ответили за ${RINGING_TIMEOUT_MS / 1000}с, авто-отбой")
+                declineCall("timeout")
+            }
+        }
+        incomingRingTimeoutRunnable = timeoutRunnable
+        mainHandler.postDelayed(timeoutRunnable, RINGING_TIMEOUT_MS)
     }
 
     fun startGroupCall(context: Context, gId: String, members: List<String>, isVideo: Boolean) {
@@ -445,7 +519,26 @@ object CallManager {
     }
 
     fun acceptCall(context: Context) {
+        Log.w(TAG, "DEBUG-BOOTSTRAP acceptCall() called: callId=$callId incomingRequestFrom=$incomingRequestFrom pendingOffer=${pendingOffer != null} isGroupCall=$isGroupCall")
         CallSoundManager.stopAll()
+        incomingRingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        incomingRingTimeoutRunnable = null
+
+        val requestFrom = incomingRequestFrom
+        if (requestFrom != null && pendingOffer == null && !isGroupCall) {
+            // This was still just a request — no real SDP offer has arrived yet.
+            // Tell the caller we're in, then wait for handleOffer() to auto-proceed
+            // (it checks preAcceptedCallIds and skips the ring UI second time around).
+            preAcceptedCallIds.add(callId)
+            incomingRequestFrom = null
+            sendSignal(JSONObject().apply {
+                put("type", "call_response")
+                put("to", requestFrom)
+                put("call_id", callId)
+                put("accepted", true)
+            })
+            return
+        }
 
         if (isGroupCall && pendingOffer == null) {
             init(context)
@@ -535,16 +628,27 @@ object CallManager {
         }, sdpConstraints)
     }
 
-    fun declineCall() {
+    fun declineCall(reason: String = "decline") {
         CallSoundManager.stopAll()
+        incomingRingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        incomingRingTimeoutRunnable = null
         val offer = pendingOffer
+        val requestFrom = incomingRequestFrom
         if (offer != null) {
 
             sendSignal(JSONObject().apply {
                 put("type", "call_end")
                 put("to", offer.first)
                 put("call_id", offer.third)
-                put("reason", "decline")
+                put("reason", reason)
+            })
+        } else if (requestFrom != null) {
+            sendSignal(JSONObject().apply {
+                put("type", "call_response")
+                put("to", requestFrom)
+                put("call_id", callId)
+                put("accepted", false)
+                put("reason", reason)
             })
         } else if (isGroupCall && callId.isNotEmpty()) {
 
@@ -554,12 +658,14 @@ object CallManager {
                     put("type", "call_end")
                     put("to", initiator)
                     put("call_id", callId)
-                    put("reason", "decline")
+                    put("reason", reason)
                 })
             }
         }
 
         pendingOffer = null
+        incomingRequestFrom = null
+        preAcceptedCallIds.remove(callId)
         callId = ""
         callActive.set(false)
         isGroupCall = false
@@ -570,16 +676,46 @@ object CallManager {
     }
 
     fun hangUp() {
-        peerConnections.keys.toList().forEach { peerId ->
-            sendSignal(JSONObject().apply {
-                put("type", if (isGroupCall) "call_group_leave" else "call_end")
-                put("to", peerId)
-                put("call_id", callId)
-                put("reason", "hangup")
-            })
+        if (peerConnections.isEmpty()) {
+            // Still in the request/response phase (no real signaling started yet) —
+            // notify whoever's on the other end so their ring UI doesn't just sit
+            // there until it times out on its own.
+            val target = pendingRequestTarget ?: incomingRequestFrom ?: pendingOffer?.first
+            if (target != null) {
+                sendSignal(JSONObject().apply {
+                    put("type", "call_end")
+                    put("to", target)
+                    put("call_id", callId)
+                    put("reason", "hangup")
+                })
+            }
+        } else {
+            peerConnections.keys.toList().forEach { peerId ->
+                sendByeOverDataChannel(peerId)
+                sendSignal(JSONObject().apply {
+                    put("type", if (isGroupCall) "call_group_leave" else "call_end")
+                    put("to", peerId)
+                    put("call_id", callId)
+                    put("reason", "hangup")
+                })
+            }
         }
         if (release()) {
             onCallEnded?.invoke("hangup")
+        }
+    }
+
+    // Best-effort in-band hangup over the P2P DataChannel — see the "bye" case in
+    // setupHeartbeatChannel's onMessage for the full reasoning. No-op if the channel
+    // isn't open (e.g. still connecting); the server-routed call_end sent right after
+    // this call is the fallback for that case.
+    private fun sendByeOverDataChannel(peerId: String) {
+        val dc = heartbeatChannels[peerId] ?: return
+        if (dc.state() != DataChannel.State.OPEN) return
+        try {
+            dc.send(DataChannel.Buffer(ByteBuffer.wrap("bye".toByteArray(Charsets.UTF_8)), false))
+        } catch (e: Exception) {
+            Log.w(TAG, "sendByeOverDataChannel failed for $peerId: ${e.message}")
         }
     }
 
@@ -606,16 +742,29 @@ object CallManager {
         return isSpeakerOn
     }
 
-    fun handleOffer(from: String, sdp: String, cId: String, isVideo: Boolean, isGroup: Boolean, gId: String) {
+    /** Returns true if the caller (MessengerService) should show the incoming-call UI
+     *  for this offer — false when it's the expected real-signaling follow-up to a
+     *  request the user already accepted, where CallManager auto-proceeds internally
+     *  and re-showing the incoming-call screen would just create a second, stale
+     *  Compose instance whose eventual onDispose (userActed still false, since the
+     *  user never touched *this* screen instance) would call declineCall() and kill
+     *  the call that's already under way. Confirmed via live device testing: the
+     *  release() stack trace pointed straight at IncomingCallScreen's onDispose. */
+    fun handleOffer(from: String, sdp: String, cId: String, isVideo: Boolean, isGroup: Boolean, gId: String): Boolean {
 
-        if (callId.isNotEmpty() || pendingOffer != null) {
+        // If we already agreed to this callId via the request/response phase,
+        // this real offer isn't a second incoming call — it's the expected
+        // follow-up. Let it through even though callId is already set.
+        val preAccepted = callId == cId && preAcceptedCallIds.remove(cId)
+
+        if (!preAccepted && (callId.isNotEmpty() || pendingOffer != null)) {
             sendSignal(JSONObject().apply {
                 put("type", "call_end")
                 put("to", from)
                 put("call_id", cId)
                 put("reason", "busy")
             })
-            return
+            return false
         }
         callId = cId
         callActive.set(true)
@@ -623,8 +772,29 @@ object CallManager {
         isGroupCall = isGroup
         groupId = gId
         pendingOffer = Triple(from, sdp, cId)
+
+        if (preAccepted) {
+            // Already agreed — proceed straight to answering, no second ring/prompt.
+            appContext?.let { acceptCall(it) }
+            return false
+        }
+
         appContext?.let { CallSoundManager.startRingtone(it) }
         onIncomingCall?.invoke(cId, from, isVideo, isGroup, gId)
+
+        // Mirror the caller side's RINGING_TIMEOUT_MS: without this, an unanswered
+        // incoming call rang forever — no auto-decline, so the UI, ringtone, and
+        // wake lock could stay alive indefinitely if the user never walks up to
+        // the device (real user report: it "just kept ringing and ringing").
+        val timeoutRunnable = Runnable {
+            if (pendingOffer?.third == cId) {
+                Log.w(TAG, "Incoming ringing timeout: не ответили за ${RINGING_TIMEOUT_MS / 1000}с, авто-отбой")
+                declineCall("timeout")
+            }
+        }
+        incomingRingTimeoutRunnable = timeoutRunnable
+        mainHandler.postDelayed(timeoutRunnable, RINGING_TIMEOUT_MS)
+        return true
     }
 
     fun handleGroupInvite(from: String, cId: String, isVideo: Boolean, gId: String) {
@@ -760,7 +930,11 @@ object CallManager {
         if (peerConnections.isEmpty()) {
             if (release()) {
 
-                mainHandler.post { onCallEnded?.invoke(reason) }
+                Log.w(TAG, "DEBUG-BOOTSTRAP handleCallEnd: posting onCallEnded, callback is ${if (onCallEnded == null) "NULL" else "SET"}")
+                mainHandler.post {
+                    Log.w(TAG, "DEBUG-BOOTSTRAP handleCallEnd: posted runnable executing, callback is now ${if (onCallEnded == null) "NULL" else "SET"}")
+                    onCallEnded?.invoke(reason)
+                }
             }
         }
     }
@@ -889,16 +1063,16 @@ object CallManager {
 
                         mainHandler.post {
                             if (!callActive.get()) return@post
-                            Log.w(TAG, "DataChannel closed by $peerId — завершаем звонок")
+                            // The heartbeat channel (SCTP/DataChannel) is a separate transport
+                            // from the actual call media (SRTP) — it can fail to negotiate or
+                            // drop on some network/NAT combos even while audio/video keeps
+                            // working fine. Don't treat its closure as fatal; just stop pinging
+                            // and let real connectivity loss be caught by ICE state instead
+                            // (onIceConnectionChange already handles DISCONNECTED/FAILED with
+                            // its own grace period and restart logic).
+                            Log.w(TAG, "DataChannel closed by $peerId — heartbeat отключён, звонок продолжается")
                             stopHeartbeat(peerId)
-                            if (peerConnections.size > 1) {
-                                heartbeatChannels.remove(peerId)
-                                peerConnections.remove(peerId)?.close()
-                                pendingIceCandidates.remove(peerId)
-                                iceRestartDone.remove(peerId)
-                            } else {
-                                hangUp()
-                            }
+                            heartbeatChannels.remove(peerId)
                         }
                     }
                     else -> {}
@@ -922,6 +1096,20 @@ object CallManager {
                         }
                     }
                     "pong" -> lastPongTime[peerId] = System.currentTimeMillis()
+                    "bye" -> {
+                        // In-band hangup over the already-established P2P DataChannel —
+                        // never touches the server at all, so it's not just anonymized,
+                        // it's invisible to the server for this specific signal. Exists
+                        // because the server-routed call_end is a one-shot packet with no
+                        // redundancy: if that specific anon_message send lands in the
+                        // server's offline queue instead of live, the other side never
+                        // learns the call ended. The DataChannel has no such queue — it's
+                        // live P2P the moment it's open, so this is strictly more reliable
+                        // AND more private than the server-routed fallback.
+                        mainHandler.post {
+                            if (callActive.get()) handleCallEnd(peerId, "hangup")
+                        }
+                    }
                 }
             }
         })
@@ -950,17 +1138,13 @@ object CallManager {
                     }
                     val elapsed = System.currentTimeMillis() - (lastPongTime[peerId] ?: 0L)
                     if (elapsed > HEARTBEAT_TIMEOUT_MS) {
-                        Log.w(TAG, "Heartbeat timeout для $peerId (${elapsed}ms)")
+                        // Same reasoning as the DataChannel-closed handler above: heartbeat
+                        // is a convenience signal over a separate transport from the actual
+                        // call media, not a reliable proxy for "the call is dead." Stop
+                        // pinging and leave real disconnect detection to ICE state.
+                        Log.w(TAG, "Heartbeat timeout для $peerId (${elapsed}ms) — heartbeat отключён, звонок продолжается")
                         stopHeartbeat(peerId)
-                        if (peerConnections.size > 1) {
-                            heartbeatChannels.remove(peerId)
-                            peerConnections.remove(peerId)?.close()
-                            pendingIceCandidates.remove(peerId)
-                            iceRestartDone.remove(peerId)
-                            Log.w(TAG, "Пир $peerId удалён по heartbeat timeout")
-                        } else {
-                            hangUp()
-                        }
+                        heartbeatChannels.remove(peerId)
                         return
                     }
                 }
@@ -979,8 +1163,12 @@ object CallManager {
 
         if (!callActive.compareAndSet(true, false)) return false
 
+        Log.w(TAG, "DEBUG-BOOTSTRAP release() called from:", Exception("stacktrace"))
+
         ringingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         ringingTimeoutRunnable = null
+        incomingRingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        incomingRingTimeoutRunnable = null
 
         disconnectRunnables.values.forEach { mainHandler.removeCallbacks(it) }
         disconnectRunnables.clear()
@@ -1009,6 +1197,9 @@ object CallManager {
         surfaceTextureHelper = null
         localAudioTrack?.dispose()
         localAudioTrack = null
+        preAcceptedCallIds.remove(callId)
+        pendingRequestTarget = null
+        incomingRequestFrom = null
         callId = ""
         isVideoCall = false
         isGroupCall = false

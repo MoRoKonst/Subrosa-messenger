@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.content.Context
 import android.util.Base64
@@ -30,7 +30,16 @@ object SessionKeyManager {
         val signedPrekey: String,
         val spkSignature: String,
         val spkId: Int,
-        val oneTimePrekeys: List<String>
+        val oneTimePrekeys: List<String>,
+        val pqKemPublicKey: String,
+        val pqKemSignature: String,
+        // Attached by the SERVER at fetch time (not published by the owning
+        // client, so it can never go stale between bundle publishes) — one
+        // of the bundle owner's currently-registered anon tokens, letting
+        // the resulting session_init be delivered anonymously instead of
+        // directly addressed. Null if the owner is offline or has none
+        // registered; always null on a bundle you're publishing yourself.
+        val bootstrapToken: String? = null
     )
 
     data class SessionState(
@@ -67,6 +76,8 @@ object SessionKeyManager {
     private var previousSpk: KeyPair? = null
     private var previousSpkId: Int = -1
     private var previousSpkCreatedAt: Long = 0L
+    private var currentPqKem: PqCrypto.PqKeyPair? = null
+    private var previousPqKem: PqCrypto.PqKeyPair? = null
 
     private val opkPool = java.util.concurrent.ConcurrentHashMap<Int, KeyPair>()
 
@@ -115,6 +126,19 @@ object SessionKeyManager {
                             .putString("prev_spk_private_key", oldPrivB64)
                             .apply()
                         Log.d(TAG, "Старый SPK сохранён как предыдущий: id=$savedSpkId")
+
+                        // Carry the matching PQ KEM keypair into the grace period too,
+                        // so a handshake still in flight against the old SPK can complete.
+                        val oldPqPrivB64 = encPrefs.getString("pq_kem_private_key_${savedSpkId}", null)
+                        val oldPqPubB64 = prefs.getString("pq_kem_public_${savedSpkId}", null)
+                        if (oldPqPrivB64 != null && oldPqPubB64 != null) {
+                            previousPqKem = PqCrypto.PqKeyPair(
+                                Base64.decode(oldPqPubB64, Base64.NO_WRAP),
+                                Base64.decode(oldPqPrivB64, Base64.NO_WRAP)
+                            )
+                            prefs.edit().putString("prev_pq_kem_public", oldPqPubB64).apply()
+                            encPrefs.edit().putString("prev_pq_kem_private_key", oldPqPrivB64).apply()
+                        }
                     } catch (e: Exception) {
                         Log.w(TAG, "Не удалось сохранить предыдущий SPK: ${e.message}")
                     }
@@ -137,6 +161,15 @@ object SessionKeyManager {
                     "spk_public_${currentSpkId}",
                     Base64.encodeToString(currentSpk!!.public.encoded, Base64.NO_WRAP)
                 )
+                .apply()
+
+            val newPqKem = PqCrypto.generateKeyPair()
+            currentPqKem = newPqKem
+            encPrefs.edit()
+                .putString("pq_kem_private_key_${currentSpkId}", Base64.encodeToString(newPqKem.privateKey, Base64.NO_WRAP))
+                .apply()
+            prefs.edit()
+                .putString("pq_kem_public_${currentSpkId}", Base64.encodeToString(newPqKem.publicKey, Base64.NO_WRAP))
                 .apply()
             Log.d(TAG, "SPK ротирован: id=$currentSpkId")
         } else {
@@ -172,6 +205,27 @@ object SessionKeyManager {
             spkCreatedAt = savedCreatedAt
             Log.d(TAG, "SPK восстановлен: id=$currentSpkId")
 
+            // Restore (or, for an install upgrading from pre-PQ, generate) the
+            // PQ KEM keypair tied to the current SPK id.
+            val pqPrivB64 = encPrefs.getString("pq_kem_private_key_${currentSpkId}", null)
+            val pqPubB64 = prefs.getString("pq_kem_public_${currentSpkId}", null)
+            if (pqPrivB64 != null && pqPubB64 != null) {
+                currentPqKem = PqCrypto.PqKeyPair(
+                    Base64.decode(pqPubB64, Base64.NO_WRAP),
+                    Base64.decode(pqPrivB64, Base64.NO_WRAP)
+                )
+            } else {
+                val migratedPqKem = PqCrypto.generateKeyPair()
+                currentPqKem = migratedPqKem
+                encPrefs.edit()
+                    .putString("pq_kem_private_key_${currentSpkId}", Base64.encodeToString(migratedPqKem.privateKey, Base64.NO_WRAP))
+                    .apply()
+                prefs.edit()
+                    .putString("pq_kem_public_${currentSpkId}", Base64.encodeToString(migratedPqKem.publicKey, Base64.NO_WRAP))
+                    .apply()
+                Log.d(TAG, "PQ KEM ключ сгенерирован при миграции для существующего SPK id=$currentSpkId")
+            }
+
             val prevSpkId = prefs.getInt("prev_spk_id", -1)
             val prevCreatedAt = prefs.getLong("prev_spk_created_at", 0L)
             if (prevSpkId >= 0 && (now - prevCreatedAt) < SPK_GRACE_PERIOD_MS) {
@@ -187,6 +241,15 @@ object SessionKeyManager {
                         previousSpkId = prevSpkId
                         previousSpkCreatedAt = prevCreatedAt
                         Log.d(TAG, "Предыдущий SPK восстановлен: id=$prevSpkId")
+
+                        val prevPqPrivB64 = encPrefs.getString("prev_pq_kem_private_key", null)
+                        val prevPqPubB64 = prefs.getString("prev_pq_kem_public", null)
+                        if (prevPqPrivB64 != null && prevPqPubB64 != null) {
+                            previousPqKem = PqCrypto.PqKeyPair(
+                                Base64.decode(prevPqPubB64, Base64.NO_WRAP),
+                                Base64.decode(prevPqPrivB64, Base64.NO_WRAP)
+                            )
+                        }
                     } catch (e: Exception) {
                         Log.w(TAG, "Не удалось восстановить предыдущий SPK: ${e.message}")
                     }
@@ -265,12 +328,17 @@ object SessionKeyManager {
         val opkPublics = opkPool.entries.take(5).map { (id, kp) ->
             "$id:${Base64.encodeToString(kp.public.encoded, Base64.NO_WRAP)}"
         }
+        val pqKem = currentPqKem ?: throw IllegalStateException("PQ KEM ключ не инициализирован")
+        val pqPublicB64 = Base64.encodeToString(pqKem.publicKey, Base64.NO_WRAP)
+        val pqSignature = CryptoManager.sign(pqPublicB64)
         return PrekeyBundle(
             identityKey = CryptoManager.getPublicKeyString(),
             signedPrekey = spkPublicB64,
             spkSignature = spkSignature,
             spkId = currentSpkId,
-            oneTimePrekeys = opkPublics
+            oneTimePrekeys = opkPublics,
+            pqKemPublicKey = pqPublicB64,
+            pqKemSignature = pqSignature
         )
     }
 
@@ -280,6 +348,11 @@ object SessionKeyManager {
         put("spk_signature", bundle.spkSignature)
         put("spk_id", bundle.spkId)
         put("opks", org.json.JSONArray(bundle.oneTimePrekeys))
+        put("pq_kem_public_key", bundle.pqKemPublicKey)
+        put("pq_kem_signature", bundle.pqKemSignature)
+        // Never set when publishing our own bundle — only the server adds
+        // this, at fetch time, to a bundle it hands to someone else.
+        bundle.bootstrapToken?.let { put("bootstrap_token", it) }
     }
 
     fun parsePrekeyBundle(json: JSONObject): PrekeyBundle {
@@ -290,12 +363,40 @@ object SessionKeyManager {
             signedPrekey = json.getString("signed_prekey"),
             spkSignature = json.getString("spk_signature"),
             spkId = json.getInt("spk_id"),
-            oneTimePrekeys = opks
+            oneTimePrekeys = opks,
+            // Required, not optional: a bundle missing the PQ component is
+            // rejected rather than silently downgraded (prevents a
+            // strip-the-PQ-field downgrade attack by a malicious server).
+            pqKemPublicKey = json.getString("pq_kem_public_key"),
+            pqKemSignature = json.getString("pq_kem_signature"),
+            // Genuinely optional — omission is an expected fallback (owner
+            // offline / no tokens registered), not a downgrade attack: there
+            // is nothing cryptographic to downgrade here, only a metadata
+            // convenience that gracefully degrades to direct addressing.
+            bootstrapToken = json.optString("bootstrap_token", null)
         )
     }
     fun generatePrekeyBundle(): JSONObject {
         val bundle = getLocalPrekeyBundle()
         return prekeyBundleToJson(bundle)
+    }
+
+    // NOTE on the PQ-hybrid crypto upgrade migration: unlike Desktop, Android
+    // does not need a one-time "reset pre-upgrade sessions" step here.
+    // MessengerService.connect() already calls deleteAllSessions() +
+    // initialize() on every single reconnect (see there), which wipes all
+    // local Double Ratchet state unconditionally — the very next reconnect
+    // after this upgrade ships already forces every contact through a fresh
+    // PQ-hybrid X3DH handshake, with no extra code required.
+
+    /** Current PQ KEM private key — used by CryptoManager's hybrid legacy-ECDH decrypt(). */
+    fun getCurrentPqPrivateKey(): ByteArray? = currentPqKem?.privateKey
+
+    /** Previous PQ KEM private key, only while still within the SPK grace period. */
+    fun getPreviousPqPrivateKeyIfValid(): ByteArray? {
+        if (previousPqKem == null) return null
+        if (System.currentTimeMillis() - previousSpkCreatedAt > SPK_GRACE_PERIOD_MS) return null
+        return previousPqKem?.privateKey
     }
 
     fun initiateSession(
@@ -311,6 +412,14 @@ object SessionKeyManager {
         if (!isSpkValid) {
             throw SecurityException("Неверная подпись SPK от $contactId — возможна MITM атака!")
         }
+        val isPqValid = CryptoManager.verify(
+            recipientBundle.pqKemPublicKey,
+            recipientBundle.pqKemSignature,
+            recipientBundle.identityKey
+        )
+        if (!isPqValid) {
+            throw SecurityException("Неверная подпись PQ-ключа от $contactId — возможна MITM атака!")
+        }
 
         val ephemeralKp = generateEcKeyPair()
         val ephemeralPublicB64 = Base64.encodeToString(ephemeralKp.public.encoded, Base64.NO_WRAP)
@@ -324,6 +433,7 @@ object SessionKeyManager {
         var dh4: ByteArray? = null
         var usedOpkId: Int? = null
         var dhMaterial: ByteArray? = null
+        var pqSharedSecret: ByteArray? = null
         var sessionKey: ByteArray? = null
         var rootKey0: ByteArray? = null
         var dhR: ByteArray? = null
@@ -342,9 +452,18 @@ object SessionKeyManager {
                 }
             }
 
-            dhMaterial = if (dh4 != null) dh1!! + dh2!! + dh3!! + dh4!! else dh1!! + dh2!! + dh3!!
+            // Hybrid PQ component: encapsulate against the recipient's ML-KEM
+            // public key. The resulting shared secret is combined with (not a
+            // replacement for) the classical DH material below — breaking
+            // either alone is not enough to recover the session key.
+            val pqPublicKeyBytes = Base64.decode(recipientBundle.pqKemPublicKey, Base64.NO_WRAP)
+            val encapsulated = PqCrypto.encapsulate(pqPublicKeyBytes)
+            val pqCiphertext = encapsulated.ciphertext
+            pqSharedSecret = encapsulated.sharedSecret
 
-            sessionKey = hkdf(dhMaterial, "BeaconX3DH".toByteArray(), 64, salt = ephemeralKp.public.encoded)
+            dhMaterial = (if (dh4 != null) dh1!! + dh2!! + dh3!! + dh4!! else dh1!! + dh2!! + dh3!!) + pqSharedSecret
+
+            sessionKey = hkdf(dhMaterial, "BeaconX3DHpq".toByteArray(), 64, salt = ephemeralKp.public.encoded)
 
             rootKey0 = sessionKey.copyOfRange(0, 32)
             val recvChainKey = sessionKey.copyOfRange(32, 64)
@@ -378,6 +497,7 @@ object SessionKeyManager {
                 if (usedOpkId != null) put("opk_id", usedOpkId)
                 put("session_id", sessionId)
                 put("dh_ratchet_pub", Base64.encodeToString(ratchetKP.public.encoded, Base64.NO_WRAP))
+                put("pq_kem_ciphertext", Base64.encodeToString(pqCiphertext, Base64.NO_WRAP))
             }
 
             return Pair(state, x3dhHeader)
@@ -386,6 +506,7 @@ object SessionKeyManager {
             dh2?.let { SecureMemory.wipe(it) }
             dh3?.let { SecureMemory.wipe(it) }
             dh4?.let { SecureMemory.wipe(it) }
+            pqSharedSecret?.let { SecureMemory.wipe(it) }
             dhMaterial?.let { SecureMemory.wipe(it) }
             sessionKey?.let { SecureMemory.wipe(it) }
             rootKey0?.let { SecureMemory.wipe(it) }
@@ -403,6 +524,12 @@ object SessionKeyManager {
         val spkId = x3dhHeader.getInt("spk_id")
         val opkId = if (x3dhHeader.has("opk_id")) x3dhHeader.getInt("opk_id") else null
         val sessionId = x3dhHeader.getString("session_id")
+        // Required, not optional: a handshake missing the PQ ciphertext is
+        // rejected rather than silently accepted as classical-only (prevents
+        // a downgrade attack by a malicious server stripping the field).
+        if (!x3dhHeader.has("pq_kem_ciphertext"))
+            throw SecurityException("Рукопожатие без постквантового компонента отклонено (от $contactId)")
+        val pqCiphertext = Base64.decode(x3dhHeader.getString("pq_kem_ciphertext"), Base64.NO_WRAP)
 
         val spk: KeyPair = when {
             spkId == currentSpkId -> currentSpk ?: throw IllegalStateException("SPK не найден")
@@ -414,6 +541,15 @@ object SessionKeyManager {
             }
             else -> throw SecurityException("Неверный spk_id=$spkId, текущий=$currentSpkId")
         }
+        val pqKem: PqCrypto.PqKeyPair = when {
+            spkId == currentSpkId -> currentPqKem ?: throw IllegalStateException("PQ KEM ключ не найден")
+            spkId == previousSpkId && previousPqKem != null -> {
+                if (System.currentTimeMillis() - previousSpkCreatedAt > SPK_GRACE_PERIOD_MS)
+                    throw SecurityException("Предыдущий PQ-ключ id=$spkId истёк")
+                previousPqKem!!
+            }
+            else -> throw SecurityException("PQ-ключ для spk_id=$spkId недоступен")
+        }
         val ikSender = loadPublicKey(senderIdentityKey)
         val ephemeralPublic = loadPublicKey(ephemeralPublicB64)
 
@@ -422,6 +558,7 @@ object SessionKeyManager {
         var dh3: ByteArray? = null
         var dh4: ByteArray? = null
         var dhMaterial: ByteArray? = null
+        var pqSharedSecret: ByteArray? = null
         var sessionKey: ByteArray? = null
         var rootKey0: ByteArray? = null
         var dhOut1: ByteArray? = null
@@ -439,9 +576,11 @@ object SessionKeyManager {
                 dh4 = ecdh(opkKp.private, ephemeralPublic)
             }
 
-            dhMaterial = if (dh4 != null) dh1!! + dh2!! + dh3!! + dh4!! else dh1!! + dh2!! + dh3!!
+            pqSharedSecret = PqCrypto.decapsulate(pqKem.privateKey, pqCiphertext)
 
-            sessionKey = hkdf(dhMaterial, "BeaconX3DH".toByteArray(), 64, salt = ephemeralPublic.encoded)
+            dhMaterial = (if (dh4 != null) dh1!! + dh2!! + dh3!! + dh4!! else dh1!! + dh2!! + dh3!!) + pqSharedSecret
+
+            sessionKey = hkdf(dhMaterial, "BeaconX3DHpq".toByteArray(), 64, salt = ephemeralPublic.encoded)
 
             val now = System.currentTimeMillis()
 
@@ -499,6 +638,7 @@ object SessionKeyManager {
             dh2?.let { SecureMemory.wipe(it) }
             dh3?.let { SecureMemory.wipe(it) }
             dh4?.let { SecureMemory.wipe(it) }
+            pqSharedSecret?.let { SecureMemory.wipe(it) }
             dhMaterial?.let { SecureMemory.wipe(it) }
             sessionKey?.let { SecureMemory.wipe(it) }
             rootKey0?.let { SecureMemory.wipe(it) }

@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.content.Context
 
@@ -67,7 +67,7 @@ object ServerManager {
 
             val defaults = getDefaultServers()
             var migrated = servers.map { s ->
-                if (s.host == "beacon-app.org") defaults.first() else s
+                if (s.host == "beacon-app.org" || s.host == "api.beacon-app.org") defaults.first() else s
             }.toMutableList()
 
             val onionServer = defaults[1]
@@ -129,7 +129,7 @@ object ServerManager {
     }
 
     private fun getDefaultServers() = listOf(
-        Server("api.beacon-app.org", 443, "Основной сервер", true, "ws"),
+        Server("api.subrosamessenger.com", 443, "Основной сервер", true, "ws"),
         Server("ws://amqvpheooju3fg7tafxkmf73c3vg4xg7nycelepiie6jdjzbsqrvrcqd.onion", 80, "Onion (Tor)", true, "")
     )
 

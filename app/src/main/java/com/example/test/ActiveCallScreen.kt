@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.content.Context
 import android.content.Intent
@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
@@ -39,13 +39,29 @@ fun ActiveCallScreen(
     isGroup: Boolean,
     onHangUp: () -> Unit
 ) {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val context = LocalContext.current
     val s = LocalStrings.current
 
     var seconds by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) {
-        while (true) { delay(1000); seconds++ }
+        while (true) {
+            delay(1000)
+            seconds++
+            // Safety net alongside CallManager.onCallEnded: that callback depends on
+            // this exact screen instance's DisposableEffect still holding the
+            // registration when the call actually ends, which live testing showed
+            // can occasionally miss (observed via logs: the call correctly ended and
+            // the callback was confirmed non-null right before invoke(), yet this
+            // screen never reacted — cause not conclusively pinned down, possibly a
+            // narrow timing window during the screen-transition animation). Polling
+            // callId here means the screen closes within ~1s regardless of whether
+            // the callback fired.
+            if (CallManager.callId.isEmpty()) {
+                onHangUp()
+                break
+            }
+        }
     }
 
     var isMuted       by remember { mutableStateOf(false) }
@@ -79,7 +95,9 @@ fun ActiveCallScreen(
     }}
 
     DisposableEffect(Unit) {
+        android.util.Log.w("DEBUG-BOOTSTRAP", "ActiveCallScreen: registering onCallEnded")
         CallManager.onCallEnded = { _ ->
+            android.util.Log.w("DEBUG-BOOTSTRAP", "ActiveCallScreen: onCallEnded fired, calling onHangUp()")
             context.startService(Intent(context, CallService::class.java).apply {
                 action = CallService.ACTION_END
             })
@@ -98,6 +116,7 @@ fun ActiveCallScreen(
         if (localVideoTrack == null) localVideoTrack = CallManager.localVideoTrack
 
         onDispose {
+            android.util.Log.w("DEBUG-BOOTSTRAP", "ActiveCallScreen: onDispose, clearing onCallEnded")
             CallManager.onRemoteVideoTrack = null
             CallManager.onPeerJoined = null
             CallManager.onCallEnded = null
@@ -370,7 +389,7 @@ private fun SmallCallButton(
     activeColor: Color = Color(0xFF444466),
     onClick: () -> Unit
 ) {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.width(64.dp)
@@ -408,7 +427,7 @@ private fun SmallCallButton(
 
 @Composable
 private fun HangUpButton(label: String, onClick: () -> Unit) {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val haptic = LocalHapticFeedback.current
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
@@ -440,7 +459,7 @@ private fun HangUpButton(label: String, onClick: () -> Unit) {
 
 @Composable
 private fun RemoteVideoView(track: VideoTrack, label: String, modifier: Modifier) {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     Box(modifier = modifier.background(c.callBg)) {
         AndroidView(
             factory = { ctx ->
@@ -480,6 +499,13 @@ private fun RemoteVideoView(track: VideoTrack, label: String, modifier: Modifier
 
 @Composable
 private fun LocalVideoView(track: VideoTrack?, isFrontCamera: Boolean, modifier: Modifier) {
+    // Tracks which VideoTrack instance is currently attached to the renderer as a
+    // sink, so `update` (called on every recomposition, not just the first) can
+    // re-attach if `track` changes identity after the renderer was created —
+    // `factory` only runs once, so relying on it alone to call addSink() meant a
+    // renderer created before the track was ready (or with a since-replaced track)
+    // would stay blank forever with no way to recover.
+    var attachedTrack by remember { mutableStateOf<VideoTrack?>(null) }
     AndroidView(
         factory = { ctx ->
             SurfaceViewRenderer(ctx).apply {
@@ -488,7 +514,18 @@ private fun LocalVideoView(track: VideoTrack?, isFrontCamera: Boolean, modifier:
                     init(egl, null)
                     setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
                     setMirror(true)
-                    track?.addSink(this)
+                    // SurfaceView (which SurfaceViewRenderer extends) composites via a
+                    // separate SurfaceFlinger layer — overlapping SurfaceViews don't
+                    // respect normal View/Compose z-order at all. Without this, the
+                    // small local-preview surface can end up rendered *behind* the
+                    // full-screen remote-video surface regardless of which one is
+                    // declared later in the Compose tree — confirmed live: both
+                    // renderers were receiving and rendering frames correctly (per
+                    // WebRTC's own EglRenderer frame-count logs), the preview was
+                    // just invisible underneath the remote view. This tells Android to
+                    // composite this surface above the window content (and above
+                    // sibling SurfaceViews without the same flag).
+                    setZOrderMediaOverlay(true)
                 } catch (e: Exception) {
                     android.util.Log.e("VideoView", "LocalVideoView init error: ${e.message}")
                 }
@@ -496,9 +533,20 @@ private fun LocalVideoView(track: VideoTrack?, isFrontCamera: Boolean, modifier:
         },
         update = { renderer ->
             renderer.setMirror(isFrontCamera)
+            android.util.Log.w("DEBUG-BOOTSTRAP", "LocalVideoView update: track=${track != null} attachedTrack=${attachedTrack != null} same=${attachedTrack === track}")
+            if (attachedTrack !== track) {
+                try {
+                    attachedTrack?.removeSink(renderer)
+                    track?.addSink(renderer)
+                    attachedTrack = track
+                    android.util.Log.w("DEBUG-BOOTSTRAP", "LocalVideoView: sink attached, track=${track != null}")
+                } catch (e: Exception) {
+                    android.util.Log.e("VideoView", "LocalVideoView sink swap error: ${e.message}")
+                }
+            }
         },
         onRelease = { renderer ->
-            try { track?.removeSink(renderer) } catch (_: Exception) {}
+            try { attachedTrack?.removeSink(renderer) } catch (_: Exception) {}
             try { renderer.release() } catch (_: Exception) {}
         },
         modifier = modifier

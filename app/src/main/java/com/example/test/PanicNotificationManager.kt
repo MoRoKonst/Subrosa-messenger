@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -11,7 +11,7 @@ import androidx.core.app.NotificationManagerCompat
 
 object PanicNotificationManager {
 
-    const val ACTION_EMERGENCY_WIPE = "com.bcon.messenger.EMERGENCY_WIPE"
+    const val ACTION_EMERGENCY_WIPE = "com.subrosa.messenger.EMERGENCY_WIPE"
 
     private const val CHANNEL_ID = "panic_button"
     private const val NOTIF_ID   = 9998

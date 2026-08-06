@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -17,8 +17,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.bcon.messenger.ui.theme.BeaconColors
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.subrosaColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -27,7 +27,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
     var dmsEnabled by remember { mutableStateOf(DeadMansSwitchManager.isEnabled(context)) }
@@ -48,8 +48,6 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
 
     var panicButtonEnabled by remember { mutableStateOf(UserStorage.getPanicButtonEnabled(context)) }
     var panicButtonDecoy   by remember { mutableStateOf(UserStorage.getPanicButtonDecoy(context)) }
-
-    var calcDisguise by remember { mutableStateOf(UserStorage.getCalculatorDisguise(context)) }
 
     var wipeOnBreach by remember { mutableStateOf(UserStorage.getWipeOnBreach(context)) }
     var breachLevel by remember { mutableStateOf(
@@ -322,29 +320,13 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                SectionHeader(s.calcDisguiseLabel, c.textPrimary.copy(alpha = 0.6f))
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = c.card),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(s.calcDisguiseSubtitle, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(s.calcDisguiseLabel, color = c.textPrimary, fontSize = 14.sp)
-                            Switch(
-                                checked = calcDisguise,
-                                onCheckedChange = { enabled ->
-                                    calcDisguise = enabled
-                                    UserStorage.setCalculatorDisguise(context, enabled)
-                                }
-                            )
-                        }
-                    }
-                }
+                // Calculator-disguise toggle intentionally hidden from the public build:
+                // it was built for a specific custom deployment that never shipped, and
+                // its unlock code is a hardcoded equation (not user-configurable), which
+                // is fine for a one-off private deployment but not a real protection in
+                // a general-audience app. The underlying mechanism (UserStorage.get/setCalculatorDisguise,
+                // CalculatorScreen.kt, MainActivity routing) is left in place for a future
+                // deployment where the unlock code is made user-configurable.
 
                 Spacer(Modifier.height(16.dp))
             }
@@ -369,7 +351,7 @@ private fun WipeLevelCard(
     title: String,
     desc: String,
     color: Color,
-    c: BeaconColors
+    c: subrosaColors
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = c.card),

@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 set -e
 
 CERT_DIR="./certs"
@@ -25,7 +25,7 @@ openssl req -x509 -newkey rsa:4096 \
     -out "$CERT_DIR/cert.pem" \
     -days $DAYS_VALID \
     -nodes \
-    -subj "/C=US/ST=State/L=City/O=Beacon/CN=beacon.local"
+    -subj "/C=US/ST=State/L=City/O=Subrosa/CN=Subrosa.local"
 
 chmod 600 "$CERT_DIR/key.pem"
 chmod 644 "$CERT_DIR/cert.pem"

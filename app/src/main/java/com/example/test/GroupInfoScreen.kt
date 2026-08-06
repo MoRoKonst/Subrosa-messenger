@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,7 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.absoluteValue
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,7 +33,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     val userId = UserStorage.getUserId(context)
 
@@ -322,22 +322,29 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                                             text = { Text(s.groupInfoRemoveMember, color = Color.Red) },
                                             onClick = {
 
+                                                val preRemovalMembers = group!!.members
+
                                                 GroupManager.removeMember(context, groupId, memberId)
 
                                                 messengerService?.notifyMemberRemoved(
                                                     groupId,
                                                     memberId,
-                                                    group!!.members
+                                                    preRemovalMembers
                                                 )
 
+                                                // Reload from storage so the rotation goes out to the
+                                                // post-removal membership, not the stale Compose state
+                                                // captured before removeMember() persisted — otherwise
+                                                // the just-kicked member still receives the new key.
+                                                val postRemovalGroup = GroupManager.getGroup(context, groupId)
                                                 val newGroupKey = GroupManager.generateGroupKey()
-                                                val updatedGroup = group!!.copy(groupKey = newGroupKey)
+                                                val updatedGroup = postRemovalGroup!!.copy(groupKey = newGroupKey)
                                                 GroupManager.saveGroup(context, updatedGroup)
 
                                                 messengerService?.rotateGroupKey(
                                                     groupId,
                                                     newGroupKey,
-                                                    updatedGroup.members
+                                                    updatedGroup.members.filter { it != memberId }
                                                 )
 
                                                 group = GroupManager.getGroup(context, groupId)

@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.sp
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 
 @Composable
 fun IncomingCallScreen(
@@ -31,15 +31,44 @@ fun IncomingCallScreen(
     onAccept: () -> Unit,
     onDecline: () -> Unit
 ) {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val context = LocalContext.current
     val s = LocalStrings.current
     val haptic = LocalHapticFeedback.current
 
     var userActed by remember { mutableStateOf(false) }
+
+    // Safety net alongside the onCallEnded callback below — see ActiveCallScreen's
+    // matching poll for the full reasoning (live testing showed the callback can
+    // occasionally not fire even when confirmed non-null right before invoke()).
+    // Only relevant while still ringing and untouched: once the user has acted,
+    // whatever they triggered (accept/decline) owns navigating away from here.
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000)
+            if (!userActed && CallManager.callId.isEmpty()) {
+                userActed = true
+                onDecline()
+                break
+            }
+        }
+    }
+
+    // Set right before navigating to ActiveCallScreen on accept — this screen's
+    // onDispose must NOT null out CallManager's onCallEnded/onIncomingCall in that
+    // case, since ActiveCallScreen sets up its own registration for the same call
+    // as part of the same navigation, and Compose doesn't guarantee this screen's
+    // onDispose runs before that one's DisposableEffect — if it runs after, it wipes
+    // out the new registration, leaving the active screen with no way to react to
+    // the call ending (confirmed live: hangup worked at the protocol level, but the
+    // other side's call screen never closed because this exact race nulled out its
+    // onCallEnded callback).
+    var transitioningToCall by remember { mutableStateOf(false) }
     DisposableEffect(Unit) {
 
+        android.util.Log.w("DEBUG-BOOTSTRAP", "IncomingCallScreen: registering onCallEnded")
         CallManager.onCallEnded = { _ ->
+            android.util.Log.w("DEBUG-BOOTSTRAP", "IncomingCallScreen: onCallEnded fired, calling onDecline()")
             context.startService(Intent(context, CallService::class.java).apply {
                 action = CallService.ACTION_END
             })
@@ -47,8 +76,11 @@ fun IncomingCallScreen(
             onDecline()
         }
         onDispose {
-            CallManager.onIncomingCall = null
-            CallManager.onCallEnded = null
+            android.util.Log.w("DEBUG-BOOTSTRAP", "IncomingCallScreen: onDispose, transitioningToCall=$transitioningToCall")
+            if (!transitioningToCall) {
+                CallManager.onIncomingCall = null
+                CallManager.onCallEnded = null
+            }
             if (!userActed && CallManager.callId.isNotEmpty()) {
 
                 CallManager.declineCall()
@@ -56,14 +88,32 @@ fun IncomingCallScreen(
         }
     }
 
-    val cameraPermLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-
-        if (!granted) android.widget.Toast.makeText(
+    val callAcceptPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { perms ->
+        val audioOk = perms[android.Manifest.permission.RECORD_AUDIO]
+            ?: (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED)
+        if (!audioOk) {
+            // Audio is required for every call (audio or video) — without it there's
+            // nothing to accept into, so decline instead of silently connecting with
+            // a dead mic (which is what happened before this check existed: acceptCall()
+            // would proceed anyway and createLocalTracks() would just skip the audio
+            // track, leaving both sides connected but with no sound).
+            android.widget.Toast.makeText(context, s.incomingNoAudioPermission, android.widget.Toast.LENGTH_SHORT).show()
+            userActed = true
+            CallManager.declineCall()
+            onDecline()
+            return@rememberLauncherForActivityResult
+        }
+        val camOk = perms[android.Manifest.permission.CAMERA]
+            ?: (context.checkSelfPermission(android.Manifest.permission.CAMERA) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED)
+        if (isVideo && !camOk) android.widget.Toast.makeText(
             context, s.incomingNoCameraPermission, android.widget.Toast.LENGTH_SHORT
         ).show()
         userActed = true
+        transitioningToCall = true
         CallManager.acceptCall(context)
         onAccept()
     }
@@ -196,12 +246,19 @@ fun IncomingCallScreen(
                         modifier = Modifier.size(76.dp),
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            val audioGranted = context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+                                android.content.pm.PackageManager.PERMISSION_GRANTED
                             val camGranted = context.checkSelfPermission(android.Manifest.permission.CAMERA) ==
                                 android.content.pm.PackageManager.PERMISSION_GRANTED
-                            if (isVideo && !camGranted) {
-                                cameraPermLauncher.launch(android.Manifest.permission.CAMERA)
+                            val needed = buildList {
+                                if (!audioGranted) add(android.Manifest.permission.RECORD_AUDIO)
+                                if (isVideo && !camGranted) add(android.Manifest.permission.CAMERA)
+                            }
+                            if (needed.isNotEmpty()) {
+                                callAcceptPermissionLauncher.launch(needed.toTypedArray())
                             } else {
                                 userActed = true
+                                transitioningToCall = true
                                 CallManager.acceptCall(context)
                                 onAccept()
                             }

@@ -1,4 +1,4 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -24,7 +24,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import com.bcon.messenger.ui.theme.LocalBeaconColors
+import com.subrosa.messenger.ui.theme.LocalsubrosaColors
 import kotlinx.coroutines.launch
 
 @Composable
@@ -34,7 +34,7 @@ fun PortholeSendButton(
     modifier: Modifier = Modifier,
     size: Int = 44
 ) {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val scope = rememberCoroutineScope()
     val scale = remember { Animatable(1f) }
 
@@ -91,7 +91,7 @@ fun CombinedMediaButton(
     modifier: Modifier = Modifier,
     size: Int = 44
 ) {
-    val c = LocalBeaconColors.current
+    val c = LocalsubrosaColors.current
     val scope = rememberCoroutineScope()
     val scale = remember { Animatable(1f) }
 

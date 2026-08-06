@@ -1,13 +1,13 @@
-﻿package com.bcon.messenger
+package com.subrosa.messenger
 
 object NetworkConfig {
 
     const val CERT_PIN = ""
 
-    const val SERVER_HOSTNAME = "api.beacon-app.org"
+    const val SERVER_HOSTNAME = "api.subrosamessenger.com"
 
     const val STUN_URL = "stun:stun.l.google.com:19302"
-    const val TURN_URL = "turn:turn.beacon-app.org:4433?transport=tcp"
+    const val TURN_URL = "turn:turn.subrosamessenger.com:4433?transport=tcp"
 
     object TurnCredentials {
         @Volatile var username: String = ""
