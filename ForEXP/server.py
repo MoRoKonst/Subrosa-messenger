@@ -769,6 +769,7 @@ def rate_limit_check(username, msg_type, limit=None, window=60):
         "call_group_invite": 20, "call_group_join": 30, "call_group_answer": 30,
         "call_group_ice": 300, "call_group_leave": 30, "call_group_peer_list": 30,
         "call_request_audio": 20, "call_request_video": 20, "call_response": 30,
+        "bootstrap_diagnostic": 5,
     }
     max_count = limit or default_limits.get(msg_type)
     if not max_count:
@@ -1039,7 +1040,9 @@ async def handle_client(websocket):
                 # ── Anonymous Mailbox ──
                 "mailbox_put", "mailbox_fetch",
                 # ── Device-gated registration TOTP ──
-                "totp_setup", "totp_disable"
+                "totp_setup", "totp_disable",
+                # ── Client-side diagnostics ──
+                "bootstrap_diagnostic"
             ]
             if msg_type not in ALLOWED_TYPES:
                 print(f"[SECURITY] Неизвестный тип '{msg_type}' от {ip}")
@@ -2216,6 +2219,19 @@ async def handle_client(websocket):
                 asyncio.create_task(db_delete_totp(username))
                 print(f"[TOTP] Device-gated registration protection disabled for {username}")
                 await send_safe(websocket, json.dumps({"type": "totp_disable_ok"}))
+                continue
+
+            # ─── Client-side diagnostic "ticket" ─────────────────────────────────
+            # Fired by the client once, after 5 minutes of a stuck first-contact
+            # mailbox bootstrap (docs/ISSUE_backup_identity_hijack.md, "5-минутный
+            # ретрай"). Deliberately carries no target/contact info — just a
+            # clearly-tagged log line for the operator to find via
+            # ForEXP/admin_logs.py while investigating, not an automated report
+            # to anyone.
+            if msg_type == "bootstrap_diagnostic":
+                if not username or not rate_limit_check(username, "bootstrap_diagnostic"):
+                    continue
+                print(f"[TICKET] {username}: mailbox-бутстрап первого контакта завис дольше 5 минут")
                 continue
 
         if is_fed:

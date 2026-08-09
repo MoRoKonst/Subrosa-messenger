@@ -3448,6 +3448,9 @@ class MessengerService : Service() {
     // retrying until confirmed — the UI shows a plain "connecting" state and only
     // allows sending once isChannelReady() is true.
     private val pendingChannelJobs = mutableMapOf<String, Job>()
+    private val channelBootstrapStartedAt = mutableMapOf<String, Long>()
+    private val channelStuckNotified = mutableSetOf<String>()
+    private val CHANNEL_STUCK_THRESHOLD_MS = 5 * 60 * 1000L
     var onChannelReady: ((contact: String) -> Unit)? = null
 
     /** True once this contact can be messaged anonymously (or was never a
@@ -3493,28 +3496,83 @@ class MessengerService : Service() {
 
     /** Call right after adding a contact (invite-code flow), and again whenever
      *  the user opens a chat with a still-pending contact — safe to call
-     *  repeatedly, a retry loop only ever runs once per contact at a time. */
+     *  repeatedly, a retry loop only ever runs once per contact at a time.
+     *  Retries indefinitely (no upper bound — a transient issue can still
+     *  self-resolve later) but after CHANNEL_STUCK_THRESHOLD_MS (5 minutes)
+     *  without success, fires a one-time user-visible notification and a
+     *  minimal diagnostic "ticket" to the server (see
+     *  docs/ISSUE_backup_identity_hijack.md, "5-минутный ретрай"). Not an
+     *  automated report *to the developer directly* — deliberately not
+     *  hardcoded contact info for that, per the decision this was built
+     *  from — just a clearly-tagged server log line the operator can find
+     *  later via ForEXP/admin_logs.py while investigating. */
     fun bootstrapChannelFor(contact: String) {
         if (isChannelReady(contact)) return
         scope.launch(Dispatchers.IO) { attemptChannelBootstrap(contact) }
         if (pendingChannelJobs.containsKey(contact)) return
+        channelBootstrapStartedAt.putIfAbsent(contact, System.currentTimeMillis())
         pendingChannelJobs[contact] = scope.launch(Dispatchers.IO) {
             for (d in longArrayOf(30_000L, 30_000L, 30_000L)) {
                 delay(d)
                 if (isChannelReady(contact)) { pendingChannelJobs.remove(contact); return@launch }
                 attemptChannelBootstrap(contact)
+                checkChannelStuck(contact)
             }
             while (isActive && !isChannelReady(contact)) {
                 delay(90_000L)
                 if (isChannelReady(contact)) break
                 attemptChannelBootstrap(contact)
+                checkChannelStuck(contact)
             }
             pendingChannelJobs.remove(contact)
         }
     }
 
+    private fun checkChannelStuck(contact: String) {
+        if (contact in channelStuckNotified) return
+        val startedAt = channelBootstrapStartedAt[contact] ?: return
+        if (System.currentTimeMillis() - startedAt < CHANNEL_STUCK_THRESHOLD_MS) return
+        channelStuckNotified.add(contact)
+
+        Log.w(TAG, "bootstrapChannelFor: $contact всё ещё не готов спустя 5 минут")
+        showChannelStuckNotification(contact)
+
+        // Deliberately no contact/target identifier in this packet — that
+        // would leak exactly the metadata (who's trying to reach whom) the
+        // whole mailbox scheme exists to hide. Just "this account hit a
+        // stuck first-contact bootstrap", nothing more.
+        sendWs(JSONObject().apply {
+            put("type", "bootstrap_diagnostic")
+            put("from", username)
+        }.toString())
+    }
+
+    private fun showChannelStuckNotification(contact: String) {
+        val displayName = ChatStorage.getContactName(this, contact).takeIf { it.isNotBlank() } ?: contact
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("open_chat", contact)
+        }
+        val pending = PendingIntent.getActivity(
+            this, ("channel_stuck_$contact").hashCode(),
+            intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notifId = (contact.hashCode() and 0x7FFFFFFF) + 4000
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(s.notifChannelStuckTitle)
+            .setContentText(s.notifChannelStuckText(displayName))
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(notifId, notification)
+    }
+
     private fun markChannelReady(contact: String) {
         pendingChannelJobs.remove(contact)?.cancel()
+        channelBootstrapStartedAt.remove(contact)
+        channelStuckNotified.remove(contact)
     }
 
     private suspend fun sendAnonTokensTo(contact: String) {
