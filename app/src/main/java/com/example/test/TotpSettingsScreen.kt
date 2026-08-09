@@ -18,6 +18,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,6 +59,7 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
     var message by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     DisposableEffect(messengerService) {
         val svc = messengerService
@@ -165,6 +168,18 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
                                     } else {
                                         busy = true
                                         svc.sendTotpDisable(disableCodeInput)
+                                        // Server response is async (onTotpDisableResult fires
+                                        // later over the WebSocket) — if it never arrives (dead
+                                        // connection, reconnect mid-flight), busy would otherwise
+                                        // stay true forever with no way to retry. Found live.
+                                        scope.launch {
+                                            delay(15_000)
+                                            if (busy) {
+                                                busy = false
+                                                message = s.totpErrTimeout
+                                                isError = true
+                                            }
+                                        }
                                     }
                                 },
                                 enabled = !busy && disableCodeInput.isNotBlank(),
@@ -221,10 +236,27 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
                                         // Enabled locally first so register()'s
                                         // totp_code inclusion and the server
                                         // round-trip use the same secret — rolled
-                                        // back above if the server refuses it.
+                                        // back in onTotpSetupResult if the server
+                                        // refuses it, and by the timeout below if
+                                        // no response arrives at all (found live:
+                                        // without this, a dead/reconnecting
+                                        // connection left the client thinking TOTP
+                                        // was enabled while the server never
+                                        // actually got the secret — device-gating
+                                        // would then silently never trigger).
                                         TotpManager.enable(context, secret)
                                         busy = true
                                         svc.sendTotpSetup(secret, codeInput)
+                                        scope.launch {
+                                            delay(15_000)
+                                            if (busy) {
+                                                TotpManager.disable(context)
+                                                busy = false
+                                                enabled = false
+                                                message = s.totpErrTimeout
+                                                isError = true
+                                            }
+                                        }
                                     }
                                 },
                                 enabled = !busy && codeInput.isNotBlank(),

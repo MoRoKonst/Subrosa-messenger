@@ -143,7 +143,12 @@ private fun PChevron() {
     )
 }
 
-private fun isEmergencyServiceEnabled(context: android.content.Context): Boolean =
+/** Whether the volume-button panic-wipe AccessibilityService is actually
+ *  enabled in system settings — not just the (default-true)
+ *  UserStorage.isEmergencyWipeEnabled() preference, which only tracks
+ *  intent, not the multi-step accessibility grant. Shared with
+ *  MessengerService.kt's silent-audio-track gate — see there. */
+fun isEmergencyServiceEnabled(context: android.content.Context): Boolean =
     (context.getSystemService(android.content.Context.ACCESSIBILITY_SERVICE) as AccessibilityManager)
         .getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
         .any {
