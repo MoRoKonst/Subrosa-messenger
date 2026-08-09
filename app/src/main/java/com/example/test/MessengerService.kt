@@ -1146,6 +1146,21 @@ class MessengerService : Service() {
 
                 flushPendingVideoCircles()
 
+                val pendingResetContacts = UserStorage.getAndClearPendingSessionResetContacts(this@MessengerService)
+                if (pendingResetContacts.isNotEmpty()) {
+                    Log.d(TAG, "Рассылаем session_reset ${pendingResetContacts.size} контактам после восстановления бэкапа")
+                    scope.launch(Dispatchers.IO) {
+                        pendingResetContacts.forEach { contactId ->
+                            SessionKeyManager.deleteSession(contactId)
+                            sendAnonOrDirect(contactId, JSONObject().apply {
+                                put("type", "session_reset")
+                                put("from", username)
+                                put("to", contactId)
+                            })
+                        }
+                    }
+                }
+
                 pollMailbox()
                 scope.launch(Dispatchers.IO) {
                     while (isConnected && scope.isActive) {
@@ -1445,14 +1460,15 @@ class MessengerService : Service() {
                 try {
                     val from = json.getString("from")
                     val fileId = sanitizePathComponent(json.getString("file_id"))
-                    val fileName = sanitizePathComponent(json.getString("file_name"))
+                    val encryptedFileName = json.optString("encrypted_file_name", null)
+                    val legacyFileName = json.optString("file_name", null)
                     val chunkIndex = json.getInt("chunk_index")
                     val totalChunks = json.getInt("total_chunks")
                     val chunkData = json.getString("data")
                     val signature = json.optString("signature", null)
                     val isEncrypted = json.optBoolean("encrypted", false)
 
-                    Log.d(TAG, "Получен file_chunk $chunkIndex/$totalChunks для $fileName (зашифрован: $isEncrypted)")
+                    Log.d(TAG, "Получен file_chunk $chunkIndex/$totalChunks (fileId=$fileId, зашифрован: $isEncrypted)")
 
                     val senderKey = publicKeys[from]
                         ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also {
@@ -1479,16 +1495,32 @@ class MessengerService : Service() {
                     val fileTransferKey = "$from:$fileId"
 
                     if (!fileChunks.containsKey(fileTransferKey)) {
+                        // encrypted_file_name is decrypted once, only when this
+                        // transfer's FileMeta is first created — legacy senders
+                        // without this field (or a decrypt failure) fall back to
+                        // the plaintext file_name if present, else a generic name.
+                        val decryptedName = try {
+                            when {
+                                encryptedFileName != null -> CryptoManager.decrypt(encryptedFileName)
+                                legacyFileName != null -> legacyFileName
+                                else -> "file"
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Не удалось расшифровать имя файла: ${e.message}")
+                            legacyFileName ?: "file"
+                        }
+                        val fileName = sanitizePathComponent(decryptedName)
                         fileChunks[fileTransferKey] = FileMeta(fileName, totalChunks, mutableListOf())
                     }
                     fileChunks[fileTransferKey]?.chunks?.add(chunkIndex to chunkData)
 
                     val receivedChunks = fileChunks[fileTransferKey]?.chunks?.size ?: 0
-                    Log.d(TAG, "Собрано чанков: $receivedChunks/$totalChunks для файла $fileName")
+                    Log.d(TAG, "Собрано чанков: $receivedChunks/$totalChunks для файла ${fileChunks[fileTransferKey]?.name}")
 
                     if (receivedChunks == totalChunks) {
                         Log.d(TAG, "Все чанки получены для $fileId, начинаем сборку")
 
+                        val fileName = fileChunks[fileTransferKey]?.name ?: "file"
                         val sortedChunks = fileChunks[fileTransferKey]?.chunks?.sortedBy { it.first }
                         if (sortedChunks == null) {
                             Log.e(TAG, "fileChunks[$fileTransferKey] исчез до сборки — пропускаем")
@@ -1662,58 +1694,7 @@ class MessengerService : Service() {
                 }
             }
 
-            "session_init" -> {
-                val from = json.getString("from")
-                val senderIk = json.getString("sender_ik")
-                val x3dhHeader = json.getJSONObject("x3dh_header")
-                val encryptedText = json.getString("text")
-                val signature = json.optString("signature", null)
-                val messageId = json.optString("id", null)
-                try {
-
-                    val fixedSenderIk = senderIk.replace('-', '+').replace('_', '/')
-                    publicKeys[from] = fixedSenderIk
-                    ChatStorage.saveContactPublicKey(this@MessengerService, from, fixedSenderIk)
-                    if (KeyHistoryManager.checkKeyChange(this@MessengerService, from, fixedSenderIk)) {
-                        Log.w(TAG, "⚠️ TOFU: ключ контакта $from изменился в session_init!")
-                        withContext(Dispatchers.Main) { onKeyChanged?.invoke(from) }
-                    }
-                    Log.d(TAG, "Публичный ключ из session_init сохранён: $from")
-
-                    val senderKey = publicKeys[from]!!
-
-                    if (signature == null) {
-                        Log.e(TAG, "session_init без подписи от $from")
-                        return
-                    }
-                    if (!CryptoManager.verify(encryptedText, signature, senderKey)) {
-                        Log.e(TAG, "Неверная подпись session_init от $from")
-                        return
-                    }
-                    SessionKeyManager.receiveSession(from, fixedSenderIk, x3dhHeader)
-                    val sessionHeader = json.getJSONObject("session_header")
-                    val decryptedText = CryptoManager.decryptWithForwardSecrecy(from, encryptedText, sessionHeader)
-                    handleIncomingDecryptedMessage(from, decryptedText, messageId, json)
-
-                    if (AnonTokenManager.getContactTokens(this@MessengerService, from).isEmpty() &&
-                        AnonTokenManager.getMyTokens(this@MessengerService).isNotEmpty()) {
-                        scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
-                    }
-
-                    pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
-                        scope.launch(Dispatchers.IO) { sendWithForwardSecrecy(from, text, msgId) }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "session_init error: ${e.message}")
-
-                    requestPrekeyBundle(from)
-                    sendAnonOrDirect(from, JSONObject().apply {
-                        put("type", "session_reset")
-                        put("from", username)
-                        put("to", from)
-                    })
-                }
-            }
+            "session_init" -> processSessionInit(json)
 
             "message" -> {
                 val messageId = json.optString("id", null)
@@ -2603,6 +2584,28 @@ class MessengerService : Service() {
                         if (AnonTokenManager.needsRefill(this@MessengerService, to)) {
                             scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
                         }
+                    } else if (isFirst) {
+                        // No anon/bootstrap token for this brand-new session —
+                        // this used to fall straight through to a direct,
+                        // fingerprint-addressed sendWs(). See
+                        // docs/ISSUE_backup_identity_hijack.md, "session_init
+                        // тихо откатывается на прямую адресацию": reuse the
+                        // same anonymous mailbox path already relied on for
+                        // token bootstrap, instead of a silent non-anonymous
+                        // fallback. The full session_init sub-packet (x3dh
+                        // header + forward-secrecy ciphertext) travels inside
+                        // the mailbox blob so the recipient's session state
+                        // ends up identical to a direct delivery — see
+                        // handleMailboxResult's session_init_packet handling.
+                        val mailboxTag = AnonTokenManager.getContactMailboxTag(this@MessengerService, to)
+                        val recipientKey = publicKeys[to]
+                            ?: ChatStorage.getContactPublicKey(this@MessengerService, to)
+                        if (mailboxTag != null && recipientKey != null) {
+                            depositSessionInitViaMailbox(to, mailboxTag, recipientKey, packet)
+                        } else {
+                            Log.w(TAG, "session_init: нет ни анон-токена, ни mailbox-тега для $to — доставка напрямую")
+                            sendWs(addPadding(packet).toString())
+                        }
                     } else {
                         sendWs(addPadding(packet).toString())
                     }
@@ -2955,6 +2958,14 @@ class MessengerService : Service() {
                 val encryptedFileData = CryptoManager.encryptFile(fileBytes, cachedKey, cachedPqKey)
                 val packedData = CryptoManager.packEncryptedFile(encryptedFileData)
 
+                // File name encrypted with the same hybrid scheme as text
+                // messages (self-contained, no session state needed) rather
+                // than sent in the clear — see docs/ISSUE_backup_identity_hijack.md,
+                // "file_name в открытом виде в file_chunk". Computed once and
+                // reused across every chunk of this transfer, not recomputed
+                // per chunk.
+                val encryptedFileName = CryptoManager.encrypt(fileName, cachedKey, cachedPqKey)
+
                 Log.d(TAG, "Файл зашифрован: ${packedData.length} символов base64")
 
                 val encryptedChunks = packedData.chunked(120_000)
@@ -2975,7 +2986,7 @@ class MessengerService : Service() {
                             put("from", username)
                             put("to", to)
                             put("file_id", fileId)
-                            put("file_name", fileName)
+                            put("encrypted_file_name", encryptedFileName)
                             put("chunk_index", index)
                             put("total_chunks", encryptedChunks.size)
                             put("data", chunk)
@@ -3576,6 +3587,94 @@ class MessengerService : Service() {
         }
     }
 
+    /** Shared by the direct "session_init" dispatch case and by
+     * handleMailboxResult's session_init_packet handling — same processing
+     * either way, only the transport differs. */
+    private suspend fun processSessionInit(json: JSONObject) {
+        val from = json.getString("from")
+        val senderIk = json.getString("sender_ik")
+        val x3dhHeader = json.getJSONObject("x3dh_header")
+        val encryptedText = json.getString("text")
+        val signature = json.optString("signature", null)
+        val messageId = json.optString("id", null)
+        try {
+            val fixedSenderIk = senderIk.replace('-', '+').replace('_', '/')
+            publicKeys[from] = fixedSenderIk
+            ChatStorage.saveContactPublicKey(this@MessengerService, from, fixedSenderIk)
+            if (KeyHistoryManager.checkKeyChange(this@MessengerService, from, fixedSenderIk)) {
+                Log.w(TAG, "⚠️ TOFU: ключ контакта $from изменился в session_init!")
+                withContext(Dispatchers.Main) { onKeyChanged?.invoke(from) }
+            }
+            Log.d(TAG, "Публичный ключ из session_init сохранён: $from")
+
+            val senderKey = publicKeys[from]!!
+
+            if (signature == null) {
+                Log.e(TAG, "session_init без подписи от $from")
+                return
+            }
+            if (!CryptoManager.verify(encryptedText, signature, senderKey)) {
+                Log.e(TAG, "Неверная подпись session_init от $from")
+                return
+            }
+            SessionKeyManager.receiveSession(from, fixedSenderIk, x3dhHeader)
+            val sessionHeader = json.getJSONObject("session_header")
+            val decryptedText = CryptoManager.decryptWithForwardSecrecy(from, encryptedText, sessionHeader)
+            handleIncomingDecryptedMessage(from, decryptedText, messageId, json)
+
+            if (AnonTokenManager.getContactTokens(this@MessengerService, from).isEmpty() &&
+                AnonTokenManager.getMyTokens(this@MessengerService).isNotEmpty()) {
+                scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
+            }
+
+            pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
+                if (text.startsWith("__voice__|")) {
+                    val parts = text.removePrefix("__voice__|").split("|", limit = 3)
+                    sendVoice(from, parts[2], parts[0], parts[1].toIntOrNull() ?: 0)
+                } else {
+                    scope.launch(Dispatchers.IO) { sendWithForwardSecrecy(from, text, msgId) }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "session_init error: ${e.message}")
+
+            requestPrekeyBundle(from)
+            sendAnonOrDirect(from, JSONObject().apply {
+                put("type", "session_reset")
+                put("from", username)
+                put("to", from)
+            })
+        }
+    }
+
+    /** Delivers a full session_init sub-packet (x3dh header + forward-secrecy
+     * ciphertext) anonymously via mailbox when no anon/bootstrap token is
+     * available — see the isFirst branch in sendWithForwardSecrecy() and
+     * handleMailboxResult's session_init_packet handling on the receiving
+     * end, which routes it through the exact same processSessionInit() as a
+     * direct delivery. */
+    private fun depositSessionInitViaMailbox(to: String, mailboxTag: String, publicKey: String, sessionInitPacket: JSONObject) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val inner = JSONObject().apply {
+                    put("from", username)
+                    put("name", UserStorage.getUsername(this@MessengerService))
+                    put("text", "__beacon_session_init__")
+                    put("session_init_packet", sessionInitPacket)
+                    put("id", UUID.randomUUID().toString())
+                }.toString()
+                val blob = CryptoManager.encryptClassicalOnly(inner, publicKey)
+                sendWs(addPadding(JSONObject().apply {
+                    put("type", "mailbox_put")
+                    put("tag", mailboxTag)
+                    put("blob", blob)
+                }).toString())
+            } catch (e: Exception) {
+                Log.e(TAG, "depositSessionInitViaMailbox: $to — ${e.message}")
+            }
+        }
+    }
+
     private suspend fun handleMailboxResult(json: org.json.JSONObject) {
         val blobsMap = json.optJSONObject("blobs") ?: return
         Log.d(TAG, "DEBUG-BOOTSTRAP handleMailboxResult: tags=${blobsMap.keys().asSequence().toList()}")
@@ -3600,6 +3699,13 @@ class MessengerService : Service() {
                     // sender's invite code too — not just the other way around.
                     if (AnonTokenManager.getContactMailboxTag(this@MessengerService, from) == null) {
                         Log.d(TAG, "mailbox: депозит от $from проигнорирован — контакт не добавлен взаимно")
+                        continue
+                    }
+
+                    val sessionInitPacket = innerJson.optJSONObject("session_init_packet")
+                    if (sessionInitPacket != null) {
+                        AnonTokenManager.removeMyMailboxTag(this@MessengerService, tag)
+                        processSessionInit(sessionInitPacket)
                         continue
                     }
 

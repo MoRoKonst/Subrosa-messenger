@@ -91,6 +91,16 @@ fun BackupScreen(onBack: () -> Unit) {
                     confirmPassword = ""
                     totpSecretInput = ""
                     totpCodeInput = ""
+
+                    // Import changes identity/keys on disk synchronously, but a
+                    // MessengerService that's already running keeps its old
+                    // cached username/session state until restarted — see
+                    // docs/ISSUE_backup_identity_hijack.md, "восстановление
+                    // бэкапа на втором активном устройстве". Force a full
+                    // restart so onStartCommand recomputes everything from the
+                    // now-current identity and reconnects/re-registers.
+                    context.stopService(Intent(context, MessengerService::class.java))
+                    context.startForegroundService(Intent(context, MessengerService::class.java))
                 } else {
                     message = s.error(result.exceptionOrNull()?.message ?: "")
                     isError = true
