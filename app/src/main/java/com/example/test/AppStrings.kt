@@ -243,6 +243,7 @@ interface IStr9 {
     val totpSetupButton: String; val totpDisableButton: String
     val totpSecretLabel: String; val totpCodeLabel: String; val totpConfirmButton: String
     val totpErrInvalidCode: String; val totpEnabledSuccess: String
+    val serverTotpErrNotConnected: String
     val backupTotpSecretLabel: String; val backupTotpCodeLabel: String
 }
 
@@ -715,6 +716,7 @@ private val ru9 = object : IStr9 {
     override val totpConfirmButton = "Подтвердить и включить"
     override val totpErrInvalidCode = "Неверный код"
     override val totpEnabledSuccess = "TOTP-защита включена"
+    override val serverTotpErrNotConnected = "Нет соединения с сервером"
     override val backupTotpSecretLabel = "TOTP-секрет (если был включён на исходном устройстве)"
     override val backupTotpCodeLabel = "Текущий TOTP-код"
 }
@@ -1176,6 +1178,7 @@ private val en9 = object : IStr9 {
     override val totpConfirmButton = "Confirm and enable"
     override val totpErrInvalidCode = "Invalid code"
     override val totpEnabledSuccess = "TOTP protection enabled"
+    override val serverTotpErrNotConnected = "No connection to the server"
     override val backupTotpSecretLabel = "TOTP secret (if it was enabled on the source device)"
     override val backupTotpCodeLabel = "Current TOTP code"
 }

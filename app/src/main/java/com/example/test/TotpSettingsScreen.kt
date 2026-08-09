@@ -27,11 +27,76 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
     val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
+    var messengerService by remember { mutableStateOf<MessengerService?>(null) }
+    val connection = remember {
+        object : android.content.ServiceConnection {
+            override fun onServiceConnected(name: android.content.ComponentName, binder: android.os.IBinder) {
+                messengerService = (binder as MessengerService.LocalBinder).getService()
+            }
+            override fun onServiceDisconnected(name: android.content.ComponentName) {
+                messengerService = null
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        context.bindService(
+            android.content.Intent(context, MessengerService::class.java),
+            connection,
+            android.content.Context.BIND_AUTO_CREATE
+        )
+    }
+    DisposableEffect(Unit) {
+        onDispose { try { context.unbindService(connection) } catch (e: Exception) {} }
+    }
+
     var enabled by remember { mutableStateOf(TotpManager.isEnabled(context)) }
     var pendingSecret by remember { mutableStateOf<String?>(null) }
     var codeInput by remember { mutableStateOf("") }
+    var disableCodeInput by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+
+    DisposableEffect(messengerService) {
+        val svc = messengerService
+        svc?.onTotpSetupResult = { success, reason ->
+            busy = false
+            if (success) {
+                enabled = true
+                pendingSecret = null
+                codeInput = ""
+                message = s.totpEnabledSuccess
+                isError = false
+            } else {
+                // Keep client and server in sync — a secret the server refused
+                // to register (e.g. it already had one from an earlier attempt)
+                // shouldn't be left "enabled" locally, since that would silently
+                // include a totp_code in future register() calls that the
+                // server was never told to expect.
+                TotpManager.disable(context)
+                enabled = false
+                pendingSecret = null
+                message = s.totpErrInvalidCode + (reason?.let { " ($it)" } ?: "")
+                isError = true
+            }
+        }
+        svc?.onTotpDisableResult = { success ->
+            busy = false
+            if (success) {
+                TotpManager.disable(context)
+                enabled = false
+                disableCodeInput = ""
+                message = ""
+            } else {
+                message = s.totpErrInvalidCode
+                isError = true
+            }
+        }
+        onDispose {
+            svc?.onTotpSetupResult = null
+            svc?.onTotpDisableResult = null
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -83,14 +148,25 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
                         )
 
                         if (enabled) {
+                            OutlinedTextField(
+                                value = disableCodeInput,
+                                onValueChange = { disableCodeInput = it },
+                                label = { Text(s.totpCodeLabel) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                             Button(
                                 onClick = {
-                                    TotpManager.disable(context)
-                                    enabled = false
-                                    pendingSecret = null
-                                    codeInput = ""
-                                    message = ""
+                                    val svc = messengerService
+                                    if (svc == null || !svc.isOnline()) {
+                                        message = s.serverTotpErrNotConnected
+                                        isError = true
+                                    } else {
+                                        busy = true
+                                        svc.sendTotpDisable(disableCodeInput)
+                                    }
                                 },
+                                enabled = !busy && disableCodeInput.isNotBlank(),
                                 colors = ButtonDefaults.buttonColors(containerColor = c.dangerCard)
                             ) {
                                 Text(s.totpDisableButton, color = c.textPrimary)
@@ -126,18 +202,24 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
 
                             Button(
                                 onClick = {
-                                    if (TotpManager.verifyCode(secret, codeInput)) {
-                                        TotpManager.enable(context, secret)
-                                        enabled = true
-                                        pendingSecret = null
-                                        codeInput = ""
-                                        message = s.totpEnabledSuccess
-                                        isError = false
-                                    } else {
+                                    val svc = messengerService
+                                    if (!TotpManager.verifyCode(secret, codeInput)) {
                                         message = s.totpErrInvalidCode
                                         isError = true
+                                    } else if (svc == null || !svc.isOnline()) {
+                                        message = s.serverTotpErrNotConnected
+                                        isError = true
+                                    } else {
+                                        // Enabled locally first so register()'s
+                                        // totp_code inclusion and the server
+                                        // round-trip use the same secret — rolled
+                                        // back above if the server refuses it.
+                                        TotpManager.enable(context, secret)
+                                        busy = true
+                                        svc.sendTotpSetup(secret, codeInput)
                                     }
                                 },
+                                enabled = !busy && codeInput.isNotBlank(),
                                 colors = ButtonDefaults.buttonColors(containerColor = c.accent),
                                 modifier = Modifier.fillMaxWidth()
                             ) {

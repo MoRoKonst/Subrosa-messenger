@@ -7,11 +7,18 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * RFC 6238 TOTP (HMAC-SHA1, 30s step, 6 digits) used to add a second
- * factor on top of the backup password when restoring identity from a
- * backup file — see docs/ISSUE_backup_identity_hijack.md, "Candidate
- * fixes" #4. The secret is generated on-device and never stored inside
- * the backup blob itself; the user is expected to save it in a separate
+ * RFC 6238 TOTP (HMAC-SHA1, 30s step, 6 digits) — one secret, two uses,
+ * see docs/ISSUE_backup_identity_hijack.md:
+ * 1. Second factor on top of the backup password when restoring identity
+ *    from a backup file ("Candidate fixes" #4).
+ * 2. Same secret is registered server-side (totp_setup) and required by
+ *    register() whenever this fingerprint's device_id changes — a device
+ *    that imported the backup through the app already has the secret
+ *    (BackupManager.importBackup() calls enable() on success); a client
+ *    that bypasses the app and registers directly with an extracted key
+ *    does not.
+ * The secret is generated on-device and never stored inside the backup
+ * blob itself; the user is expected to also save it in a separate
  * offline vault, so file+password alone stays insufficient to import.
  */
 object TotpManager {
@@ -60,6 +67,9 @@ object TotpManager {
 
     fun otpAuthUri(secretBase32: String, account: String, issuer: String = "Subrosa"): String =
         "otpauth://totp/$issuer:$account?secret=$secretBase32&issuer=$issuer&digits=$CODE_DIGITS&period=$TIME_STEP_SECONDS"
+
+    fun currentCode(secretBase32: String, timeMillis: Long = System.currentTimeMillis()): String =
+        generateCode(secretBase32, timeMillis / 1000 / TIME_STEP_SECONDS)
 
     fun verifyCode(secretBase32: String, code: String, timeMillis: Long = System.currentTimeMillis()): Boolean {
         val normalized = code.trim()
