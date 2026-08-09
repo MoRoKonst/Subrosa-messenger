@@ -1205,9 +1205,16 @@ file.
     missing it on `file_id`). Applied right after JSON parsing, before any
     path construction or signature check, so legitimate transfers (UUID-based
     file_id) are unaffected. Compiles clean on both platforms.
-    **Noted but not fixed**: Desktop's `handleFileChunk` doesn't verify a
-    chunk signature at all (Android's does via `CryptoManager.verifyChunk`)
-    — a separate, smaller gap, not touched this pass.
+    ~~**Noted but not fixed**: Desktop's `handleFileChunk` doesn't verify a
+    chunk signature at all~~ — **done, separate later pass**. Added the
+    same `senderKey`/`CryptoManager.verifyChunk(...)` check Android already
+    had, right at the top of `handleFileChunk` before any chunk is
+    buffered/decrypted — a malicious or compromised contact could
+    previously inject arbitrary chunk data attributed to themselves with
+    no valid signature required at all. `image_chunk`/`video_chunk`
+    handling on Desktop **not** audited for the same gap this pass — only
+    the specifically-flagged `file_chunk` path was in scope. Compiles
+    clean. Desktop isn't tracked in this repo.
 12a. Leftover "B-CON" brand-string tail from the rebrand, found while
     looking at ChatsScreen — fixed: header text on ChatsScreen ("B-CON"→
     "SUBROSA"), theme name ("Синяя"/"Navy" → "Бордовая"/"Burgundy" to match
@@ -1233,9 +1240,8 @@ file.
     `:8443` override (task #52) — explicitly deprioritized: this only
     affects the personal dev/test server, not any real client deployment,
     since every client stands up their own infrastructure.
-14. Full palette unification (icon + in-app theme + website) — real reskin,
-    3 themes × ~18 colors each plus a contrast/accessibility re-check.
-    **In-app Android theme done this pass**: recolored all 3 themes in
+14. ~~Full palette unification (icon + in-app theme + website)~~ — **done**.
+    **In-app Android theme (earlier pass)**: recolored all 3 themes in
     `SubrosaColors.kt` from the old navy/cyan scheme to a burgundy/gold
     family (accent `#D9A566` antique gold on dark themes, `#8A2A2A`
     burgundy accent on the cream light theme — gold reads poorly on white).
@@ -1245,9 +1251,38 @@ file.
     and replaced them with the new burgundy/copper/gold equivalents,
     including the first entry of the decorative multi-color avatar-palette
     lists (the other 5 avatar colors were left alone — intentional variety,
-    not brand color). Compiles clean. **Not yet done**: Desktop app theme
-    colors, website accent color (still teal `#55B5A8`), no live-device
-    visual/contrast check yet.
+    not brand color).
+
+    **Desktop (`BeaconTheme.kt`, defines the `SubrosaTheme` object — file
+    itself was never renamed off the old brand)**: turned out to be an
+    entirely separate, untouched **purple** ("Amethyst") palette that
+    predated even the OLD navy/cyan Android scheme it was supposedly
+    matching — never updated through either rebrand pass. Recolored to
+    the same values as Android's `NavySubrosaColors` field-for-field where
+    the fields match; the handful of Desktop-only fields with no Android
+    equivalent (`textSecondary`, `divider`, `unreadBadge`, `readTick`,
+    `sentTick`) got new values picked within the same burgundy/gold family
+    rather than left purple. Single flat object, not a 3-theme enum like
+    Android — Desktop has no theme switching. Grepped for stray hardcoded
+    hex from the old purple palette bypassing `SubrosaTheme.*` — none
+    found, everything already routed through the object. Compiles clean.
+    Desktop isn't tracked in this repo (local-only, per project memory).
+
+    **Website (`D:\website\v3`, separate, non-git directory)**: accent was
+    still teal `#55B5A8` — every rule already routed through 4 CSS custom
+    properties (`--accent`/`--accent-bright`/`--accent-soft`/
+    `--accent-border`), so recoloring those to the gold family
+    (`#D9A566`/`#E8C68F`/matching rgba) propagated everywhere in one edit.
+    Found and fixed two more hardcoded `rgba(85,181,168,...)` teal values
+    in a background radial-gradient that bypassed the variables, plus the
+    `::selection` text color (was a dark teal-tinted `#061312`, now a dark
+    warm brown `#1A1006` to match the new selection-background hue).
+    Grepped for any other stray teal hex across all 6 HTML pages + CSS —
+    none found.
+
+    **Not done**: no live-device/browser visual or contrast-accessibility
+    check on any of the three surfaces — this was a mechanical value swap,
+    not a redesign pass.
 15. Optional server-side client access-list/allowlist — explicitly
     "needs more thought," not yet concretely scoped. Noted tradeoff: adds
     a failure point/friction that cuts against the product's own
