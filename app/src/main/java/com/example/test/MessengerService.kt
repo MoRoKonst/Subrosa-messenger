@@ -27,6 +27,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.UUID
@@ -893,6 +894,13 @@ class MessengerService : Service() {
         coverTrafficJob?.cancel()
         coverTrafficJob = null
     }
+
+    /** Canonical string signed/verified for a group's member+admin roster,
+     * shared by createGroup()/addGroupMember() (sign) and the group_create
+     * handler (verify) — see docs/ISSUE_backup_identity_hijack.md, group
+     * roster fix. */
+    private fun rosterPayload(groupId: String, members: List<String>, admins: List<String>): String =
+        "$groupId|${members.joinToString(",")}|${admins.joinToString(",")}"
 
     /** One-time provisioning of the server-side registration TOTP secret.
      * The server refuses this outright if a secret is already on file for
@@ -1852,6 +1860,7 @@ class MessengerService : Service() {
                 val from = json.getString("from")
                 val encryptedGroupKey = json.getString("encrypted_group_key")
                 val signature = json.optString("signature", null)
+                val rosterSignature = json.optString("roster_signature", null)
 
                 try {
                     val senderKey = publicKeys[from]
@@ -1869,6 +1878,37 @@ class MessengerService : Service() {
                         return
                     }
 
+                    // Full signed roster (members+admins) added so every invitee
+                    // starts with the real membership, not just [from, me] —
+                    // see docs/ISSUE_backup_identity_hijack.md, group roster fix.
+                    // Falls back to the old [from, me]/[from] shape if a legacy
+                    // peer sends a packet without these fields.
+                    val membersFromPacket = json.optJSONArray("members")?.let { arr ->
+                        (0 until arr.length()).map { arr.getString(it) }
+                    }
+                    val adminsFromPacket = json.optJSONArray("admins")?.let { arr ->
+                        (0 until arr.length()).map { arr.getString(it) }
+                    }
+
+                    val members: List<String>
+                    val admins: List<String>
+                    if (membersFromPacket != null && adminsFromPacket != null) {
+                        val payload = rosterPayload(groupId, membersFromPacket, adminsFromPacket)
+                        if (rosterSignature == null || !CryptoManager.verify(payload, rosterSignature, senderKey)) {
+                            Log.e(TAG, "Неверная подпись ростера группы от $from")
+                            return
+                        }
+                        if (username !in membersFromPacket) {
+                            Log.e(TAG, "group_create: ростер не содержит получателя — отклонено")
+                            return
+                        }
+                        members = membersFromPacket
+                        admins = adminsFromPacket
+                    } else {
+                        members = listOf(from, username)
+                        admins = listOf(from)
+                    }
+
                     val groupKey = GroupManager.decryptGroupKey(encryptedGroupKey)
 
                     val existingGroup = GroupManager.getGroup(this@MessengerService, groupId)
@@ -1881,8 +1921,8 @@ class MessengerService : Service() {
                         id = groupId,
                         name = groupName,
                         avatar = groupAvatar,
-                        members = listOf(from, username),
-                        admins = listOf(from),
+                        members = members,
+                        admins = admins,
                         createdBy = from,
                         groupKey = groupKey
                     )
@@ -2043,6 +2083,56 @@ class MessengerService : Service() {
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "group_member_removed error: ${e.message}")
+                }
+            }
+
+            "group_member_added" -> {
+                // Symmetric counterpart to group_member_removed — previously
+                // addGroupMember() only told the new member (via group_create),
+                // never the existing members, so their local rosters silently
+                // fell behind. See docs/ISSUE_backup_identity_hijack.md, group
+                // roster fix.
+                val groupId = json.getString("group_id")
+                val newMember = json.getString("new_member")
+                val newMemberName = json.optString("new_member_name", newMember)
+                val from = json.optString("from", null)
+                val addSignature = json.optString("signature", null)
+
+                try {
+                    val group = GroupManager.getGroup(this@MessengerService, groupId)
+                    if (group != null) {
+
+                        if (from == null || !GroupManager.isAdmin(this@MessengerService, groupId, from)) {
+                            Log.e(TAG, "group_member_added от не-администратора $from — отклонено")
+                            return
+                        }
+
+                        val adminKey = publicKeys[from]
+                            ?: ChatStorage.getContactPublicKey(this@MessengerService, from)
+                        if (addSignature == null || adminKey == null ||
+                            !CryptoManager.verify("$groupId:add:$newMember", addSignature, adminKey)) {
+                            Log.e(TAG, "group_member_added: неверная подпись от $from — отклонено")
+                            return
+                        }
+                        GroupManager.addMember(this@MessengerService, groupId, newMember)
+
+                        val sysMessage = GroupMessage(
+                            id = UUID.randomUUID().toString(),
+                            groupId = groupId,
+                            senderId = "system",
+                            senderName = s.systemSender,
+                            text = s.groupMemberJoined(newMemberName),
+                            isOwn = false
+                        )
+
+                        GroupManager.saveGroupMessage(this@MessengerService, username, sysMessage)
+
+                        withContext(Dispatchers.Main) {
+                            onGroupMessageReceived?.invoke(groupId, sysMessage)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "group_member_added error: ${e.message}")
                 }
             }
 
@@ -3860,7 +3950,9 @@ class MessengerService : Service() {
         groupName: String,
         groupAvatar: String,
         members: List<String>,
-        groupKey: ByteArray
+        groupKey: ByteArray,
+        allMembers: List<String> = members + username,
+        admins: List<String> = listOf(username)
     ) {
         if (!isConnected) {
             Log.w(TAG, "createGroup: не подключены к серверу")
@@ -3869,6 +3961,7 @@ class MessengerService : Service() {
 
         scope.launch(Dispatchers.IO) {
             try {
+                val rosterSignature = CryptoManager.sign(rosterPayload(groupId, allMembers, admins))
                 members.forEach { memberId ->
                     val memberPublicKey = publicKeys[memberId]
                         ?: ChatStorage.getContactPublicKey(this@MessengerService, memberId)?.also {
@@ -3890,6 +3983,9 @@ class MessengerService : Service() {
                             put("group_avatar", groupAvatar)
                             put("encrypted_group_key", encryptedGroupKey)
                             put("signature", signature)
+                            put("members", JSONArray(allMembers))
+                            put("admins", JSONArray(admins))
+                            put("roster_signature", rosterSignature)
                         })
 
                         Log.d(TAG, "Приглашение в группу $groupName отправлено для $memberId")
@@ -3971,7 +4067,10 @@ class MessengerService : Service() {
         groupName: String,
         groupAvatar: String,
         newMemberId: String,
-        groupKey: ByteArray
+        newMemberName: String,
+        groupKey: ByteArray,
+        allMembers: List<String>,
+        admins: List<String>
     ) {
         if (!isConnected) {
             Log.w(TAG, "addGroupMember: не подключены к серверу")
@@ -3989,6 +4088,7 @@ class MessengerService : Service() {
                 if (memberPublicKey != null && memberPqKey != null) {
                     val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, memberPublicKey, memberPqKey)
                     val signature = CryptoManager.sign(encryptedGroupKey)
+                    val rosterSignature = CryptoManager.sign(rosterPayload(groupId, allMembers, admins))
 
                     sendAnonOrDirect(newMemberId, JSONObject().apply {
                         put("type", "group_create")
@@ -3999,9 +4099,28 @@ class MessengerService : Service() {
                         put("group_avatar", groupAvatar)
                         put("encrypted_group_key", encryptedGroupKey)
                         put("signature", signature)
+                        put("members", JSONArray(allMembers))
+                        put("admins", JSONArray(admins))
+                        put("roster_signature", rosterSignature)
                     })
 
                     Log.d(TAG, "Участник $newMemberId добавлен в группу $groupName")
+                }
+
+                // Existing members previously never learned about the new
+                // member at all — see docs/ISSUE_backup_identity_hijack.md,
+                // group roster fix. Symmetric to notifyMemberRemoved() below.
+                val addSignature = CryptoManager.sign("$groupId:add:$newMemberId")
+                allMembers.filter { it != username && it != newMemberId }.forEach { memberId ->
+                    sendAnonOrDirect(memberId, JSONObject().apply {
+                        put("type", "group_member_added")
+                        put("from", username)
+                        put("to", memberId)
+                        put("group_id", groupId)
+                        put("new_member", newMemberId)
+                        put("new_member_name", newMemberName)
+                        put("signature", addSignature)
+                    })
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "addGroupMember error: ${e.message}", e)

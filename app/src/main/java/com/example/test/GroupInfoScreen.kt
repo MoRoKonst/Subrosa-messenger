@@ -25,7 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.absoluteValue
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,7 +33,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     val userId = UserStorage.getUserId(context)
 
@@ -248,7 +248,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                             ) {
                                 val avatarColor = remember(memberName) {
                                     val colors = listOf(
-                                        Color(0xFF2481CC), Color(0xFFE74C3C), Color(0xFF27AE60),
+                                        Color(0xFFC77B4F), Color(0xFFE74C3C), Color(0xFF27AE60),
                                         Color(0xFFF39C12), Color(0xFF9B59B6), Color(0xFF1ABC9C)
                                     )
                                     colors[memberName.hashCode().absoluteValue % colors.size]
@@ -454,15 +454,25 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
 
                                     GroupManager.addMember(context, groupId, userId)
 
+                                    // Reload so the roster sent out (and the one
+                                    // used to notify existing members) reflects
+                                    // the post-addition membership, not the stale
+                                    // Compose state captured before addMember()
+                                    // persisted — same reasoning as the removal
+                                    // path above.
+                                    val postAddGroup = GroupManager.getGroup(context, groupId)!!
                                     messengerService?.addGroupMember(
                                         groupId = groupId,
-                                        groupName = group!!.name,
-                                        groupAvatar = group!!.avatar,
+                                        groupName = postAddGroup.name,
+                                        groupAvatar = postAddGroup.avatar,
                                         newMemberId = userId,
-                                        groupKey = group!!.groupKey!!
+                                        newMemberName = ChatStorage.getContactName(context, userId),
+                                        groupKey = postAddGroup.groupKey!!,
+                                        allMembers = postAddGroup.members,
+                                        admins = postAddGroup.admins
                                     )
 
-                                    group = GroupManager.getGroup(context, groupId)
+                                    group = postAddGroup
                                     showAddMemberDialog = false
                                 } else {
 
