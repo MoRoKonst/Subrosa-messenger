@@ -168,6 +168,26 @@ docker-compose logs -f Subrosa-server
 docker-compose logs -f nginx
 ```
 
+### Reading logs with a TOTP gate
+
+`ForEXP/admin_logs.py` is a standalone script (no dependency on the
+messenger app or protocol) that wraps log reading behind a TOTP code, so
+that even someone with shell access to the box can't read logs without
+also having the authenticator. One-time setup, then use it instead of
+`docker-compose logs` directly:
+
+```bash
+python3 ForEXP/admin_logs.py setup                 # once, prints the secret — save it offline
+python3 ForEXP/admin_logs.py logs                    # prompts for the current code, then runs docker-compose logs
+python3 ForEXP/admin_logs.py logs --source file --log-file /var/log/subrosa/server.log
+```
+
+The secret lives in `~/.subrosa_admin_totp` (600 perms, override with
+`SUBROSA_ADMIN_TOTP_FILE`), never in this repo. Losing it means running
+`setup --force`, which itself requires the current code to overwrite —
+there's no recovery path if both are lost, by design (same reasoning as
+the backup-import TOTP in `docs/ISSUE_backup_identity_hijack.md`).
+
 ### Stop Server
 
 ```bash
@@ -248,6 +268,25 @@ openssl x509 -in certs/cert.pem -noout -dates
 2. Verify nginx is running: `docker-compose ps`
 3. Check logs: `docker-compose logs nginx`
 4. Test connectivity: `openssl s_client -connect your-domain.com:443`
+
+### WebSocket Returns 400 Behind Cloudflare (Fresh Zones)
+
+If you're fronting your server with Cloudflare (proxied/orange-cloud DNS) instead of exposing it directly, watch out for this on newly created zones: every real WebSocket upgrade request (correct `Connection: Upgrade`, `Upgrade: websocket`, `Sec-WebSocket-Version`, `Sec-WebSocket-Key` headers, verified with `python3 -m websockets` as well as curl) gets rejected with a generic Cloudflare-branded `400 Bad Request` ("Your browser sent an invalid request") — **before it ever reaches your origin**. Confirmed by origin logs (`journalctl`/nginx access log) showing no incoming connection at all for the failed request.
+
+Ruled out (all were correctly configured, none fixed it):
+- Origin TLS certificate, chain, and SNI routing — all valid (`openssl s_client -connect 127.0.0.1:<port> -servername your.domain -showcerts` confirmed a clean chain)
+- Cloudflare **Network → WebSockets** toggle — enabled
+- Cloudflare **Security → Bots → Bot Fight Mode** — disabled
+- **Security Level** — default (automated)
+- Missing `Origin` header on the client request — adding one made no difference
+- Hostname (`api.` subdomain vs. root domain) — both failed identically, ruling out anything specific to an `api.`-style subdomain
+- **Speed → Settings → HTTP/2 to Origin** — disabled, no change
+
+What confirms the origin/nginx side is completely fine: connecting directly to the origin IP:port (bypassing Cloudflare entirely — switch the DNS record to DNS-only/grey-cloud temporarily) succeeds immediately with a real WebSocket upgrade.
+
+**Workaround** to unblock testing/deployment immediately: temporarily switch the affected DNS record to **DNS-only** (grey cloud), and relax any `allow <cloudflare-ip-ranges>` restriction in nginx for that vhost so real clients can reach it. This exposes your origin IP directly (loses Cloudflare's DDoS/IP-hiding protection) — revert once resolved.
+
+We did not find a definitive root cause, only a working bypass — our best guess is a propagation/feature-activation delay specific to freshly created Cloudflare zones, unconfirmed. If you figure out the actual fix, please update this section.
 
 ---
 

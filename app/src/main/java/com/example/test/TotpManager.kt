@@ -19,14 +19,6 @@ object TotpManager {
     private const val KEY_SECRET = "totp_secret"
     private const val KEY_ENABLED = "totp_enabled"
 
-    // Server-side registration TOTP (docs/ISSUE_backup_identity_hijack.md,
-    // "server-side" variant) is a *separate* protection from the backup-import
-    // one above: different secret, different prefs, different enable/disable
-    // path (disable requires a live code from the server, not a local toggle).
-    private const val SERVER_PREFS_NAME = "server_totp_prefs"
-    private const val KEY_SERVER_SECRET = "server_totp_secret"
-    private const val KEY_SERVER_ENABLED = "server_totp_enabled"
-
     private const val TIME_STEP_SECONDS = 30L
     private const val CODE_DIGITS = 6
     private const val DRIFT_WINDOW = 1
@@ -65,43 +57,6 @@ object TotpManager {
             .putBoolean(KEY_ENABLED, false)
             .apply()
     }
-
-    // ── Server-side registration TOTP ───────────────────────────────────────
-
-    fun isServerEnabled(context: Context): Boolean =
-        serverPrefs(context).getBoolean(KEY_SERVER_ENABLED, false)
-
-    fun getServerSecret(context: Context): String? {
-        val stored = serverPrefs(context).getString(KEY_SERVER_SECRET, null) ?: return null
-        return try {
-            String(StorageKeyManager.unwrapBytes(stored), Charsets.US_ASCII)
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    /** Called once the server has confirmed totp_setup_ok for this secret. */
-    fun enableServerLocally(context: Context, secretBase32: String) {
-        val wrapped = StorageKeyManager.wrapBytes(secretBase32.toByteArray(Charsets.US_ASCII))
-        serverPrefs(context).edit()
-            .putString(KEY_SERVER_SECRET, wrapped)
-            .putBoolean(KEY_SERVER_ENABLED, true)
-            .apply()
-    }
-
-    /** Called once the server has confirmed totp_disable_ok. */
-    fun disableServerLocally(context: Context) {
-        serverPrefs(context).edit()
-            .remove(KEY_SERVER_SECRET)
-            .putBoolean(KEY_SERVER_ENABLED, false)
-            .apply()
-    }
-
-    fun currentCode(secretBase32: String, timeMillis: Long = System.currentTimeMillis()): String =
-        generateCode(secretBase32, timeMillis / 1000 / TIME_STEP_SECONDS)
-
-    private fun serverPrefs(context: Context) =
-        EncryptedStorage.getEncryptedPrefs(context, SERVER_PREFS_NAME)
 
     fun otpAuthUri(secretBase32: String, account: String, issuer: String = "Subrosa"): String =
         "otpauth://totp/$issuer:$account?secret=$secretBase32&issuer=$issuer&digits=$CODE_DIGITS&period=$TIME_STEP_SECONDS"
