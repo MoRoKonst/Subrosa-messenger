@@ -32,6 +32,34 @@ object BackupManager {
         SessionKeyManager.deleteAllSessions()
     }
 
+    /** "Я думаю, меня скомпрометировали" — identity-only reset. Deliberately
+     * cheap: doesn't try to figure out which device is legitimate, doesn't
+     * notify old contacts via the (possibly-compromised) old key, doesn't
+     * migrate anything. Burns the current identity (EC keypair, username,
+     * contacts, messages, groups, sessions, anon-routing tokens, SMK wrap)
+     * and leaves the user on RegisterScreen to create a fresh account —
+     * same code path as a new install. Device-level settings (TOTP secret,
+     * panic password, wipe/dead-man's-switch config, app-lock timeout,
+     * calculator disguise, theme/language) are deliberately left untouched
+     * — unlike the "Не я!" duress panic wipe (WipeManager.hardWipe), which
+     * nukes everything including those. See
+     * docs/ISSUE_backup_identity_hijack.md, "Identity-rotation flow". */
+    fun resetCompromisedIdentity(context: Context) {
+        UserStorage.resetIdentityFields(context)
+        GroupManager.clearAll(context)
+        AnonTokenManager.clearAll(context)
+        SessionKeyManager.deleteAllSessions()
+        CryptoManager.deleteKeys()
+
+        StorageKeyManager.lock()
+        context.deleteSharedPreferences("smk_config")
+        try {
+            val ks = java.security.KeyStore.getInstance("AndroidKeyStore")
+            ks.load(null)
+            if (ks.containsAlias("beacon_smk_wrap")) ks.deleteEntry("beacon_smk_wrap")
+        } catch (_: Exception) {}
+    }
+
     fun getBackupFileName(): String {
         val sdf = java.text.SimpleDateFormat("yyyy_MM_dd", java.util.Locale.US)
         return "beacon_backup_${sdf.format(java.util.Date())}.bin"
