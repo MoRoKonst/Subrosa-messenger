@@ -224,7 +224,16 @@ class MessengerService : Service() {
     private var audioFocusRequest: AudioFocusRequest? = null
 
     private fun startSilentAudio() {
-        if (silentTrack != null || !UserStorage.isEmergencyWipeEnabled(this)) return
+        // isEmergencyWipeEnabled() defaults to true and only tracks intent —
+        // most installs never touch it, so gating on that alone means this
+        // silent track runs constantly for everyone, whether or not the
+        // volume-button trigger was ever actually set up (a multi-step
+        // Accessibility grant, see ProfileScreen.kt). Found live via AudioFlinger
+        // log spam ("[audioTrackData][mute]") on a device that never enabled
+        // the accessibility service. Only start it when the service is
+        // genuinely active.
+        if (silentTrack != null || !UserStorage.isEmergencyWipeEnabled(this) ||
+            !isEmergencyServiceEnabled(this)) return
         try {
 
             val rate = 8000
