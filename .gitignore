@@ -31,6 +31,10 @@ ForEXP/*.json
 
 # Переменные окружения (шаблон .env.example публикуется — он нужен пользователям)
 .env
+
+# QR-картинки/секреты кодов доступа сервера — генерируются локально, не для репозитория
+access_codes_qr/
+ForEXP/access_codes_qr/
 .env.*
 !.env.example
 !**/.env.example

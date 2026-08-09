@@ -17,6 +17,12 @@ import os
 import urllib.parse
 from collections import defaultdict
 
+try:
+    import qrcode
+    HAS_QRCODE = True
+except ImportError:
+    HAS_QRCODE = False
+
 if hasattr(sys.stdout, 'buffer'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
 if hasattr(sys.stderr, 'buffer'):
@@ -466,6 +472,23 @@ async def db_is_fingerprint_registered(fingerprint):
 async def db_mark_fingerprint_registered(fingerprint):
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _db_mark_fingerprint_registered_sync, fingerprint)
+
+
+def save_access_code_qr(link, code):
+    """Renders `link` as a QR PNG entirely offline (no network call, no
+    third-party QR-generator service — nothing about the code/address ever
+    leaves this machine). Only runs if the optional qrcode[pil] package is
+    installed (see requirements.txt). Returns the file path, or None."""
+    if not HAS_QRCODE:
+        return None
+    try:
+        out_dir = os.environ.get("ACCESS_CODE_QR_DIR", "access_codes_qr")
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"{code}.png")
+        qrcode.make(link).save(path)
+        return path
+    except Exception:
+        return None
 
 
 def build_access_link(code):
@@ -2595,11 +2618,16 @@ def start_server():
                 for c in new_codes:
                     link = build_access_link(c)
                     if link:
-                        print(f"[ACCESS]   {c}   →   {link}")
+                        print(f"[ACCESS]   {c}   ->   {link}")
+                        qr_path = save_access_code_qr(link, c)
+                        if qr_path:
+                            print(f"[ACCESS]        QR: {qr_path}")
                     else:
                         print(f"[ACCESS]   {c}   (SERVER_URL не задан — ссылку/QR собери вручную)")
-                print("[ACCESS] Раздай ссылки пользователям (сгенерируй QR из ссылки любым генератором — "
-                      "в приложении есть сканер и загрузка QR-файла). Ещё коды позже — без рестарта: "
+                if not HAS_QRCODE:
+                    print("[ACCESS] QR-картинки не сгенерированы — пакет qrcode[pil] не установлен "
+                          "(офлайн, ничего никуда не уходит — см. requirements.txt).")
+                print("[ACCESS] Раздай ссылки/QR пользователям. Ещё коды позже — без рестарта: "
                       "python3 ForEXP/admin_gen_codes.py <N>")
             else:
                 print("[ACCESS] SERVER_ACCESS_PROTECTED включён, но кодов нет и SERVER_ACCESS_CODE_COUNT не задан — "
