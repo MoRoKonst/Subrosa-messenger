@@ -170,12 +170,16 @@ mailbox-тег + fingerprint A + публичный ключ A + отображ�
 - ~~Нет видимого пользователю сигнала, отличающего "всё ещё ждём другую
   сторону" от "что-то тихо сломалось"~~ — **закрыто**: 5-минутный
   уведомление + `bootstrap_diagnostic`-тикет (см. шаг 4 выше).
-- **Только Android**: `contact_ping`/`contact_pong` и весь
-  `ContactHealthManager` реализованы только в
-  `app/src/main/java/com/example/test/`; проверено — на Desktop
-  (`D:\TEST2\desktop`) обработчиков этих типов пакетов нет вообще. Пока
-  собеседник на Desktop, эта ветка здоровья канала для него не работает
-  ни в одну сторону.
+- ~~**Только Android**: `contact_ping`/`contact_pong` и весь
+  `ContactHealthManager` реализованы только на Android~~ — **закрыто**:
+  портировано на Desktop (`ContactHealthManager.kt`, тот же API без
+  `Context`, поверх `DesktopStorage`), обработчики `contact_ping`/
+  `contact_pong`/`delivered` и 60-секундный цикл `checkContactSilence()`
+  добавлены в `WebSocketClient.kt`. Логика идентична Android
+  build-for-build (тот же `SILENCE_THRESHOLD_MS`/`MAILBOX_RETRY_WAIT_MS`,
+  та же двухступенчатая эскалация ping → mailbox-депозит →
+  успокоиться). Compiles clean, не проверено вживую на реальном
+  сеансе связи Android↔Desktop.
 
 ---
 
@@ -1254,10 +1258,22 @@ sha256(public_key)[:8].hex().upper()`, обязан совпадать с клю
   (in-memory `user_totp_secrets` подгружается заново из `loaded_totp` при
   старте, судя по `server.py:2604`) не проверялось вживую в этой сессии
   документации.
-- **Проверено**: Desktop не обрабатывает ни `access_code_required`, ни
-  `totp_required` вообще (не найдено ни одного вхождения в
-  `D:\TEST2\desktop`) — на защищённом одним из этих гейтов сервере
-  Desktop-клиент просто не сможет зарегистрироваться без каких-либо
-  объяснений в UI, чем это вызвано. Только Android умеет показать
-  пользователю, что происходит (Toast для access-code, экран запроса
-  кода для TOTP).
+- ~~Desktop не обрабатывает ни `access_code_required`, ни
+  `totp_required` вообще~~ — **закрыто**: `register()` теперь шлёт
+  `access_code` (из нового поля в `ProfileScreen.kt`,
+  `DesktopStorage["server_access_code"]`, одноразовый — сохраняется, но
+  сервер его один раз потребляет и дальше игнорирует, как и на Android)
+  и `totp_code` (если `TotpManager.isEnabled()` — Desktop включает TOTP
+  только через `enable()` при импорте TOTP-защищённого бэкапа, отдельного
+  экрана "включить TOTP" на Desktop, в отличие от Android, всё ещё нет).
+  Оба типа отказа (`access_code_required`/`totp_required`) теперь
+  обрабатываются в `WebSocketClient.kt` — `disconnect()` +
+  `onChannelError` с понятным текстом, тем же путём, что и
+  `session_conflict`. **Осталось не идеально**: `onChannelError` на
+  Desktop сейчас подписан только диалогом создания канала
+  (`CreateChannelDialog` в `ChatsScreen.kt`) — реального глобального
+  баннера ошибок подключения на Desktop нет, так что при живом
+  тестировании сообщение об отказе регистрации, скорее всего, никуда не
+  попадёт в UI, только в stderr. Это уже осознанная граница этой правки
+  (добавить обработчики протокола, не строить новую систему уведомлений
+  с нуля), а не забытый пробел.
