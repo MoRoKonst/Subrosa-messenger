@@ -116,6 +116,23 @@ object AnonTokenManager {
         prefs(ctx).edit().remove("$PREF_CT_MBOX_PREFIX$fingerprint").apply()
     }
 
+    private const val PREF_MY_PERSISTENT_TAG = "mbox_my_persistent_tag"
+
+    /** A mailbox tag generated once per install and reused indefinitely —
+     * independent of any invite code's TTL. Exchanged with a contact
+     * alongside normal token reciprocation (see sendAnonTokensTo) so that
+     * contact's copy of getContactMailboxTag(me) gets refreshed to this tag
+     * instead of going stale — see docs/ISSUE_backup_identity_hijack.md,
+     * health-check "tag freshness" (item 5). */
+    fun getOrCreateMyPersistentMailboxTag(ctx: Context): String {
+        val existing = prefs(ctx).getString(PREF_MY_PERSISTENT_TAG, null)
+        if (existing != null) return existing
+        val tag = generateToken()
+        prefs(ctx).edit().putString(PREF_MY_PERSISTENT_TAG, tag).apply()
+        addMyMailboxTag(ctx, tag)
+        return tag
+    }
+
     fun buildFetchTagList(ctx: Context): List<String> {
         val real = getMyMailboxTags(ctx)
         val fakeCount = maxOf(MBOX_TOTAL - real.size, 0)
