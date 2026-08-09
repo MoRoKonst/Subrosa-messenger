@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only manifest overlay — merged only into debug builds, never
+     release (Gradle source-set convention). Lets Android Studio's
+     Profiler attach to the process over ADB (android:shell="true" limits
+     this to the local ADB shell user, not other apps on the device)
+     without needing a full debugger attach — useful when the device's
+     more restrictive "USB debugging (security settings)" toggle is
+     gated behind a SIM/Mi-account (MIUI). Not shipped to real users:
+     this file only affects debug builds. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <profileable
+            android:shell="true"
+            tools:targetApi="29" />
+    </application>
+</manifest>
