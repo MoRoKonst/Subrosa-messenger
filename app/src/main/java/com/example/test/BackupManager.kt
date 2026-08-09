@@ -212,6 +212,7 @@ object BackupManager {
 
             if (backup.has("contacts")) {
                 val contacts = backup.getJSONArray("contacts")
+                val restoredContactIds = mutableListOf<String>()
                 for (i in 0 until contacts.length()) {
                     val obj = contacts.getJSONObject(i)
                     val contactId = obj.getString("id")
@@ -221,6 +222,14 @@ object BackupManager {
                     if (obj.has("public_key")) {
                         ChatStorage.saveContactPublicKey(context, contactId, obj.getString("public_key"))
                     }
+                    restoredContactIds.add(contactId)
+                }
+                // The backup never carries Double Ratchet session state —
+                // flag these contacts so MessengerService sends them
+                // session_reset on its next handshake, instead of silently
+                // failing to decrypt their next message.
+                if (restoredContactIds.isNotEmpty()) {
+                    UserStorage.setPendingSessionResetContacts(context, restoredContactIds)
                 }
             }
 

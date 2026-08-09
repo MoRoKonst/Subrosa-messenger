@@ -276,6 +276,24 @@ object UserStorage {
             .edit().putInt("dms_interval_hours", h).apply()
     }
 
+    /** Minutes-granularity interval, added alongside (not replacing) the
+     *  hours-based key above — an existing user's "24" under
+     *  dms_interval_hours must never get silently reread as "24 minutes"
+     *  under a different unit, which would make their dead man's switch
+     *  60x more aggressive without them changing anything. If the new key
+     *  hasn't been written yet, this derives from the hours-based value
+     *  (explicit *60 conversion) rather than reinterpreting it. */
+    fun getDmsIntervalMinutes(context: Context): Int {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val stored = prefs.getInt("dms_interval_minutes", -1)
+        return if (stored >= 0) stored else getDmsIntervalHours(context) * 60
+    }
+
+    fun setDmsIntervalMinutes(context: Context, m: Int) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putInt("dms_interval_minutes", m).apply()
+    }
+
     fun getDmsLastCheckin(context: Context): Long =
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getLong("dms_last_checkin", 0L)
@@ -445,5 +463,26 @@ object UserStorage {
     fun getMyAvatar(context: Context): String? {
         return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getString("my_avatar_b64", null)
+    }
+
+    /** Contacts a backup import just restored, whose Double Ratchet session
+     * state was NOT part of the backup (by design — see BackupManager.kt) and
+     * so is stale/missing on this device. Picked up once by MessengerService
+     * on its next successful handshake (which the caller forces via a
+     * service restart right after import) and cleared — see
+     * docs/ISSUE_backup_identity_hijack.md, "Session_reset после
+     * восстановления бэкапа". */
+    fun setPendingSessionResetContacts(context: Context, contactIds: List<String>) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putStringSet("pending_session_reset_contacts", contactIds.toSet()).apply()
+    }
+
+    fun getAndClearPendingSessionResetContacts(context: Context): List<String> {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val contacts = prefs.getStringSet("pending_session_reset_contacts", null)?.toList() ?: emptyList()
+        if (contacts.isNotEmpty()) {
+            prefs.edit().remove("pending_session_reset_contacts").apply()
+        }
+        return contacts
     }
 }
