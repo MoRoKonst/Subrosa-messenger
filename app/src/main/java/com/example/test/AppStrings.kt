@@ -199,6 +199,7 @@ interface IStr7 {
     val notifMessageCount: (Int) -> String; val notifGroupFallback: String
     val notifNewGroupMessage: String; val notifMissedVideoCall: String
     val notifMissedCall: String; val notifFromCaller: (String) -> String
+    val notifChannelStuckTitle: String; val notifChannelStuckText: (String) -> String
     val notifEmergencyText: String; val notifEmergencyAction: String
     val tamperTitle: String; val tamperText: String; val tamperClose: String
     val paranoidModeTitle: String; val paranoidModeSub: String
@@ -631,6 +632,8 @@ private val ru7 = object : IStr7 {
     override val notifMissedVideoCall = "Пропущенный видеозвонок"
     override val notifMissedCall = "Пропущенный звонок"
     override val notifFromCaller: (String) -> String = { "От: $it" }
+    override val notifChannelStuckTitle = "Не удаётся установить связь"
+    override val notifChannelStuckText: (String) -> String = { "Первое сообщение для $it всё ещё не доставлено. Попробуйте позже или обменяйтесь кодом ещё раз." }
     override val notifEmergencyText = "Нажмите для экстренного удаления"
     override val notifEmergencyAction = "🚨 УДАЛИТЬ ВСЁ"
     override val tamperTitle = "⛔ Приложение повреждено"
@@ -1093,6 +1096,8 @@ private val en7 = object : IStr7 {
     override val notifMissedVideoCall = "Missed video call"
     override val notifMissedCall = "Missed call"
     override val notifFromCaller: (String) -> String = { "From: $it" }
+    override val notifChannelStuckTitle = "Can't establish connection"
+    override val notifChannelStuckText: (String) -> String = { "The first message to $it still hasn't been delivered. Try again later or exchange invite codes once more." }
     override val notifEmergencyText = "Tap for emergency deletion"
     override val notifEmergencyAction = "🚨 DELETE ALL"
     override val tamperTitle = "⛔ App integrity violated"
