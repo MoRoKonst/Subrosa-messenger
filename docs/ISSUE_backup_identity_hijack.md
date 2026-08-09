@@ -1339,17 +1339,35 @@ file.
     device), this is typically a brand-new user staring at the register
     screen right now.
 
+    **Follow-up, same session**: pointed out that pasting the link into a
+    third-party online QR generator would itself be a metadata leak (the
+    code + server address handed to some random website). Fixed —
+    optional `qrcode[pil]` dependency (commented out by default in
+    `requirements.txt`, not needed for personal self-hosting), imported
+    with a graceful `try/except` fallback in both `server.py` and
+    `admin_gen_codes.py`. When available, every generated code gets a
+    PNG rendered **entirely offline, locally, on the server itself** — no
+    network call, nothing leaves the machine — saved to `access_codes_qr/`
+    (path overridable via `ACCESS_CODE_QR_DIR` for `server.py`'s own
+    startup generation, `--out-dir` for the script) and gitignored.
+    Without the dependency installed, behavior is unchanged — text link
+    only, with a one-line hint about how to enable images. Verified live
+    (not just `ast.parse`): loaded `server.py` as a module, called
+    `build_access_link()` + `save_access_code_qr()` directly, confirmed a
+    real PNG got written to disk — same for `admin_gen_codes.py`'s
+    equivalent path, both with `qrcode[pil]` actually installed in this
+    session to test, then removed again afterward (optional dependency,
+    not meant to be always-installed).
+
     **Not done**: Desktop (no camera-scan UI there, out of scope this
-    pass), no image-generation of the QR itself server-side — the
-    operator pastes the printed link into any external QR generator, or
-    just sends the raw text link (the client's manual-entry field doesn't
-    currently parse the `subrosa://` URI form, only bare host/host:port/
-    wss:// — a gap worth closing later so the text link alone is enough
-    without a QR image at all). `compileDebugKotlin` + `ast.parse` +
-    one live functional run of `admin_gen_codes.py` (generate → build
-    link → persist to a real SQLite file → verify contents) all green.
-    No live two-device registration test against a running protected
-    server.
+    pass); the client's manual-entry field doesn't currently parse the
+    `subrosa://` URI form, only bare host/host:port/wss:// — a gap worth
+    closing later so the raw text link alone is enough without a QR image
+    at all, for someone who'd rather just paste text. `compileDebugKotlin`
+    + `ast.parse` + several live functional runs (code generation, link
+    building, SQLite persistence, and now local QR-PNG rendering) all
+    green. No live two-device registration test against a running
+    protected server.
 
 ---
 
