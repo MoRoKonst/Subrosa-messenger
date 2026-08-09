@@ -93,6 +93,23 @@ object SessionKeyManager {
         Log.d(TAG, "SessionKeyManager инициализирован. SPK id=$currentSpkId, OPK pool=${opkPool.size}, sessions=${sessions.size}")
     }
 
+    /** Re-attempts loading anything that came up empty during `initialize()`
+     *  because the SMK was locked at the time (process cold start / service
+     *  restart before the user unlocked this run) — current SPK, current PQ
+     *  KEM key, and any session whose on-disk blob is SMK-wrapped. Safe to
+     *  call unconditionally on every successful unlock, including the common
+     *  case where everything already loaded fine (each step is a cheap,
+     *  idempotent re-read). */
+    fun reloadSessionsIfNeeded() {
+        val ctx = appContext
+        if (ctx != null && (currentSpk == null || currentPqKem == null)) {
+            generateOrRotateSpk(ctx)
+            loadOpkPool(ctx)
+            refillOpkPool(ctx, targetCount = 10)
+        }
+        loadAllSessions()
+    }
+
     private fun generateOrRotateSpk(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val encPrefs = EncryptedStorage.getEncryptedPrefs(context, "${PREFS_NAME}_secure")
@@ -113,7 +130,7 @@ object SessionKeyManager {
                         val kf = KeyFactory.getInstance("EC")
                         previousSpk = KeyPair(
                             kf.generatePublic(X509EncodedKeySpec(Base64.decode(oldPubB64, Base64.NO_WRAP))),
-                            kf.generatePrivate(PKCS8EncodedKeySpec(Base64.decode(oldPrivB64, Base64.NO_WRAP)))
+                            kf.generatePrivate(PKCS8EncodedKeySpec(StorageKeyManager.unwrapBytes(oldPrivB64)))
                         )
                         previousSpkId = savedSpkId
                         previousSpkCreatedAt = savedCreatedAt
@@ -134,7 +151,7 @@ object SessionKeyManager {
                         if (oldPqPrivB64 != null && oldPqPubB64 != null) {
                             previousPqKem = PqCrypto.PqKeyPair(
                                 Base64.decode(oldPqPubB64, Base64.NO_WRAP),
-                                Base64.decode(oldPqPrivB64, Base64.NO_WRAP)
+                                StorageKeyManager.unwrapBytes(oldPqPrivB64)
                             )
                             prefs.edit().putString("prev_pq_kem_public", oldPqPubB64).apply()
                             encPrefs.edit().putString("prev_pq_kem_private_key", oldPqPrivB64).apply()
@@ -151,7 +168,7 @@ object SessionKeyManager {
             encPrefs.edit()
                 .putString(
                     "spk_private_key_${currentSpkId}",
-                    Base64.encodeToString(currentSpk!!.private.encoded, Base64.NO_WRAP)
+                    wrapKeyBytes(currentSpk!!.private.encoded)
                 )
                 .apply()
             prefs.edit()
@@ -166,7 +183,7 @@ object SessionKeyManager {
             val newPqKem = PqCrypto.generateKeyPair()
             currentPqKem = newPqKem
             encPrefs.edit()
-                .putString("pq_kem_private_key_${currentSpkId}", Base64.encodeToString(newPqKem.privateKey, Base64.NO_WRAP))
+                .putString("pq_kem_private_key_${currentSpkId}", wrapKeyBytes(newPqKem.privateKey))
                 .apply()
             prefs.edit()
                 .putString("pq_kem_public_${currentSpkId}", Base64.encodeToString(newPqKem.publicKey, Base64.NO_WRAP))
@@ -177,21 +194,29 @@ object SessionKeyManager {
             val privateKeyB64 = encPrefs.getString("spk_private_key_${savedSpkId}", null)
             val publicKeyB64 = prefs.getString("spk_public_${savedSpkId}", null)
             if (privateKeyB64 != null && publicKeyB64 != null) {
-                val keyFactory = KeyFactory.getInstance("EC")
-                val privateKey = keyFactory.generatePrivate(
-                    PKCS8EncodedKeySpec(Base64.decode(privateKeyB64, Base64.NO_WRAP))
-                )
-                val publicKey = keyFactory.generatePublic(
-                    X509EncodedKeySpec(Base64.decode(publicKeyB64, Base64.NO_WRAP))
-                )
-                currentSpk = KeyPair(publicKey, privateKey)
+                val privateBytes = tryUnwrapKeyBytes(privateKeyB64)
+                if (privateBytes != null) {
+                    val keyFactory = KeyFactory.getInstance("EC")
+                    val privateKey = keyFactory.generatePrivate(PKCS8EncodedKeySpec(privateBytes))
+                    val publicKey = keyFactory.generatePublic(
+                        X509EncodedKeySpec(Base64.decode(publicKeyB64, Base64.NO_WRAP))
+                    )
+                    currentSpk = KeyPair(publicKey, privateKey)
+                    if (!privateKeyB64.startsWith(StorageKeyManager.SMK_PREFIX) && StorageKeyManager.isUnlocked) {
+                        encPrefs.edit()
+                            .putString("spk_private_key_${savedSpkId}", wrapKeyBytes(privateKey.encoded))
+                            .apply()
+                    }
+                } else {
+                    Log.w(TAG, "SPK id=$savedSpkId временно недоступен (SMK заблокирован) — жду разблокировки")
+                }
             } else {
 
                 currentSpk = generateEcKeyPair()
                 encPrefs.edit()
                     .putString(
                         "spk_private_key_${savedSpkId}",
-                        Base64.encodeToString(currentSpk!!.private.encoded, Base64.NO_WRAP)
+                        wrapKeyBytes(currentSpk!!.private.encoded)
                     )
                     .apply()
                 prefs.edit()
@@ -210,15 +235,25 @@ object SessionKeyManager {
             val pqPrivB64 = encPrefs.getString("pq_kem_private_key_${currentSpkId}", null)
             val pqPubB64 = prefs.getString("pq_kem_public_${currentSpkId}", null)
             if (pqPrivB64 != null && pqPubB64 != null) {
-                currentPqKem = PqCrypto.PqKeyPair(
-                    Base64.decode(pqPubB64, Base64.NO_WRAP),
-                    Base64.decode(pqPrivB64, Base64.NO_WRAP)
-                )
+                val pqPrivBytes = tryUnwrapKeyBytes(pqPrivB64)
+                if (pqPrivBytes != null) {
+                    currentPqKem = PqCrypto.PqKeyPair(
+                        Base64.decode(pqPubB64, Base64.NO_WRAP),
+                        pqPrivBytes
+                    )
+                    if (!pqPrivB64.startsWith(StorageKeyManager.SMK_PREFIX) && StorageKeyManager.isUnlocked) {
+                        encPrefs.edit()
+                            .putString("pq_kem_private_key_${currentSpkId}", wrapKeyBytes(pqPrivBytes))
+                            .apply()
+                    }
+                } else {
+                    Log.w(TAG, "PQ KEM id=$currentSpkId временно недоступен (SMK заблокирован) — жду разблокировки")
+                }
             } else {
                 val migratedPqKem = PqCrypto.generateKeyPair()
                 currentPqKem = migratedPqKem
                 encPrefs.edit()
-                    .putString("pq_kem_private_key_${currentSpkId}", Base64.encodeToString(migratedPqKem.privateKey, Base64.NO_WRAP))
+                    .putString("pq_kem_private_key_${currentSpkId}", wrapKeyBytes(migratedPqKem.privateKey))
                     .apply()
                 prefs.edit()
                     .putString("pq_kem_public_${currentSpkId}", Base64.encodeToString(migratedPqKem.publicKey, Base64.NO_WRAP))
@@ -236,7 +271,7 @@ object SessionKeyManager {
                         val kf = KeyFactory.getInstance("EC")
                         previousSpk = KeyPair(
                             kf.generatePublic(X509EncodedKeySpec(Base64.decode(prevPubB64, Base64.NO_WRAP))),
-                            kf.generatePrivate(PKCS8EncodedKeySpec(Base64.decode(prevPrivB64, Base64.NO_WRAP)))
+                            kf.generatePrivate(PKCS8EncodedKeySpec(StorageKeyManager.unwrapBytes(prevPrivB64)))
                         )
                         previousSpkId = prevSpkId
                         previousSpkCreatedAt = prevCreatedAt
@@ -247,7 +282,7 @@ object SessionKeyManager {
                         if (prevPqPrivB64 != null && prevPqPubB64 != null) {
                             previousPqKem = PqCrypto.PqKeyPair(
                                 Base64.decode(prevPqPubB64, Base64.NO_WRAP),
-                                Base64.decode(prevPqPrivB64, Base64.NO_WRAP)
+                                StorageKeyManager.unwrapBytes(prevPqPrivB64)
                             )
                         }
                     } catch (e: Exception) {
@@ -270,13 +305,17 @@ object SessionKeyManager {
             val privateB64 = encPrefs.getString("opk_private_$id", null) ?: continue
             val publicB64 = prefs.getString("opk_public_$id", null) ?: continue
             try {
+                val privateBytes = StorageKeyManager.unwrapBytes(privateB64)
                 val privateKey = keyFactory.generatePrivate(
-                    PKCS8EncodedKeySpec(Base64.decode(privateB64, Base64.NO_WRAP))
+                    PKCS8EncodedKeySpec(privateBytes)
                 )
                 val publicKey = keyFactory.generatePublic(
                     X509EncodedKeySpec(Base64.decode(publicB64, Base64.NO_WRAP))
                 )
                 opkPool[id] = KeyPair(publicKey, privateKey)
+                if (!privateB64.startsWith(StorageKeyManager.SMK_PREFIX) && StorageKeyManager.isUnlocked) {
+                    encPrefs.edit().putString("opk_private_$id", wrapKeyBytes(privateBytes)).apply()
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Не удалось восстановить OPK $id: ${e.message}")
             }
@@ -295,7 +334,7 @@ object SessionKeyManager {
             val id = opkIdCounter.getAndIncrement()
             val kp = generateEcKeyPair()
             opkPool[id] = kp
-            encEditor.putString("opk_private_$id", Base64.encodeToString(kp.private.encoded, Base64.NO_WRAP))
+            encEditor.putString("opk_private_$id", wrapKeyBytes(kp.private.encoded))
             prefsEditor.putString("opk_public_$id", Base64.encodeToString(kp.public.encoded, Base64.NO_WRAP))
         }
         prefsEditor
@@ -1002,6 +1041,32 @@ object SessionKeyManager {
         }
     }
 
+    /** Wraps private key material with the SMK when unlocked, exactly like
+     *  CryptoManager does for the EC identity key — falls back to plain
+     *  Base64 when locked, so a SessionKeyManager operation triggered by
+     *  incoming traffic while the app is locked keeps working unchanged.
+     *  `StorageKeyManager.unwrapBytes` transparently reads both forms. */
+    private fun wrapKeyBytes(bytes: ByteArray): String =
+        if (StorageKeyManager.isUnlocked) StorageKeyManager.wrapBytes(bytes)
+        else Base64.encodeToString(bytes, Base64.NO_WRAP)
+
+    /** Like `StorageKeyManager.unwrapBytes`, but never throws — returns null
+     *  if the value is SMK-wrapped and the app is currently locked (e.g. a
+     *  process cold start, service restarted by the OS, before the user has
+     *  unlocked this run), or on any other decode failure. Callers must
+     *  treat null as "this key isn't available yet" and skip gracefully
+     *  rather than regenerating — the key material is still on disk, just
+     *  temporarily inaccessible; regenerating would invalidate an
+     *  already-published SPK/OPK for no reason. `initializeIfUnlockedLate()`
+     *  retries once the app unlocks. */
+    private fun tryUnwrapKeyBytes(stored: String): ByteArray? =
+        try {
+            StorageKeyManager.unwrapBytes(stored)
+        } catch (e: Exception) {
+            Log.w(TAG, "Ключ временно недоступен (SMK заблокирован?): ${e.message}")
+            null
+        }
+
     private fun generateEcKeyPair(): KeyPair {
         val keyPairGen = KeyPairGenerator.getInstance("EC")
         keyPairGen.initialize(ECGenParameterSpec("secp256r1"))
@@ -1056,8 +1121,12 @@ object SessionKeyManager {
                     state.recvRatchetPub?.let { put("recvRatchetPub", Base64.encodeToString(it, Base64.NO_WRAP)) }
                 }
             }
+            val jsonStr = json.toString()
+            val toStore = if (StorageKeyManager.isUnlocked)
+                StorageKeyManager.wrapBytes(jsonStr.toByteArray(Charsets.UTF_8))
+            else jsonStr
             EncryptedStorage.getEncryptedPrefs(ctx, "${PREFS_NAME}_sessions")
-                .edit().putString("session_${state.contactId}", json.toString()).apply()
+                .edit().putString("session_${state.contactId}", toStore).apply()
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка сохранения сессии: ${e.message}")
         }
@@ -1069,8 +1138,11 @@ object SessionKeyManager {
             val encPrefs = EncryptedStorage.getEncryptedPrefs(ctx, "${PREFS_NAME}_sessions")
             for ((key, raw) in encPrefs.all) {
                 if (!key.startsWith("session_")) continue
-                val jsonStr = raw as? String ?: continue
+                val rawStr = raw as? String ?: continue
                 try {
+                    val jsonStr = if (rawStr.startsWith(StorageKeyManager.SMK_PREFIX)) {
+                        String(StorageKeyManager.unwrapBytes(rawStr), Charsets.UTF_8)
+                    } else rawStr
                     val json = JSONObject(jsonStr)
 
                     val skJson = json.optJSONObject("skippedKeys") ?: JSONObject()

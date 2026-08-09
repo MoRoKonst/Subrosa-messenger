@@ -16,6 +16,22 @@ import javax.crypto.spec.SecretKeySpec
 
 object BackupManager {
 
+    /** Clears every identity-scoped local store before a backup is restored
+     * on top of it — contacts, messages, groups, sessions, anon-routing
+     * token/tag state. Deliberately does NOT touch device-level settings
+     * (theme, language, wipe/dead-man's-switch config) — those are about
+     * this device, not about which identity is currently active on it. Not
+     * a security/panic wipe (no process kill, no AndroidKeyStore alias
+     * cleanup) — see WipeManager for that. See
+     * docs/ISSUE_backup_identity_hijack.md, "Смешение identity при импорте
+     * на уже используемое устройство". */
+    private fun wipeCurrentIdentityData(context: Context) {
+        UserStorage.logout(context)
+        GroupManager.clearAll(context)
+        AnonTokenManager.clearAll(context)
+        SessionKeyManager.deleteAllSessions()
+    }
+
     fun getBackupFileName(): String {
         val sdf = java.text.SimpleDateFormat("yyyy_MM_dd", java.util.Locale.US)
         return "beacon_backup_${sdf.format(java.util.Date())}.bin"
@@ -183,7 +199,17 @@ object BackupManager {
                 TotpManager.enable(context, totpSecret)
             }
 
-            val username = UserStorage.getUserId(context)
+            // Full wipe of whatever identity is currently active on this
+            // device before restoring the backup's — see
+            // docs/ISSUE_backup_identity_hijack.md, "Смешение identity при
+            // импорте на уже используемое устройство". The backup path was
+            // never meant to merge/roll back into an existing identity's
+            // history; the user's call: this is strictly "I lost my phone,
+            // give me my data back", not a chat-history time machine. A
+            // no-op on the RegisterScreen onboarding path (nothing to wipe
+            // there yet).
+            wipeCurrentIdentityData(context)
+
             val version = backup.optInt("version", 1)
 
             if (version >= 5) {
@@ -211,6 +237,14 @@ object BackupManager {
                     UserStorage.setUserId(context, restoredUserId)
                 } catch (_: Exception) {}
             }
+
+            // Captured only now, after the identity above may have just been
+            // overwritten — messages/groups below are stored under a key
+            // namespaced by this value (see ChatStorage.chatKey()), so
+            // capturing it before the swap would silently save everything
+            // under the OLD identity's key, invisible once the app starts
+            // reading as the new one. Found while wiring the wipe above.
+            val username = UserStorage.getUserId(context)
 
             if (backup.has("servers")) {
                 val servers = backup.getJSONArray("servers")

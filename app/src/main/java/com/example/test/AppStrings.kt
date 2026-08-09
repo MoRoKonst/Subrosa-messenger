@@ -73,6 +73,7 @@ interface IStr3 {
     val backupSecurityTips: String; val backupPassword: String
     val backupRepeatPassword: String; val backupExport: String
     val backupImport: String; val backupSaveChooser: String
+    val backupImportWipeTitle: String; val backupImportWipeText: String
     val backupCreated: String; val backupErrEnterPassword: String
     val backupErrPasswordMatch: String; val backupErrPasswordLength: String
     val backupErrEnterForDecrypt: String
@@ -389,6 +390,8 @@ private val ru3 = object : IStr3 {
     override val backupRepeatPassword = "Повторите пароль"
     override val backupExport = "📦 Экспорт резервной копии"
     override val backupImport = "📥 Импорт резервной копии"
+    override val backupImportWipeTitle = "Внимание"
+    override val backupImportWipeText = "Импорт полностью заменит данные этого устройства новой identity из бэкапа: текущие контакты, сообщения и группы будут безвозвратно удалены. Это не откат к старой истории переписки — старые данные не сохранятся ни в каком виде. Возможны сбои при первой синхронизации после импорта. Продолжить?"
     override val backupSaveChooser = "Сохранить резервную копию"
     override val backupCreated = "✓ Резервная копия создана"
     override val backupErrEnterPassword = "Введите пароль"
@@ -853,6 +856,8 @@ private val en3 = object : IStr3 {
     override val backupRepeatPassword = "Repeat password"
     override val backupExport = "📦 Export backup"
     override val backupImport = "📥 Import backup"
+    override val backupImportWipeTitle = "Warning"
+    override val backupImportWipeText = "Importing will completely replace this device's data with the new identity from the backup: current contacts, messages and groups will be permanently deleted. This is not a rollback to old chat history - old data won't survive in any form. Some hiccups are possible during the first sync after import. Continue?"
     override val backupSaveChooser = "Save backup"
     override val backupCreated = "✓ Backup created"
     override val backupErrEnterPassword = "Enter password"

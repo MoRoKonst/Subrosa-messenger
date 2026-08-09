@@ -47,6 +47,7 @@ fun BackupScreen(onBack: () -> Unit) {
     var pendingBackupContent by remember { mutableStateOf<String?>(null) }
     var totpSecretInput by remember { mutableStateOf("") }
     var totpCodeInput by remember { mutableStateOf("") }
+    var showImportWipeWarning by remember { mutableStateOf(false) }
 
     val saveFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -306,7 +307,7 @@ fun BackupScreen(onBack: () -> Unit) {
                 OutlinedButton(
                     onClick = {
                         if (password.isEmpty()) { message = s.backupErrEnterForDecrypt; isError = true }
-                        else importLauncher.launch(arrayOf("*/*"))
+                        else showImportWipeWarning = true
                     },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !isLoading,
@@ -333,4 +334,24 @@ fun BackupScreen(onBack: () -> Unit) {
         }
     }
 
+    if (showImportWipeWarning) {
+        AlertDialog(
+            onDismissRequest = { showImportWipeWarning = false },
+            title = { Text(s.backupImportWipeTitle, fontFamily = AppFont) },
+            text = { Text(s.backupImportWipeText, fontFamily = AppFont) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showImportWipeWarning = false
+                    importLauncher.launch(arrayOf("*/*"))
+                }) {
+                    Text(s.backupImport, color = c.error, fontFamily = AppFont)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportWipeWarning = false }) {
+                    Text(s.cancel, fontFamily = AppFont)
+                }
+            }
+        )
+    }
 }

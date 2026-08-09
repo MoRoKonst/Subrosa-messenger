@@ -133,6 +133,14 @@ object AnonTokenManager {
         return tag
     }
 
+    /** Wipes all token/tag state for every contact — used when replacing the
+     * device's active identity with a different one from a backup, see
+     * BackupManager.wipeCurrentIdentityData(). Tokens/tags are meaningless
+     * once the identity they were bound to is gone. */
+    fun clearAll(ctx: Context) {
+        prefs(ctx).edit().clear().apply()
+    }
+
     fun buildFetchTagList(ctx: Context): List<String> {
         val real = getMyMailboxTags(ctx)
         val fakeCount = maxOf(MBOX_TOTAL - real.size, 0)

@@ -141,6 +141,18 @@ object GroupManager {
         prefs.edit().putString(KEY_GROUPS, json.toString()).apply()
     }
 
+    /** Wipes every group and its messages — used when replacing the device's
+     * active identity with a different one from a backup, see
+     * BackupManager.wipeCurrentIdentityData(). Group messages live in
+     * separate per-group prefs files, so the group list must still be
+     * readable when this is called (before clearing it). */
+    fun clearAll(context: Context) = synchronized(lock) {
+        loadGroups(context).forEach { group ->
+            EncryptedStorage.getEncryptedPrefs(context, "group_messages_${group.id}").edit().clear().apply()
+        }
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME).edit().clear().apply()
+    }
+
     fun loadGroups(context: Context): List<Group> = synchronized(lock) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val jsonStr = prefs.getString(KEY_GROUPS, "[]") ?: "[]"
