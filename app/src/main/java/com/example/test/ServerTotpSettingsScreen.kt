@@ -63,6 +63,11 @@ fun ServerTotpSettingsScreen(onBack: () -> Unit) {
     var isError by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
 
+    var logsCodeInput by remember { mutableStateOf("") }
+    var logsText by remember { mutableStateOf<String?>(null) }
+    var logsBusy by remember { mutableStateOf(false) }
+    var logsError by remember { mutableStateOf(false) }
+
     DisposableEffect(messengerService) {
         val svc = messengerService
         svc?.onTotpSetupResult = { success, reason ->
@@ -93,9 +98,20 @@ fun ServerTotpSettingsScreen(onBack: () -> Unit) {
                 isError = true
             }
         }
+        svc?.onAdminLogsResult = { success, data ->
+            logsBusy = false
+            if (success) {
+                logsText = data?.takeIf { it.isNotBlank() } ?: s.serverTotpLogsEmpty
+                logsError = false
+                logsCodeInput = ""
+            } else {
+                logsError = true
+            }
+        }
         onDispose {
             svc?.onTotpSetupResult = null
             svc?.onTotpDisableResult = null
+            svc?.onAdminLogsResult = null
         }
     }
 
@@ -226,6 +242,63 @@ fun ServerTotpSettingsScreen(onBack: () -> Unit) {
                                 color = if (isError) c.error else Color(0xFF66BB6A),
                                 fontSize = 13.sp
                             )
+                        }
+                    }
+                }
+
+                if (enabled) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = c.card),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(s.serverTotpFetchLogsTitle, color = c.textPrimary, fontWeight = FontWeight.Bold)
+
+                            OutlinedTextField(
+                                value = logsCodeInput,
+                                onValueChange = { logsCodeInput = it },
+                                label = { Text(s.serverTotpFetchLogsCodeLabel) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            Button(
+                                onClick = {
+                                    val svc = messengerService
+                                    if (svc == null) {
+                                        logsError = true
+                                    } else {
+                                        logsBusy = true
+                                        logsError = false
+                                        svc.sendAdminGetLogs(logsCodeInput)
+                                    }
+                                },
+                                enabled = !logsBusy && logsCodeInput.isNotBlank(),
+                                colors = ButtonDefaults.buttonColors(containerColor = c.accent),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(s.serverTotpFetchLogsButton, color = Color.White)
+                            }
+
+                            if (logsError) {
+                                Text(s.serverTotpErrFetchFailed, color = c.error, fontSize = 13.sp)
+                            }
+
+                            val text = logsText
+                            if (text != null) {
+                                SelectionContainer {
+                                    Text(
+                                        text,
+                                        fontSize = 11.sp,
+                                        lineHeight = 15.sp,
+                                        color = c.textPrimary.copy(alpha = 0.85f),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 400.dp)
+                                            .verticalScroll(rememberScrollState())
+                                    )
+                                }
+                            }
                         }
                     }
                 }
