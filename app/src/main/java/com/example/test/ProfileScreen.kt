@@ -168,6 +168,7 @@ fun ProfileScreen(
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
     var showNotMeConfirm   by remember { mutableStateOf(false) }
+    var showCompromisedConfirm by remember { mutableStateOf(false) }
     var showQr             by remember { mutableStateOf(false) }
     var showCopied         by remember { mutableStateOf(false) }
     var showLockDialog     by remember { mutableStateOf(false) }
@@ -805,6 +806,33 @@ fun ProfileScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0x18EF5350))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showCompromisedConfirm = true }
+                            .padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🔄", fontSize = 18.sp, modifier = Modifier.padding(end = 12.dp))
+                        Text(
+                            s.profileCompromised,
+                            fontSize = 15.sp,
+                            fontFamily = AppFont,
+                            color = Color(0xFFEF5350),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(40.dp))
             }
         }
@@ -907,6 +935,28 @@ fun ProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showNotMeConfirm = false }) {
+                    Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
+                }
+            }
+        )
+    }
+
+    if (showCompromisedConfirm) {
+        AlertDialog(
+            onDismissRequest = { showCompromisedConfirm = false },
+            containerColor = c.dialog,
+            title = { Text(s.profileCompromisedTitle, color = Color.White, fontFamily = AppFont) },
+            text = { Text(s.profileCompromisedText, color = c.textPrimary, fontFamily = AppFont) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCompromisedConfirm = false
+                    BackupManager.resetCompromisedIdentity(context)
+                    context.stopService(Intent(context, MessengerService::class.java))
+                    android.os.Process.killProcess(android.os.Process.myPid())
+                }) { Text(s.profileCompromisedConfirm, color = Color(0xFFEF5350), fontFamily = AppFont) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCompromisedConfirm = false }) {
                     Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
                 }
             }

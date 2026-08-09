@@ -139,6 +139,33 @@ object UserStorage {
         context.deleteSharedPreferences("message_queue")
     }
 
+    /** Clears only the identity-scoped fields from PREFS_NAME (username,
+     * user_id, password hash, display name, invite code, avatar, decoy
+     * state) plus the separate contacts/messages prefs files — leaving
+     * every device-level setting (TOTP secret, panic password,
+     * wipe/dead-man's-switch config, app-lock timeout, calculator
+     * disguise) untouched. Used by the "I think I've been compromised"
+     * identity reset (BackupManager.resetCompromisedIdentity) — unlike
+     * logout(), which nukes the whole prefs file for a real logout/panic
+     * wipe. See docs/ISSUE_backup_identity_hijack.md, "Identity-rotation
+     * flow". */
+    fun resetIdentityFields(context: Context) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit()
+            .remove(KEY_USERNAME)
+            .remove(KEY_USER_ID)
+            .remove(KEY_PASSWORD_HASH)
+            .remove("display_name")
+            .remove(KEY_INVITE_CODE)
+            .remove("my_avatar_b64")
+            .remove("decoy_mode")
+            .remove("pending_session_reset_contacts")
+            .apply()
+        SessionManager.clearSession(context)
+        context.deleteSharedPreferences("chat_storage_encrypted")
+        context.deleteSharedPreferences("message_queue")
+    }
+
     fun saveUsername(context: Context, username: String) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         prefs.edit().putString(KEY_USERNAME, username).apply()

@@ -60,6 +60,9 @@ interface IStr3 {
     val profileNotMeTitle: String; val profileNotMeText: String
     val profileNotMeConfirm: String; val profileDiagnostics: String
     val profileSourceCode: String
+    val profileCompromised: String
+    val profileCompromisedTitle: String; val profileCompromisedText: String
+    val profileCompromisedConfirm: String
     val profilePanicTitle: String; val profilePanicSub: String
     val profilePanicSetStatus: String; val profilePanicEnterLabel: String
     val profilePanicInstruction: String
@@ -368,6 +371,10 @@ private val ru3 = object : IStr3 {
     override val profileNotMeText = "Вы уверены? Это удалит ВСЕ данные, чаты, ключи и сбросит приложение!"
     override val profileNotMeConfirm = "Да, сбросить всё"
     override val profileSourceCode = "📄 Исходный код (AGPL-3.0)"
+    override val profileCompromised = "🔄 Меня скомпрометировали"
+    override val profileCompromisedTitle = "🔄 Смена identity"
+    override val profileCompromisedText = "Текущий ключ, контакты, чаты и сессии будут уничтожены безвозвратно. Вы получите новый ключ и сможете зарегистрироваться заново — контактам нужно будет заново обменяться с вами кодом приглашения. Пароль и настройки безопасности устройства (TOTP, паника, автовайп) не затрагиваются."
+    override val profileCompromisedConfirm = "Да, сменить identity"
     override val profileDiagnostics = "🔐 Диагностика безопасности"
     override val profilePanicTitle = "🔑 Panic Password"
     override val profilePanicSub = "Пароль для экстренного удаления всех данных"
@@ -840,6 +847,10 @@ private val en3 = object : IStr3 {
     override val profileNotMeText = "Are you sure? This will delete ALL data, chats, keys and reset the app!"
     override val profileNotMeConfirm = "Yes, reset everything"
     override val profileSourceCode = "📄 Source code (AGPL-3.0)"
+    override val profileCompromised = "🔄 I've been compromised"
+    override val profileCompromisedTitle = "🔄 Identity reset"
+    override val profileCompromisedText = "Your current key, contacts, chats and sessions will be destroyed permanently. You'll get a new key and can register again — contacts will need to exchange a new invite code with you. Your password and device security settings (TOTP, panic, auto-wipe) are not affected."
+    override val profileCompromisedConfirm = "Yes, reset identity"
     override val profileDiagnostics = "🔐 Security diagnostics"
     override val profilePanicTitle = "🔑 Panic Password"
     override val profilePanicSub = "Password for emergency data deletion"

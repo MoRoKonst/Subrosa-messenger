@@ -371,8 +371,31 @@ yet live-tested. These are the ones actually unresolved:
   uses a different, intentional mechanism (machine-bound PKCS12 keystore,
   `DesktopKeyStore`) rather than SMK wrapping — not part of this gap, not
   changed. Compiles clean.
-- **Identity-rotation ("I think I've been compromised") flow** — no design
-  yet, only the notification piece (timestamp + FCM push) is done.
+- **Identity-rotation ("I think I've been compromised") flow — DONE.** User's
+  design, deliberately cheap: no attempt to figure out which device is
+  legitimate, no notification to old contacts via the (possibly-compromised)
+  old key, no data/history migration. New button "🔄 Меня скомпрометировали"
+  in `ProfileScreen.kt` (separate from the existing "❗ Это не я!" duress
+  panic-wipe button — that one calls `WipeManager.hardWipe()`, which nukes
+  *everything* including device-level settings like TOTP secret, panic
+  password, wipe/dead-man's-switch config, calculator disguise; this new
+  flow deliberately does not touch those, since a compromised messenger
+  identity key doesn't imply the device's local settings are compromised
+  too). On confirm: `BackupManager.resetCompromisedIdentity()` — new
+  `UserStorage.resetIdentityFields()` clears only identity-scoped prefs
+  (username, user_id, password hash, display name, invite code, avatar) plus
+  contacts/messages, then `GroupManager.clearAll`/`AnonTokenManager.clearAll`/
+  `SessionKeyManager.deleteAllSessions`/`CryptoManager.deleteKeys`, then
+  clears the SMK wrap (`smk_config` prefs + AndroidKeyStore alias) so
+  `StorageKeyManager.isSetup()` goes false and the existing `RegisterScreen`
+  flow re-wraps SMK with whatever new password the user picks — avoids a
+  landmine where the old SMK stayed wrapped with the old password after a
+  surgical reset. Process is killed after the reset (same pattern as
+  `WipeManager.hardWipe`) to guarantee no stale in-memory identity state
+  survives in `MessengerService`/session managers; next cold start lands on
+  `RegisterScreen` since `UserStorage.isRegistered()` is now false, same
+  code path as a fresh install. Compiles clean, not yet live-tested on a
+  device.
 - Tier 5 items (Cloudflare bypass, palette unification, access-list) —
   explicitly deferred, see that section.
 - **16 KB page-size native-library compatibility** — Android showed
@@ -1065,12 +1088,11 @@ file.
      confirming an actual kicked device receives the FCM notification
      while backgrounded before considering this closed.
 
-   **Not done, deliberately deferred**: the explicit in-app "I think I've
-   been compromised" → identity-rotation flow. This is a real feature (new
-   keypair generation, re-broadcasting the new identity/fingerprint to
-   every contact, some equivalent of Signal's "safety number changed" UX)
-   that needs its own design pass, not something to improvise as a
-   drive-by addition to this fix.
+   **Update — DONE** (see "Identity-rotation" entry in the Tier 2 item 6
+   write-up above): user's final design skipped the "re-broadcast new
+   fingerprint to every contact" / Signal-style safety-number UX entirely —
+   deliberately cheap instead, just burn the identity and start over as a
+   new account, no migration.
 
 ### Tier 3 — important, moderate effort
 
