@@ -250,6 +250,9 @@ interface IStr9 {
     val serverTotpErrDisableFailed: String; val serverTotpSetupSuccess: String
     val serverTotpDisableSuccess: String; val serverTotpDisableCodeLabel: String
     val serverTotpDisableButton: String
+    val serverTotpFetchLogsTitle: String; val serverTotpFetchLogsCodeLabel: String
+    val serverTotpFetchLogsButton: String; val serverTotpErrFetchFailed: String
+    val serverTotpLogsEmpty: String
 }
 
 data class AppStrings(
@@ -723,16 +726,21 @@ private val ru9 = object : IStr9 {
     override val totpEnabledSuccess = "TOTP-защита включена"
     override val backupTotpSecretLabel = "TOTP-секрет (если был включён на исходном устройстве)"
     override val backupTotpCodeLabel = "Текущий TOTP-код"
-    override val profileServerTotp = "🔒 TOTP-защита входа на сервер"
-    override val serverTotpTitle = "TOTP-защита входа"
-    override val serverTotpDescription = "Сервер требует этот код при каждой регистрации/входе аккаунта. Секрет привязывается к аккаунту один раз и его нельзя перевыпустить — тот, у кого есть только украденный приватный ключ (например, из бэкапа), не сможет ни зайти под вашим аккаунтом, ни поставить свой секрет вместо вашего, ни выключить эту защиту без текущего кода."
+    override val profileServerTotp = "🔒 TOTP-доступ к логам сервера (админ)"
+    override val serverTotpTitle = "Админ: доступ к логам сервера"
+    override val serverTotpDescription = "Только для аккаунта, настроенного на сервере как ADMIN_FINGERPRINT. Секрет выдаётся один раз этому аккаунту и не может быть перевыпущен — это НЕ защита обычного входа/регистрации (она не требует кода при каждом подключении, чтобы не портить обычную работу приложения). Секрет открывает возможность читать логи сервера прямо из приложения, без SSH-доступа к машине — тот, у кого есть только украденный приватный ключ админ-аккаунта, не сможет ни прочитать логи, ни поставить свой секрет вместо вашего, ни выключить эту защиту без текущего кода."
     override val serverTotpErrNotConnected = "Нет соединения с сервером"
-    override val serverTotpErrSetupFailed = "Не удалось включить — возможно, уже включено на этом аккаунте"
+    override val serverTotpErrSetupFailed = "Не удалось включить — возможно, уже включено, или этот аккаунт не является админским"
     override val serverTotpErrDisableFailed = "Неверный код — выключение отклонено"
-    override val serverTotpSetupSuccess = "Защита входа включена"
-    override val serverTotpDisableSuccess = "Защита входа выключена"
+    override val serverTotpSetupSuccess = "Доступ к логам настроен"
+    override val serverTotpDisableSuccess = "Доступ к логам выключен"
     override val serverTotpDisableCodeLabel = "Текущий код для выключения"
     override val serverTotpDisableButton = "Выключить (нужен текущий код)"
+    override val serverTotpFetchLogsTitle = "Последние логи сервера"
+    override val serverTotpFetchLogsCodeLabel = "Текущий код"
+    override val serverTotpFetchLogsButton = "Загрузить логи"
+    override val serverTotpErrFetchFailed = "Не удалось загрузить — неверный код или не админский аккаунт"
+    override val serverTotpLogsEmpty = "Логов пока нет"
 }
 
 val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9)
@@ -1194,16 +1202,21 @@ private val en9 = object : IStr9 {
     override val totpEnabledSuccess = "TOTP protection enabled"
     override val backupTotpSecretLabel = "TOTP secret (if it was enabled on the source device)"
     override val backupTotpCodeLabel = "Current TOTP code"
-    override val profileServerTotp = "🔒 Server login TOTP protection"
-    override val serverTotpTitle = "Login TOTP protection"
-    override val serverTotpDescription = "The server requires this code on every registration/login for your account. The secret is bound to the account once and can never be reissued — someone with only a stolen private key (e.g. from a backup) can neither log in as you, nor set their own secret in place of yours, nor turn this protection off without the current code."
+    override val profileServerTotp = "🔒 Admin server log access (TOTP)"
+    override val serverTotpTitle = "Admin: server log access"
+    override val serverTotpDescription = "Only works for the account configured on the server as ADMIN_FINGERPRINT. The secret is issued once to that one account and can never be reissued — this is NOT protection for normal login/registration (it doesn't require a code on every connection, so it won't get in the way of normal app use). The secret unlocks reading the server's logs right from the app, with no SSH access to the machine needed — someone with only a stolen private key for the admin account can neither read the logs, nor set their own secret in place of yours, nor turn this off without the current code."
     override val serverTotpErrNotConnected = "No connection to the server"
-    override val serverTotpErrSetupFailed = "Could not enable — it may already be enabled on this account"
+    override val serverTotpErrSetupFailed = "Could not enable — it may already be enabled, or this isn't the admin account"
     override val serverTotpErrDisableFailed = "Invalid code — disable refused"
-    override val serverTotpSetupSuccess = "Login protection enabled"
-    override val serverTotpDisableSuccess = "Login protection disabled"
+    override val serverTotpSetupSuccess = "Log access configured"
+    override val serverTotpDisableSuccess = "Log access disabled"
     override val serverTotpDisableCodeLabel = "Current code to disable"
     override val serverTotpDisableButton = "Disable (requires current code)"
+    override val serverTotpFetchLogsTitle = "Recent server logs"
+    override val serverTotpFetchLogsCodeLabel = "Current code"
+    override val serverTotpFetchLogsButton = "Load logs"
+    override val serverTotpErrFetchFailed = "Could not load — invalid code or not the admin account"
+    override val serverTotpLogsEmpty = "No logs yet"
 }
 
 val enStrings = AppStrings("en", en1, en2, en3, en4, en5, en6, en7, en8, en9)

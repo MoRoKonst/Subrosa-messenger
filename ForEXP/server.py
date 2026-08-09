@@ -14,12 +14,52 @@ import hashlib
 import struct
 import tempfile
 import os
-from collections import defaultdict
+from collections import defaultdict, deque
 
 if hasattr(sys.stdout, 'buffer'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
 if hasattr(sys.stderr, 'buffer'):
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+
+# ─── In-memory log ring buffer ─────────────────────────────────────────────────
+# Tees everything already going to stdout (print()) into a bounded in-memory
+# buffer so it can be served over admin_get_logs without touching every print()
+# call site. `docker-compose logs` / the console keep working exactly as
+# before — this only adds a second reader, gated by TOTP (see ADMIN_FINGERPRINT
+# below), for reading the same operational log without shell access to the
+# host at all.
+LOG_RING_BUFFER_SIZE = 2000
+log_ring_buffer = deque(maxlen=LOG_RING_BUFFER_SIZE)
+
+
+class _RingBufferTee:
+    def __init__(self, wrapped):
+        self._wrapped = wrapped
+
+    def write(self, data):
+        if data and data != "\n":
+            log_ring_buffer.append(data if data.endswith("\n") else data + "\n")
+        return self._wrapped.write(data)
+
+    def flush(self):
+        self._wrapped.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
+
+
+sys.stdout = _RingBufferTee(sys.stdout)
+
+# ─── Server-side registration TOTP ─────────────────────────────────────────────
+# Not tied to individual messenger accounts — requiring a code on every
+# register() would mean every reconnect (which happens constantly on mobile
+# networks) needs one, killing normal usage for zero benefit. Instead this is
+# a single admin credential: ADMIN_FINGERPRINT names exactly one messenger
+# account (the operator's own) that is allowed to provision the one-and-only
+# TOTP secret and use it to read server logs (admin_get_logs) without shell
+# access to the host. Every other account is structurally unable to touch
+# any of this — see the totp_setup/totp_disable/admin_get_logs handlers.
+ADMIN_FINGERPRINT = os.environ.get("ADMIN_FINGERPRINT", "").strip().upper()
 
 # ─── Состояние ────────────────────────────────────────────────────────────────
 
@@ -81,15 +121,13 @@ channels = {}
 # username → base64-encoded JPEG avatar (128×128, ~5-8 KB)
 user_avatars = {}
 
-# ─── Server-side registration TOTP ─────────────────────────────────────────────
-# username (fingerprint) → base32 TOTP secret. One secret per account, set once:
-# once present, "totp_setup" is refused for that username — an attacker who only
-# holds the stolen private key (e.g. from a leaked backup) cannot provision a
-# second, parallel secret to regain a working second factor. Disabling requires
-# a valid current code, not just the private key, for the same reason. See
-# docs/ISSUE_backup_identity_hijack.md, "Candidate fixes" — this closes the gap
-# at register() itself, on top of (not instead of) the client-side backup-import
-# TOTP check.
+# ─── Admin log-access TOTP ──────────────────────────────────────────────────────
+# username (fingerprint) → base32 TOTP secret. In practice this dict only ever
+# holds one entry, for ADMIN_FINGERPRINT — "totp_setup" refuses any other
+# account, and refuses to overwrite an already-set secret even for the admin
+# account itself, so there is never a way to provision a second, parallel
+# secret. Disabling requires a valid current code, not just account ownership.
+# Gates admin_get_logs only — has nothing to do with normal client register().
 user_totp_secrets = {}
 # username → last accepted 30s time-step counter, to reject code replay
 user_totp_last_counter = {}
@@ -1032,8 +1070,8 @@ async def handle_client(websocket):
                 "subscribe_tokens", "anon_message",
                 # ── Anonymous Mailbox ──
                 "mailbox_put", "mailbox_fetch",
-                # ── Server-side registration TOTP ──
-                "totp_setup", "totp_disable"
+                # ── Admin log-access TOTP ──
+                "totp_setup", "totp_disable", "admin_get_logs"
             ]
             if msg_type not in ALLOWED_TYPES:
                 print(f"[SECURITY] Неизвестный тип '{msg_type}' от {ip}")
@@ -1063,18 +1101,6 @@ async def handle_client(websocket):
 
                 fingerprint = hashlib.sha256(key_bytes).digest()[:8].hex().upper()
                 username    = fingerprint
-
-                # If this account has server-side TOTP enabled, a valid, unused
-                # code is required to complete registration — proving possession
-                # of the private key alone (e.g. from a stolen backup) is no
-                # longer sufficient. Checked before touching any existing
-                # session so a failed/missing code never evicts the real owner.
-                if username in user_totp_secrets:
-                    totp_code = message.get("totp_code", "")
-                    if not totp_verify_and_consume(username, totp_code):
-                        print(f"[SECURITY] register: неверный/отсутствующий TOTP-код для {username} от {ip}")
-                        await send_safe(websocket, json.dumps({"type": "totp_required"}))
-                        continue
 
                 async with lock:
                     existing = clients.get(username)
@@ -2159,12 +2185,14 @@ async def handle_client(websocket):
                     print(f"[FCM] Токен сохранён для {username}")
                 continue
 
-            # ─── Server-side registration TOTP: one-time setup ─────────────────
-            # Refused outright if this account already has a secret — an account
-            # with a working TOTP secret can never have it silently replaced by
-            # someone who only holds the private key (e.g. a stolen backup).
+            # ─── Admin log-access TOTP: one-time setup ──────────────────────────
+            # Only ADMIN_FINGERPRINT may ever call this — every other account is
+            # rejected outright, regardless of whether it already has a secret.
+            # Refused outright if a secret already exists — never overwritable
+            # via the network protocol, so briefly compromising the admin
+            # session can't be used to plant a second, parallel secret.
             if msg_type == "totp_setup":
-                if not username:
+                if not username or not ADMIN_FINGERPRINT or username != ADMIN_FINGERPRINT:
                     continue
                 if username in user_totp_secrets:
                     await send_safe(websocket, json.dumps({"type": "totp_setup_failed", "reason": "already_enabled"}))
@@ -2176,16 +2204,17 @@ async def handle_client(websocket):
                     continue
                 user_totp_secrets[username] = secret
                 asyncio.create_task(db_save_totp(username, secret))
-                print(f"[TOTP] Регистрационная защита включена для {username}")
+                print(f"[TOTP] Admin log-access secret provisioned for {username}")
                 await send_safe(websocket, json.dumps({"type": "totp_setup_ok"}))
                 continue
 
-            # ─── Server-side registration TOTP: disable ────────────────────────
-            # Requires a valid current code — proof of the secret, not just the
-            # private key — so a stolen backup+password alone can't turn this
-            # protection off either.
+            # ─── Admin log-access TOTP: disable ─────────────────────────────────
+            # Requires a valid current code — proof of the secret, not just of
+            # being logged in as the admin account.
             if msg_type == "totp_disable":
-                if not username or username not in user_totp_secrets:
+                if not username or not ADMIN_FINGERPRINT or username != ADMIN_FINGERPRINT:
+                    continue
+                if username not in user_totp_secrets:
                     continue
                 code = message.get("code", "")
                 if not totp_verify_and_consume(username, code):
@@ -2194,8 +2223,25 @@ async def handle_client(websocket):
                 del user_totp_secrets[username]
                 user_totp_last_counter.pop(username, None)
                 asyncio.create_task(db_delete_totp(username))
-                print(f"[TOTP] Регистрационная защита выключена для {username}")
+                print(f"[TOTP] Admin log-access secret removed for {username}")
                 await send_safe(websocket, json.dumps({"type": "totp_disable_ok"}))
+                continue
+
+            # ─── Admin log-access: read recent server logs over the protocol ────
+            # The whole point of this feature: reading logs no longer requires
+            # shell/SSH access to the host at all, but does require both being
+            # the one designated admin account AND a live TOTP code — a stolen
+            # admin private key alone (e.g. from a compromised backup) is not
+            # enough, same principle as totp_disable above.
+            if msg_type == "admin_get_logs":
+                if not username or not ADMIN_FINGERPRINT or username != ADMIN_FINGERPRINT:
+                    continue
+                code = message.get("code", "")
+                if not totp_verify_and_consume(username, code):
+                    await send_safe(websocket, json.dumps({"type": "admin_get_logs_failed"}))
+                    continue
+                log_text = "".join(log_ring_buffer)[-100_000:]
+                await send_safe(websocket, json.dumps({"type": "admin_logs", "data": log_text}))
                 continue
 
         if is_fed:
@@ -2422,6 +2468,10 @@ def start_server():
     print(f"[DB] Prekey bundles загружено: {len(loaded_bundles)}")
     print(f"[DB] Аватаров загружено: {len(loaded_avatars)}")
     print(f"[DB] Аккаунтов с TOTP-защитой: {len(loaded_totp)}")
+    if ADMIN_FINGERPRINT:
+        print(f"[TOTP] Admin log-access account: {ADMIN_FINGERPRINT}")
+    else:
+        print("[TOTP] ADMIN_FINGERPRINT не задан — admin_get_logs отключён для всех")
 
     # Печатаем строку подключения для пользователей
     if SERVER_URL:

@@ -137,7 +137,6 @@ class MessengerService : Service() {
     private var handshakeDone = false
     private var reconnectAttempts = 0
     private var failuresOnCurrentServer = 0
-    private var totpRequiredNotified = false
     private val MAX_FAILURES_BEFORE_SWITCH = 3
     private var username = ""
 
@@ -205,6 +204,7 @@ class MessengerService : Service() {
     var onGroupInviteReceived: ((Group, String) -> Unit)? = null
     var onTotpSetupResult: ((Boolean, String?) -> Unit)? = null
     var onTotpDisableResult: ((Boolean) -> Unit)? = null
+    var onAdminLogsResult: ((Boolean, String?) -> Unit)? = null
     var onChannelPostReceived: ((String, ChannelPost) -> Unit)? = null
     var onChannelCreated: ((Channel) -> Unit)? = null
     var onChannelPostDeleted: ((String, String) -> Unit)? = null
@@ -928,6 +928,20 @@ class MessengerService : Service() {
         }.toString())
     }
 
+    /** Only succeeds if this account is the server's configured admin
+     * (ADMIN_FINGERPRINT) and the code is valid — a normal user account
+     * will always get admin_get_logs_failed here, harmlessly. */
+    fun sendAdminGetLogs(code: String) {
+        if (!isConnected) {
+            onAdminLogsResult?.invoke(false, null)
+            return
+        }
+        sendWs(JSONObject().apply {
+            put("type", "admin_get_logs")
+            put("code", code)
+        }.toString())
+    }
+
     private fun sendWs(json: String) {
         val mode = UserStorage.getCoverTrafficMode(this)
         if (mode == UserStorage.CoverTrafficMode.AGGRESSIVE && isConnected) {
@@ -1029,7 +1043,6 @@ class MessengerService : Service() {
 
                 val displayName = UserStorage.getUsername(this@MessengerService)
                 val myAvatarB64 = UserStorage.getMyAvatar(this@MessengerService) ?: ""
-                val serverTotpSecret = TotpManager.getServerSecret(this@MessengerService)
                 sendWs(JSONObject().apply {
                     put("type", "register")
                     put("from", username)
@@ -1038,7 +1051,6 @@ class MessengerService : Service() {
                     put("protocol_version", ProtocolVersion.CURRENT_VERSION)
                     put("device_id", UserStorage.getDeviceId(this@MessengerService))
                     if (myAvatarB64.isNotEmpty()) put("avatar", myAvatarB64)
-                    if (serverTotpSecret != null) put("totp_code", TotpManager.currentCode(serverTotpSecret))
                 }.toString())
 
                 val contacts = ChatStorage.getContacts(this@MessengerService)
@@ -1148,7 +1160,6 @@ class MessengerService : Service() {
             "handshake_ok" -> {
                 isConnected = true
                 handshakeDone = true
-                totpRequiredNotified = false
                 Log.d(TAG, "Handshake завершён успешно")
                 PanicNotificationManager.show(this@MessengerService)
 
@@ -1213,19 +1224,13 @@ class MessengerService : Service() {
                 withContext(Dispatchers.Main) { onTotpDisableResult?.invoke(false) }
             }
 
-            "totp_required" -> {
-                // Server rejected register() because this account has server-side
-                // TOTP enabled and no (or an invalid) code was presented — happens
-                // when a device doesn't locally hold the secret (e.g. a restored
-                // backup, by design: the secret is deliberately not part of any
-                // backup). There's no in-app "enter code to unlock this pending
-                // login" flow yet (docs/ISSUE_backup_identity_hijack.md notes this
-                // as a follow-up) — surface it once so it's not a silent, endless
-                // reconnect loop against the server.
-                if (!totpRequiredNotified) {
-                    totpRequiredNotified = true
-                    Log.e(TAG, "register отклонён сервером: требуется TOTP-код для этого аккаунта")
-                }
+            "admin_logs" -> {
+                val data = json.optString("data", "")
+                withContext(Dispatchers.Main) { onAdminLogsResult?.invoke(true, data) }
+            }
+
+            "admin_get_logs_failed" -> {
+                withContext(Dispatchers.Main) { onAdminLogsResult?.invoke(false, null) }
             }
 
             "mailbox_result" -> handleMailboxResult(json)
