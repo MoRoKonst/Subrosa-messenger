@@ -2134,18 +2134,15 @@ async def handle_client(websocket):
                         or not all(c in "0123456789abcdef" for c in tag)
                         or not isinstance(blob, str)
                         or len(blob) > MAILBOX_MAX_BLOB):
-                    print(f"[DEBUG-MAILBOX] put REJECTED from {username}: tag_len={len(tag)} blob_len={len(blob) if isinstance(blob, str) else 'N/A'} tag_hex_ok={all(c in '0123456789abcdef' for c in tag) if tag else False}")
                     continue
                 now = time.time()
                 async with lock:
                     # Чистим устаревшие блобы в этом слоте
                     existing = [e for e in mailbox.get(tag, []) if now - e["ts"] < MAILBOX_TTL]
                     if len(existing) >= 5:  # max 5 блобов на тег — защита от DoS
-                        print(f"[DEBUG-MAILBOX] put DROPPED (slot full, {len(existing)} blobs) from {username}: tag=...{tag[-8:]}")
                         continue
                     existing.append({"blob": blob, "ts": now})
                     mailbox[tag] = existing
-                print(f"[DEBUG-MAILBOX] put OK from {username}: tag=...{tag[-8:]} slot_now_has={len(existing)} blob_len={len(blob)}")
                 continue
 
             if msg_type == "mailbox_fetch":
@@ -2165,9 +2162,6 @@ async def handle_client(websocket):
                             result[tag] = [e["blob"] for e in blobs]
                             # Удаляем доставленные
                             del mailbox[tag]
-                queried_suffixes = ",".join(t[-8:] for t in tags)
-                stored_suffixes = ",".join(t[-8:] for t in mailbox.keys())
-                print(f"[DEBUG-MAILBOX] fetch by {username}: {len(tags)} tags queried [{queried_suffixes}], {len(result)} matched, mailbox currently has [{stored_suffixes}]")
                 if result:
                     await send_safe(websocket, json.dumps({"type": "mailbox_result", "blobs": result}))
                 continue
