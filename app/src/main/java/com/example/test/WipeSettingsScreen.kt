@@ -2,6 +2,7 @@ package com.subrosa.messenger
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -17,8 +18,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.subrosa.messenger.ui.theme.subrosaColors
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.SubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -27,14 +28,14 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
     var dmsEnabled by remember { mutableStateOf(DeadMansSwitchManager.isEnabled(context)) }
-    var dmsIntervalHours by remember { mutableIntStateOf(DeadMansSwitchManager.getIntervalHours(context)) }
+    var dmsIntervalMinutes by remember { mutableIntStateOf(DeadMansSwitchManager.getIntervalMinutes(context)) }
     var dmsRemaining by remember { mutableLongStateOf(DeadMansSwitchManager.getTimeRemainingMs(context)) }
 
-    LaunchedEffect(dmsEnabled, dmsIntervalHours) {
+    LaunchedEffect(dmsEnabled, dmsIntervalMinutes) {
         while (dmsEnabled) {
             dmsRemaining = DeadMansSwitchManager.getTimeRemainingMs(context)
             delay(60_000L)
@@ -102,12 +103,6 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
 
                 SectionHeader("Уровни уничтожения", c.textPrimary.copy(alpha = 0.6f))
                 WipeLevelCard(
-                    title = s.wipeLevelSoft,
-                    desc = s.wipeSoftDesc,
-                    color = Color(0xFF66BB6A),
-                    c = c
-                )
-                WipeLevelCard(
                     title = s.wipeLevelHard,
                     desc = s.wipeHardDesc,
                     color = Color(0xFFFFA726),
@@ -141,7 +136,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                                 onCheckedChange = { enabled ->
                                     dmsEnabled = enabled
                                     if (enabled) {
-                                        DeadMansSwitchManager.enable(context, dmsIntervalHours)
+                                        DeadMansSwitchManager.enableMinutes(context, dmsIntervalMinutes)
                                     } else {
                                         DeadMansSwitchManager.disable(context)
                                     }
@@ -151,16 +146,23 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
 
                         if (dmsEnabled) {
                             Text(s.dmsIntervalLabel, color = c.textPrimary.copy(alpha = 0.6f), fontSize = 13.sp)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf(2, 5, 12, 24, 48, 72).forEach { h ->
+                            // Sub-hour tiers (15/30 min) added for high-threat scenarios where
+                            // a 2-hour check-in is too loose — see docs/ISSUE_backup_identity_hijack.md.
+                            // Scrollable since 9 chips no longer fit one screen width.
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf(15, 30, 60, 120, 300, 720, 1440, 2880, 4320).forEach { m ->
+                                    val label = if (m < 60) "$m ${s.dmsIntervalMinutes}" else "${m / 60} ${s.dmsIntervalHours}"
                                     FilterChip(
-                                        selected = dmsIntervalHours == h,
+                                        selected = dmsIntervalMinutes == m,
                                         onClick = {
-                                            dmsIntervalHours = h
-                                            DeadMansSwitchManager.enable(context, h)
+                                            dmsIntervalMinutes = m
+                                            DeadMansSwitchManager.enableMinutes(context, m)
                                             dmsRemaining = DeadMansSwitchManager.getTimeRemainingMs(context)
                                         },
-                                        label = { Text("$h ${s.dmsIntervalHours}") }
+                                        label = { Text(label) }
                                     )
                                 }
                             }
@@ -351,7 +353,7 @@ private fun WipeLevelCard(
     title: String,
     desc: String,
     color: Color,
-    c: subrosaColors
+    c: SubrosaColors
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = c.card),

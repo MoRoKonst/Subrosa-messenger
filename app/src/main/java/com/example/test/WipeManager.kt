@@ -7,24 +7,15 @@ import java.io.File
 
 object WipeManager {
 
-    enum class Level { SOFT, HARD, NUCLEAR }
+    enum class Level { HARD, NUCLEAR }
 
     fun wipe(context: Context, level: Level, withDecoy: Boolean = false) {
         StorageKeyManager.lock()
         PanicNotificationManager.dismiss(context)
         when (level) {
-            Level.SOFT    -> softWipe(context)
             Level.HARD    -> hardWipe(context, withDecoy)
             Level.NUCLEAR -> nuclearWipe(context, withDecoy)
         }
-    }
-
-    private fun softWipe(context: Context) {
-        try {
-            SessionKeyManager.deleteAllSessions()
-            context.cacheDir.deleteRecursively()
-            context.externalCacheDir?.deleteRecursively()
-        } catch (_: Exception) {}
     }
 
     fun hardWipe(context: Context, withDecoy: Boolean = false) {

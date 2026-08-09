@@ -225,13 +225,13 @@ interface IStr9 {
     val wipeSettingsTitle: String
     val dmsTitle: String; val dmsSubtitle: String; val dmsCheckinBtn: String
     val dmsNotifTitle: String; val dmsNotifText: String; val dmsNotifGraceText: String
-    val dmsIntervalLabel: String; val dmsIntervalHours: String
+    val dmsIntervalLabel: String; val dmsIntervalHours: String; val dmsIntervalMinutes: String
     val dmsEnabledLabel: String
     val timeoutWipeTitle: String; val timeoutWipeSubtitle: String
     val wipeOnBreachTitle: String; val wipeOnBreachSubtitle: String
     val wipeLevelLabel: String
-    val wipeLevelSoft: String; val wipeLevelHard: String; val wipeLevelNuclear: String
-    val wipeSoftDesc: String; val wipeHardDesc: String; val wipeNuclearDesc: String
+    val wipeLevelHard: String; val wipeLevelNuclear: String
+    val wipeHardDesc: String; val wipeNuclearDesc: String
     val wipeSettingsWarning: String
     val panicButtonLabel: String; val panicButtonSubtitle: String
     val panicButtonDecoyLabel: String; val panicButtonDecoySubtitle: String
@@ -364,7 +364,7 @@ private val ru3 = object : IStr3 {
     override val profilePanicFieldLabel = "Panic пароль"
     override val profileLanguageToggle = "🌐 English"
     override val profileThemeLabel = "🎨 Тема"
-    override val profileThemeNavy = "Синяя"
+    override val profileThemeNavy = "Бордовая"
     override val profileThemeDark = "Тёмная"
     override val profileThemeLight = "Светлая"
     override val profileInvalidCodeFormat = "Неверный формат кода"
@@ -571,7 +571,7 @@ private val ru7 = object : IStr7 {
     override val serviceConnecting = "Подключение..."
     override val serviceConnected: (String) -> String = { "Подключено: $it" }
     override val rootDangerTitle = "🚨 Root обнаружен"
-    override val rootDangerText = "На устройстве обнаружен root-доступ. Шифрование B-CON может быть скомпрометировано — ключи и сообщения доступны другим приложениям."
+    override val rootDangerText = "На устройстве обнаружен root-доступ. Шифрование Subrosa может быть скомпрометировано — ключи и сообщения доступны другим приложениям."
     override val rootDangerReasons: (String) -> String = { "Признаки:\n$it" }
     override val rootDangerRecommend = "Рекомендуется использовать устройство без root."
     override val rootDangerContinue = "Всё равно продолжить"
@@ -580,7 +580,7 @@ private val ru7 = object : IStr7 {
     override val rootWarningConfirm = "Понятно"
     override val lockTitle = "Приложение заблокировано"
     override val lockUnlock = "🔓  Разблокировать"
-    override val lockBiometricTitle = "Разблокировать B-CON"
+    override val lockBiometricTitle = "Разблокировать Subrosa"
     override val lockBiometricSubtitle = "Подтвердите личность"
     override val lockBiometricCancel = "Отмена"
     override val noCameraPermissionVoiceOnly = "Разрешение камеры не дано — голосовой звонок"
@@ -592,16 +592,16 @@ private val ru7 = object : IStr7 {
         "📲 Android 13+: требуется 2 шага:\n" +
         "① Нажмите «Настройки приложения»\n" +
         "② В правом верхнем углу ⋮ → «Доступ к огр. настройкам»\n" +
-        "③ Затем вернитесь: Настройки → Спец. возможности → B-CON Emergency → Вкл\n\n" +
+        "③ Затем вернитесь: Настройки → Спец. возможности → Subrosa Emergency Wipe → Вкл\n\n" +
         "📱 Android 12 и старше:\n" +
-        "Настройки → Спец. возможности → B-CON Emergency → Вкл"
+        "Настройки → Спец. возможности → Subrosa Emergency Wipe → Вкл"
     override val emergencyInfoOpenSettings = "Спец. возможности"
     override val emergencyInfoOpenAppSettings = "Настройки приложения"
     override val spyAppsAccessibilitySection = "🔍 Службы Accessibility:\n"
     override val spyAppsAdminsSection = "⚠️ Администраторы устройства:\n"
     override val spyAppsOverlaySection = "🪟 Право рисовать поверх экрана:\n"
     override val spyAppsTitle = "⚠️ Подозрительные приложения"
-    override val spyAppsMessage: (String) -> String = { "Обнаружены приложения, которые могут перехватывать экран или касания:\n\n$it\n\nРекомендуем отозвать их права или удалить.\nКасания поверх B-CON заблокированы автоматически." }
+    override val spyAppsMessage: (String) -> String = { "Обнаружены приложения, которые могут перехватывать экран или касания:\n\n$it\n\nРекомендуем отозвать их права или удалить.\nКасания поверх Subrosa заблокированы автоматически." }
     override val spyAppsSettings = "Accessibility настройки"
     override val groupCallPeerName = "Группа"
     override val systemSender = "Система"
@@ -675,16 +675,15 @@ private val ru9 = object : IStr9 {
     override val dmsNotifGraceText = "Нажмите «Я в безопасности» или данные будут уничтожены через 15 минут"
     override val dmsIntervalLabel = "Интервал проверки"
     override val dmsIntervalHours = "ч"
+    override val dmsIntervalMinutes = "мин"
     override val dmsEnabledLabel = "Включить Dead Man's Switch"
     override val timeoutWipeTitle = "Таймаут пароля"
     override val timeoutWipeSubtitle = "Уничтожить данные если нет входа в приложение дольше заданного времени"
     override val wipeOnBreachTitle = "Wipe при взломе"
     override val wipeOnBreachSubtitle = "Уничтожить данные при обнаружении критической угрозы IDS"
     override val wipeLevelLabel = "Уровень уничтожения"
-    override val wipeLevelSoft = "Мягкий (SOFT)"
     override val wipeLevelHard = "Жёсткий (HARD)"
     override val wipeLevelNuclear = "Ядерный (NUCLEAR)"
-    override val wipeSoftDesc = "Очищает кеш и оперативную память"
     override val wipeHardDesc = "Удаляет все ключи, файлы и данные приложения"
     override val wipeNuclearDesc = "HARD + полный сброс приложения (системный уровень)"
     override val wipeSettingsWarning = "⚠️ Эти настройки необратимы. После срабатывания все данные будут уничтожены без возможности восстановления."
@@ -812,7 +811,7 @@ private val en3 = object : IStr3 {
     override val profilePanicFieldLabel = "Panic password"
     override val profileLanguageToggle = "🌐 Русский"
     override val profileThemeLabel = "🎨 Theme"
-    override val profileThemeNavy = "Navy"
+    override val profileThemeNavy = "Burgundy"
     override val profileThemeDark = "Dark"
     override val profileThemeLight = "Light"
     override val profileInvalidCodeFormat = "Invalid code format"
@@ -1019,7 +1018,7 @@ private val en7 = object : IStr7 {
     override val serviceConnecting = "Connecting..."
     override val serviceConnected: (String) -> String = { "Connected: $it" }
     override val rootDangerTitle = "🚨 Root detected"
-    override val rootDangerText = "Root access detected on this device. B-CON's encryption may be compromised — keys and messages may be accessible to other apps."
+    override val rootDangerText = "Root access detected on this device. Subrosa's encryption may be compromised — keys and messages may be accessible to other apps."
     override val rootDangerReasons: (String) -> String = { "Indicators:\n$it" }
     override val rootDangerRecommend = "It is recommended to use a device without root."
     override val rootDangerContinue = "Continue anyway"
@@ -1028,7 +1027,7 @@ private val en7 = object : IStr7 {
     override val rootWarningConfirm = "Got it"
     override val lockTitle = "App locked"
     override val lockUnlock = "🔓  Unlock"
-    override val lockBiometricTitle = "Unlock B-CON"
+    override val lockBiometricTitle = "Unlock Subrosa"
     override val lockBiometricSubtitle = "Confirm your identity"
     override val lockBiometricCancel = "Cancel"
     override val noCameraPermissionVoiceOnly = "Camera permission denied — voice call"
@@ -1040,16 +1039,16 @@ private val en7 = object : IStr7 {
         "📲 Android 13+: 2 steps required:\n" +
         "① Tap 'App settings'\n" +
         "② Top-right ⋮ → 'Allow restricted settings'\n" +
-        "③ Then: Settings → Accessibility → B-CON Emergency → Enable\n\n" +
+        "③ Then: Settings → Accessibility → Subrosa Emergency Wipe → Enable\n\n" +
         "📱 Android 12 and below:\n" +
-        "Settings → Accessibility → B-CON Emergency → Enable"
+        "Settings → Accessibility → Subrosa Emergency Wipe → Enable"
     override val emergencyInfoOpenSettings = "Accessibility"
     override val emergencyInfoOpenAppSettings = "App settings"
     override val spyAppsAccessibilitySection = "🔍 Accessibility services:\n"
     override val spyAppsAdminsSection = "⚠️ Device administrators:\n"
     override val spyAppsOverlaySection = "🪟 Draw over other apps:\n"
     override val spyAppsTitle = "⚠️ Suspicious apps"
-    override val spyAppsMessage: (String) -> String = { "Apps found that may intercept screen or touches:\n\n$it\n\nWe recommend revoking their rights or uninstalling them.\nTouches over B-CON are blocked automatically." }
+    override val spyAppsMessage: (String) -> String = { "Apps found that may intercept screen or touches:\n\n$it\n\nWe recommend revoking their rights or uninstalling them.\nTouches over Subrosa are blocked automatically." }
     override val spyAppsSettings = "Accessibility settings"
     override val groupCallPeerName = "Group"
     override val systemSender = "System"
@@ -1123,16 +1122,15 @@ private val en9 = object : IStr9 {
     override val dmsNotifGraceText = "Tap \"I'm safe\" or data will be destroyed in 15 minutes"
     override val dmsIntervalLabel = "Check-in interval"
     override val dmsIntervalHours = "h"
+    override val dmsIntervalMinutes = "min"
     override val dmsEnabledLabel = "Enable Dead Man's Switch"
     override val timeoutWipeTitle = "Password timeout"
     override val timeoutWipeSubtitle = "Destroy data if the app has not been unlocked for the specified time"
     override val wipeOnBreachTitle = "Wipe on breach"
     override val wipeOnBreachSubtitle = "Destroy data when a critical IDS threat is detected"
     override val wipeLevelLabel = "Destruction level"
-    override val wipeLevelSoft = "Soft (SOFT)"
     override val wipeLevelHard = "Hard (HARD)"
     override val wipeLevelNuclear = "Nuclear (NUCLEAR)"
-    override val wipeSoftDesc = "Clears cache and in-memory sessions"
     override val wipeHardDesc = "Deletes all keys, files and app data"
     override val wipeNuclearDesc = "HARD + full app reset (system-level)"
     override val wipeSettingsWarning = "⚠️ These settings are irreversible. Once triggered, all data will be permanently destroyed with no recovery possible."

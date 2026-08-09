@@ -36,6 +36,15 @@ class MessengerService : Service() {
 
     data class FileMeta(val name: String, val total: Int, val chunks: MutableList<Pair<Int, String>>)
 
+    /** Strips path-traversal / directory characters from a peer-supplied
+     *  file_id or file_name before it's used to build a filesystem path —
+     *  these values come straight from another contact's JSON and must not
+     *  be trusted to stay inside `files/$fileId/`. */
+    private fun sanitizePathComponent(raw: String): String {
+        val cleaned = raw.replace(Regex("[^A-Za-z0-9._-]"), "_").replace("..", "_")
+        return cleaned.ifBlank { "file" }
+    }
+
     companion object {
         const val CHANNEL_ID = "messenger_channel"
 
@@ -141,6 +150,13 @@ class MessengerService : Service() {
     private val processedGroupMessageIds = mutableSetOf<String>()
     private val pendingSessionMessages = mutableMapOf<String, MutableList<Pair<String, String>>>()
     private val pendingReactions = mutableListOf<Triple<String, String, String>>()
+
+    // Queued by sendAnonOrDirect() when a contact's anon-token pool is empty —
+    // see the "cut the direct fallback" decision in
+    // docs/ISSUE_backup_identity_hijack.md. Drained by flushPendingAnon()
+    // once fresh tokens arrive for that contact (either path that calls
+    // AnonTokenManager.addContactTokens).
+    private val pendingAnonPackets = mutableMapOf<String, MutableList<JSONObject>>()
 
     private data class PendingVideoCircle(val to: String, val videoId: String, val encFilePath: String, val duration: Int)
     private val pendingVideoCircles = mutableListOf<PendingVideoCircle>()
@@ -571,17 +587,6 @@ class MessengerService : Service() {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(NOTIFICATION_ID, notification)
-        }
-
-        val requestKey = intent?.getStringExtra("request_key")
-        if (requestKey != null && isConnected) {
-            scope.launch(Dispatchers.IO) {
-                sendWs(JSONObject().apply {
-                    put("type", "get_key")
-                    put("target", requestKey)
-                }.toString())
-            }
-            return START_STICKY
         }
 
         intent?.getStringExtra("bootstrap_channel_for")?.let { contact ->
@@ -1142,6 +1147,15 @@ class MessengerService : Service() {
                 }
             }
 
+            "prekey_bundle_request" -> {
+                try {
+                    publishPrekeyBundle()
+                    Log.d(TAG, "Prekey bundle republish по запросу сервера")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Ошибка republish prekey bundle: ${e.message}")
+                }
+            }
+
             "mailbox_result" -> handleMailboxResult(json)
 
             "session_conflict" -> {
@@ -1149,9 +1163,10 @@ class MessengerService : Service() {
                 isConnected = false
                 handshakeDone = false
                 webSocket?.cancel()
+                val conflictTs = json.optDouble("ts", Double.NaN)
                 withContext(Dispatchers.Main) {
                     onStatusChanged?.invoke(false)
-                    showSessionConflictNotification()
+                    showSessionConflictNotification(conflictTs)
                 }
             }
 
@@ -1420,8 +1435,8 @@ class MessengerService : Service() {
             "file_chunk" -> {
                 try {
                     val from = json.getString("from")
-                    val fileId = json.getString("file_id")
-                    val fileName = json.getString("file_name")
+                    val fileId = sanitizePathComponent(json.getString("file_id"))
+                    val fileName = sanitizePathComponent(json.getString("file_name"))
                     val chunkIndex = json.getInt("chunk_index")
                     val totalChunks = json.getInt("total_chunks")
                     val chunkData = json.getString("data")
@@ -1481,9 +1496,7 @@ class MessengerService : Service() {
 
                                 Log.d(TAG, "Файл расшифрован: ${decryptedBytes.size} байт")
 
-                                val file = File(filesDir, "files/$fileId/${fileName}.enc").apply {
-                                    parentFile?.mkdirs()
-                                }
+                                val file = SecureFileStorage.blobFile(filesDir, fileId)
                                 SecureFileStorage.write(this@MessengerService, file, decryptedBytes)
 
                                 Log.d(TAG, "✅ Файл $fileName расшифрован и сохранен зашифрованным: ${file.absolutePath}")
@@ -1500,9 +1513,7 @@ class MessengerService : Service() {
                             Log.d(TAG, "Файл в legacy формате (без шифрования)")
 
                             val fileBytes = android.util.Base64.decode(fullPackedData, android.util.Base64.DEFAULT)
-                            val file = File(filesDir, "files/$fileId/${fileName}.enc").apply {
-                                parentFile?.mkdirs()
-                            }
+                            val file = SecureFileStorage.blobFile(filesDir, fileId)
                             SecureFileStorage.write(this@MessengerService, file, fileBytes)
 
                             Log.d(TAG, "✅ Legacy файл сохранен зашифрованным: ${file.absolutePath}")
@@ -1556,9 +1567,7 @@ class MessengerService : Service() {
                         if (isEncrypted) {
                             val encryptedFileData = CryptoManager.unpackEncryptedFile(packed)
                             val decryptedBytes = CryptoManager.decryptFile(encryptedFileData)
-                            val file = File(filesDir, "videos/$videoId.mp4.enc").apply {
-                                parentFile?.mkdirs()
-                            }
+                            val file = SecureFileStorage.blobFile(filesDir, videoId)
                             SecureFileStorage.write(this@MessengerService, file, decryptedBytes)
                             Log.d(TAG, "✅ Видеокружок расшифрован: ${file.absolutePath}")
                             withContext(Dispatchers.Main) {
@@ -1904,6 +1913,23 @@ class MessengerService : Service() {
                     val from      = json.getString("from")
                     val messageId = json.getString("message_id")
                     val emoji     = json.getString("emoji")
+                    val signature = json.optString("signature", null)
+
+                    val senderKey = publicKeys[from]
+                        ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also {
+                            publicKeys[from] = it
+                        }
+
+                    if (signature == null || senderKey == null) {
+                        Log.e(TAG, "group_reaction без ключа от $from")
+                        return
+                    }
+
+                    if (!CryptoManager.verify(emoji, signature, senderKey)) {
+                        Log.e(TAG, "Неверная подпись group_reaction от $from")
+                        return
+                    }
+
                     withContext(Dispatchers.Main) {
                         onGroupReactionReceived?.invoke(groupId, from, messageId, emoji)
                     }
@@ -2615,6 +2641,12 @@ class MessengerService : Service() {
         sendAnonOrDirect(to, packet)
     }
 
+    // No direct/fingerprint-addressed fallback here on purpose — see the
+    // "cut the direct fallback" decision in docs/ISSUE_backup_identity_hijack.md.
+    // An anonymity layer that silently degrades to non-anonymous the moment
+    // its token pool runs dry only provides the illusion of the property it
+    // claims. When no token is available, the packet is queued and a token
+    // refill/mailbox bootstrap is kicked off instead of sending in the clear.
     private fun sendAnonOrDirect(to: String, packet: JSONObject) {
         val token = AnonTokenManager.consumeNextContactToken(this, to)
         if (token != null) {
@@ -2625,8 +2657,22 @@ class MessengerService : Service() {
             }
             sendWs(addPadding(anonPacket).toString())
         } else {
-            sendWs(packet.toString())
+            synchronized(pendingAnonPackets) {
+                pendingAnonPackets.getOrPut(to) { mutableListOf() }.add(packet)
+            }
+            scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
         }
+    }
+
+    /** Retries everything queued for [to] by sendAnonOrDirect() while its token
+     *  pool was empty. Call after AnonTokenManager.addContactTokens(to, ...) —
+     *  a no-op if nothing is queued. Packets that still can't get a token
+     *  (pool refilled but not enough for the whole backlog) re-queue
+     *  themselves via the same sendAnonOrDirect() call, so this is safe to
+     *  call speculatively. */
+    private fun flushPendingAnon(to: String) {
+        val queued = synchronized(pendingAnonPackets) { pendingAnonPackets.remove(to) } ?: return
+        queued.forEach { sendAnonOrDirect(to, it) }
     }
 
     fun sendReaction(to: String, messageId: String, emoji: String) {
@@ -3340,6 +3386,7 @@ class MessengerService : Service() {
                 val arr = org.json.JSONArray(decryptedText.removePrefix("__beacon_tokens__:"))
                 val tokens = (0 until arr.length()).map { arr.getString(it) }
                 AnonTokenManager.addContactTokens(this@MessengerService, from, tokens)
+                flushPendingAnon(from)
 
                 AnonTokenManager.clearContactMailboxTag(this@MessengerService, from)
                 ChatStorage.addContact(this@MessengerService, from)
@@ -3471,6 +3518,7 @@ class MessengerService : Service() {
                     if (tokensArr != null) {
                         val tokens = (0 until tokensArr.length()).map { tokensArr.getString(it) }
                         AnonTokenManager.addContactTokens(this@MessengerService, from, tokens)
+                        flushPendingAnon(from)
                         markChannelReady(from)
                         withContext(Dispatchers.Main) { onChannelReady?.invoke(from) }
                         if (tokensSentThisSession.add(from)) {
@@ -3515,7 +3563,7 @@ class MessengerService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
             nm.deleteNotificationChannel(CHANNEL_ID)
-            val channel = NotificationChannel(CHANNEL_ID, "B-CON Emergency", NotificationManager.IMPORTANCE_HIGH).apply {
+            val channel = NotificationChannel(CHANNEL_ID, "Subrosa Emergency", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = s.notifChannelDesc
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setShowBadge(true)
@@ -3526,10 +3574,10 @@ class MessengerService : Service() {
 
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID_SERVICE,
-                "B-CON Service",
+                "Subrosa Service",
                 NotificationManager.IMPORTANCE_MIN
             ).apply {
-                description = "Фоновый сервис B-CON"
+                description = "Фоновый сервис Subrosa"
                 setSound(null, null)
                 enableVibration(false)
                 enableLights(false)
@@ -3543,7 +3591,7 @@ class MessengerService : Service() {
         val intent = Intent(this, MainActivity::class.java)
         val pending = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
-            .setContentTitle("💬 B-CON Messenger")
+            .setContentTitle("💬 Subrosa Messenger")
             .setSmallIcon(android.R.drawable.ic_dialog_email)
             .setContentIntent(pending)
             .setSilent(true)
@@ -3551,14 +3599,27 @@ class MessengerService : Service() {
             .build()
     }
 
-    private fun showSessionConflictNotification() {
+    private fun showSessionConflictNotification(conflictTsSeconds: Double = Double.NaN) {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pending = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+        // A timestamp is the one piece of context that doesn't require trusting
+        // the server further than it's already trusted to relay this event at
+        // all — it doesn't reveal anything the server didn't already know
+        // (when it kicked this session), but it's the difference between the
+        // user reasoning in a total vacuum and knowing roughly when this
+        // happened, e.g. to rule out "oh, that was just me reinstalling".
+        val text = if (!conflictTsSeconds.isNaN()) {
+            val when_ = java.text.SimpleDateFormat("dd MMM, HH:mm", java.util.Locale.getDefault())
+                .format(java.util.Date((conflictTsSeconds * 1000).toLong()))
+            "${s.notifSessionText} ($when_)"
+        } else {
+            s.notifSessionText
+        }
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(s.notifSessionTitle)
-            .setContentText(s.notifSessionText)
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentIntent(pending)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -3718,7 +3779,7 @@ class MessengerService : Service() {
         val fullScreenIntent = Intent(this, MainActivity::class.java)
         val fullScreenPending = PendingIntent.getActivity(this, 0, fullScreenIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("B-CON")
+            .setContentTitle("Subrosa")
             .setContentText(s.notifEmergencyText)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_MAX)

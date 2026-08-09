@@ -22,6 +22,10 @@ object BackupManager {
     }
 
     fun exportBackup(context: Context, password: String): String {
+        if (!StorageKeyManager.isUnlocked) {
+            throw IllegalStateException("Приложение заблокировано — сначала разблокируйте его, чтобы экспортировать бэкап")
+        }
+
         val username = UserStorage.getUserId(context)
 
         val displayName = UserStorage.getUserDisplayName(context)
