@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -171,6 +172,13 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
                             ) {
                                 Text(s.totpDisableButton, color = c.textPrimary)
                             }
+                            if (busy) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = c.accent)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(s.totpConfirmingWithServer, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.7f))
+                                }
+                            }
                         } else if (pendingSecret == null) {
                             Button(
                                 onClick = { pendingSecret = TotpManager.generateSecret() },
@@ -224,6 +232,13 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(s.totpConfirmButton, color = Color.White)
+                            }
+                            if (busy) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = c.accent)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(s.totpConfirmingWithServer, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.7f))
+                                }
                             }
                         }
 

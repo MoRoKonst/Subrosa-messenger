@@ -2575,6 +2575,22 @@ class MessengerService : Service() {
                     val from    = json.getString("from")
                     val callId  = json.getString("call_id")
                     val isVideo = type == "call_request_video"
+
+                    // Found live: a call_request queued (no anon token yet,
+                    // sendAnonOrDirect's pendingAnonPackets has no TTL) can
+                    // deliver minutes after the caller already gave up and
+                    // hung up — the callee's phone starts ringing for a call
+                    // that's long over. 45s matches CallManager's own
+                    // RINGING_TIMEOUT_MS — if the caller would already have
+                    // stopped waiting by now, don't ring at all. Packets from
+                    // before this field existed (ts absent) are let through
+                    // rather than dropped, to fail open on old clients.
+                    val ts = json.optLong("ts", 0L)
+                    if (ts != 0L && System.currentTimeMillis() - ts > 45_000L) {
+                        Log.w(TAG, "call_request от $from проигнорирован — устарел на ${(System.currentTimeMillis() - ts) / 1000}с")
+                        return
+                    }
+
                     CallManager.init(this@MessengerService)
                     CallManager.handleIncomingCallRequest(from, callId, isVideo)
 

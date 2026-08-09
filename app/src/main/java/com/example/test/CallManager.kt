@@ -397,6 +397,13 @@ object CallManager {
             put("type", if (isVideo) "call_request_video" else "call_request_audio")
             put("to", targetId)
             put("call_id", callId)
+            // Lets the receiving end drop this as stale if it sat queued (no
+            // anon token available yet) long enough that the caller already
+            // gave up — see MessengerService's call_request_audio/video
+            // handler. Found live: a call request queued behind a token
+            // bootstrap delivered minutes late, ringing the callee for a
+            // call the caller had already abandoned.
+            put("ts", System.currentTimeMillis())
         })
 
         val cId = callId
