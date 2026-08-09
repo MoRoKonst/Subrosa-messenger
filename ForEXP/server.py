@@ -11,6 +11,7 @@ import threading
 import secrets
 import base64
 import hashlib
+import struct
 import tempfile
 import os
 from collections import defaultdict
@@ -79,6 +80,19 @@ channels = {}
 # ─── User avatars ──────────────────────────────────────────────────────────────
 # username → base64-encoded JPEG avatar (128×128, ~5-8 KB)
 user_avatars = {}
+
+# ─── Server-side registration TOTP ─────────────────────────────────────────────
+# username (fingerprint) → base32 TOTP secret. One secret per account, set once:
+# once present, "totp_setup" is refused for that username — an attacker who only
+# holds the stolen private key (e.g. from a leaked backup) cannot provision a
+# second, parallel secret to regain a working second factor. Disabling requires
+# a valid current code, not just the private key, for the same reason. See
+# docs/ISSUE_backup_identity_hijack.md, "Candidate fixes" — this closes the gap
+# at register() itself, on top of (not instead of) the client-side backup-import
+# TOTP check.
+user_totp_secrets = {}
+# username → last accepted 30s time-step counter, to reject code replay
+user_totp_last_counter = {}
 
 # ─── Federation ───────────────────────────────────────────────────────────────
 # Set env FEDERATION_SECRET to the same value on all servers (shared symmetric key).
@@ -186,6 +200,15 @@ def _db_setup_sync():
                 username   TEXT PRIMARY KEY,
                 avatar_b64 TEXT NOT NULL,
                 updated_at REAL NOT NULL
+            )
+        """)
+        # Server-side registration TOTP — one secret per account, see comment
+        # near user_totp_secrets above.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_totp (
+                username   TEXT PRIMARY KEY,
+                secret     TEXT NOT NULL,
+                created_at REAL NOT NULL
             )
         """)
         conn.commit()
@@ -305,6 +328,81 @@ def _db_save_avatar_sync(username, avatar_b64):
 async def db_save_avatar(username, avatar_b64):
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _db_save_avatar_sync, username, avatar_b64)
+
+
+def _db_load_totp_sync():
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("SELECT username, secret FROM user_totp").fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def _db_save_totp_sync(username, secret):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO user_totp (username, secret, created_at) VALUES (?, ?, ?)",
+            (username, secret, time.time())
+        )
+        conn.commit()
+
+
+def _db_delete_totp_sync(username):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM user_totp WHERE username = ?", (username,))
+        conn.commit()
+
+
+async def db_save_totp(username, secret):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _db_save_totp_sync, username, secret)
+
+
+async def db_delete_totp(username):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _db_delete_totp_sync, username)
+
+
+def _totp_code_at_counter(secret_b32: str, counter: int) -> str:
+    """RFC 6238 TOTP code (HMAC-SHA1, 6 digits) for a given 30s time-step counter."""
+    padded = secret_b32.strip().upper()
+    padded += "=" * ((8 - len(padded) % 8) % 8)
+    key = base64.b32decode(padded)
+    msg = struct.pack(">Q", counter)
+    digest = hmac.new(key, msg, hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    binary = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    return str(binary % 1_000_000).zfill(6)
+
+
+def totp_code_matches(secret_b32: str, code: str, window: int = 1):
+    """Returns the matching time-step counter if `code` is valid for `secret_b32`
+    within `window` steps of clock drift, else None."""
+    if not secret_b32 or not code:
+        return None
+    code = code.strip()
+    counter_now = int(time.time() // 30)
+    for drift in range(-window, window + 1):
+        try:
+            if hmac.compare_digest(_totp_code_at_counter(secret_b32, counter_now + drift), code):
+                return counter_now + drift
+        except Exception:
+            return None
+    return None
+
+
+def totp_verify_and_consume(username: str, code: str) -> bool:
+    """Verifies `code` against the account's stored secret and rejects replay of
+    an already-used time-step. Used for register() gating."""
+    secret = user_totp_secrets.get(username)
+    if not secret:
+        return False
+    matched = totp_code_matches(secret, code)
+    if matched is None:
+        return False
+    if matched <= user_totp_last_counter.get(username, -1):
+        print(f"[SECURITY] TOTP replay отклонён для {username}")
+        return False
+    user_totp_last_counter[username] = matched
+    return True
 
 
 async def db_store(recipient, payload_dict, msg_id=None):
@@ -766,6 +864,30 @@ async def send_fcm_wakeup(target_username: str):
     except Exception as e:
         print(f"[FCM] Ошибка wake-up для {target_username}: {e}")
 
+async def send_fcm_session_conflict(fcm_token: str, ts: float):
+    """Пушит ВИДИМОЕ уведомление (не silent data) о вытеснении сессии — должно
+    показаться даже если приложение свёрнуто/убито, а не только при активном
+    WebSocket-соединении. Токен уже известен (взят из вытесняемой сессии), без
+    доп. lookup по username."""
+    try:
+        if not _init_firebase():
+            return
+        from firebase_admin import messaging
+        msg = messaging.Message(
+            notification=messaging.Notification(
+                title="Активна сессия на другом устройстве",
+                body="Твой аккаунт только что открыли с нового устройства — эта сессия закрыта.",
+            ),
+            data={"type": "session_conflict", "ts": str(ts)},
+            android=messaging.AndroidConfig(priority="high"),
+            token=fcm_token
+        )
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, messaging.send, msg)
+        print(f"[FCM] session_conflict push отправлен")
+    except Exception as e:
+        print(f"[FCM] Ошибка session_conflict push: {e}")
+
 # ─── Обработчик клиента ───────────────────────────────────────────────────────
 
 async def handle_client(websocket):
@@ -909,7 +1031,9 @@ async def handle_client(websocket):
                 # ── Anonymous token routing ──
                 "subscribe_tokens", "anon_message",
                 # ── Anonymous Mailbox ──
-                "mailbox_put", "mailbox_fetch"
+                "mailbox_put", "mailbox_fetch",
+                # ── Server-side registration TOTP ──
+                "totp_setup", "totp_disable"
             ]
             if msg_type not in ALLOWED_TYPES:
                 print(f"[SECURITY] Неизвестный тип '{msg_type}' от {ip}")
@@ -940,6 +1064,18 @@ async def handle_client(websocket):
                 fingerprint = hashlib.sha256(key_bytes).digest()[:8].hex().upper()
                 username    = fingerprint
 
+                # If this account has server-side TOTP enabled, a valid, unused
+                # code is required to complete registration — proving possession
+                # of the private key alone (e.g. from a stolen backup) is no
+                # longer sufficient. Checked before touching any existing
+                # session so a failed/missing code never evicts the real owner.
+                if username in user_totp_secrets:
+                    totp_code = message.get("totp_code", "")
+                    if not totp_verify_and_consume(username, totp_code):
+                        print(f"[SECURITY] register: неверный/отсутствующий TOTP-код для {username} от {ip}")
+                        await send_safe(websocket, json.dumps({"type": "totp_required"}))
+                        continue
+
                 async with lock:
                     existing = clients.get(username)
                     if existing:
@@ -947,8 +1083,16 @@ async def handle_client(websocket):
                         if device_id and existing_device_id and device_id != existing_device_id:
                             # Другое устройство — вытесняем старую сессию
                             print(f"[SESSION_CONFLICT] {username}: новое устройство, закрываем старую сессию")
-                            asyncio.create_task(send_safe(existing["ws"], json.dumps({"type": "session_conflict"})))
+                            conflict_ts = time.time()
+                            asyncio.create_task(send_safe(existing["ws"], json.dumps({"type": "session_conflict", "ts": conflict_ts})))
                             asyncio.create_task(existing["ws"].close())
+                            # Old session may not be connected by the time this fires
+                            # (backgrounded/killed app) — push a visible notification
+                            # through FCM too, not just the WebSocket message, so the
+                            # user isn't only informed while the app happens to be open.
+                            existing_fcm_token = existing.get("fcm_token")
+                            if existing_fcm_token:
+                                asyncio.create_task(send_fcm_session_conflict(existing_fcm_token, conflict_ts))
                         else:
                             print(f"[RECONNECT] {username} переподключился")
                             asyncio.create_task(existing["ws"].close())
@@ -1973,18 +2117,15 @@ async def handle_client(websocket):
                         or not all(c in "0123456789abcdef" for c in tag)
                         or not isinstance(blob, str)
                         or len(blob) > MAILBOX_MAX_BLOB):
-                    print(f"[DEBUG-MAILBOX] put REJECTED from {username}: tag_len={len(tag)} blob_len={len(blob) if isinstance(blob, str) else 'N/A'} tag_hex_ok={all(c in '0123456789abcdef' for c in tag) if tag else False}")
                     continue
                 now = time.time()
                 async with lock:
                     # Чистим устаревшие блобы в этом слоте
                     existing = [e for e in mailbox.get(tag, []) if now - e["ts"] < MAILBOX_TTL]
                     if len(existing) >= 5:  # max 5 блобов на тег — защита от DoS
-                        print(f"[DEBUG-MAILBOX] put DROPPED (slot full, {len(existing)} blobs) from {username}: tag=...{tag[-8:]}")
                         continue
                     existing.append({"blob": blob, "ts": now})
                     mailbox[tag] = existing
-                print(f"[DEBUG-MAILBOX] put OK from {username}: tag=...{tag[-8:]} slot_now_has={len(existing)} blob_len={len(blob)}")
                 continue
 
             if msg_type == "mailbox_fetch":
@@ -2004,9 +2145,6 @@ async def handle_client(websocket):
                             result[tag] = [e["blob"] for e in blobs]
                             # Удаляем доставленные
                             del mailbox[tag]
-                queried_suffixes = ",".join(t[-8:] for t in tags)
-                stored_suffixes = ",".join(t[-8:] for t in mailbox.keys())
-                print(f"[DEBUG-MAILBOX] fetch by {username}: {len(tags)} tags queried [{queried_suffixes}], {len(result)} matched, mailbox currently has [{stored_suffixes}]")
                 if result:
                     await send_safe(websocket, json.dumps({"type": "mailbox_result", "blobs": result}))
                 continue
@@ -2019,6 +2157,45 @@ async def handle_client(websocket):
                         if username in clients:
                             clients[username]["fcm_token"] = token
                     print(f"[FCM] Токен сохранён для {username}")
+                continue
+
+            # ─── Server-side registration TOTP: one-time setup ─────────────────
+            # Refused outright if this account already has a secret — an account
+            # with a working TOTP secret can never have it silently replaced by
+            # someone who only holds the private key (e.g. a stolen backup).
+            if msg_type == "totp_setup":
+                if not username:
+                    continue
+                if username in user_totp_secrets:
+                    await send_safe(websocket, json.dumps({"type": "totp_setup_failed", "reason": "already_enabled"}))
+                    continue
+                secret = message.get("secret", "")
+                code   = message.get("code", "")
+                if not secret or totp_code_matches(secret, code) is None:
+                    await send_safe(websocket, json.dumps({"type": "totp_setup_failed", "reason": "invalid_code"}))
+                    continue
+                user_totp_secrets[username] = secret
+                asyncio.create_task(db_save_totp(username, secret))
+                print(f"[TOTP] Регистрационная защита включена для {username}")
+                await send_safe(websocket, json.dumps({"type": "totp_setup_ok"}))
+                continue
+
+            # ─── Server-side registration TOTP: disable ────────────────────────
+            # Requires a valid current code — proof of the secret, not just the
+            # private key — so a stolen backup+password alone can't turn this
+            # protection off either.
+            if msg_type == "totp_disable":
+                if not username or username not in user_totp_secrets:
+                    continue
+                code = message.get("code", "")
+                if not totp_verify_and_consume(username, code):
+                    await send_safe(websocket, json.dumps({"type": "totp_disable_failed"}))
+                    continue
+                del user_totp_secrets[username]
+                user_totp_last_counter.pop(username, None)
+                asyncio.create_task(db_delete_totp(username))
+                print(f"[TOTP] Регистрационная защита выключена для {username}")
+                await send_safe(websocket, json.dumps({"type": "totp_disable_ok"}))
                 continue
 
         if is_fed:
@@ -2238,10 +2415,13 @@ def start_server():
     prekey_bundles.update(loaded_bundles)
     loaded_avatars = _db_load_avatars_sync()
     user_avatars.update(loaded_avatars)
+    loaded_totp = _db_load_totp_sync()
+    user_totp_secrets.update(loaded_totp)
     print(f"[DB] Хранилище сообщений: {DB_PATH}")
     print(f"[DB] Каналов загружено из БД: {len(channels)}")
     print(f"[DB] Prekey bundles загружено: {len(loaded_bundles)}")
     print(f"[DB] Аватаров загружено: {len(loaded_avatars)}")
+    print(f"[DB] Аккаунтов с TOTP-защитой: {len(loaded_totp)}")
 
     # Печатаем строку подключения для пользователей
     if SERVER_URL:

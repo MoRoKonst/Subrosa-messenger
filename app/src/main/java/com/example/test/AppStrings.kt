@@ -244,6 +244,12 @@ interface IStr9 {
     val totpSecretLabel: String; val totpCodeLabel: String; val totpConfirmButton: String
     val totpErrInvalidCode: String; val totpEnabledSuccess: String
     val backupTotpSecretLabel: String; val backupTotpCodeLabel: String
+    val profileServerTotp: String
+    val serverTotpTitle: String; val serverTotpDescription: String
+    val serverTotpErrNotConnected: String; val serverTotpErrSetupFailed: String
+    val serverTotpErrDisableFailed: String; val serverTotpSetupSuccess: String
+    val serverTotpDisableSuccess: String; val serverTotpDisableCodeLabel: String
+    val serverTotpDisableButton: String
 }
 
 data class AppStrings(
@@ -717,6 +723,16 @@ private val ru9 = object : IStr9 {
     override val totpEnabledSuccess = "TOTP-защита включена"
     override val backupTotpSecretLabel = "TOTP-секрет (если был включён на исходном устройстве)"
     override val backupTotpCodeLabel = "Текущий TOTP-код"
+    override val profileServerTotp = "🔒 TOTP-защита входа на сервер"
+    override val serverTotpTitle = "TOTP-защита входа"
+    override val serverTotpDescription = "Сервер требует этот код при каждой регистрации/входе аккаунта. Секрет привязывается к аккаунту один раз и его нельзя перевыпустить — тот, у кого есть только украденный приватный ключ (например, из бэкапа), не сможет ни зайти под вашим аккаунтом, ни поставить свой секрет вместо вашего, ни выключить эту защиту без текущего кода."
+    override val serverTotpErrNotConnected = "Нет соединения с сервером"
+    override val serverTotpErrSetupFailed = "Не удалось включить — возможно, уже включено на этом аккаунте"
+    override val serverTotpErrDisableFailed = "Неверный код — выключение отклонено"
+    override val serverTotpSetupSuccess = "Защита входа включена"
+    override val serverTotpDisableSuccess = "Защита входа выключена"
+    override val serverTotpDisableCodeLabel = "Текущий код для выключения"
+    override val serverTotpDisableButton = "Выключить (нужен текущий код)"
 }
 
 val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9)
@@ -1178,6 +1194,16 @@ private val en9 = object : IStr9 {
     override val totpEnabledSuccess = "TOTP protection enabled"
     override val backupTotpSecretLabel = "TOTP secret (if it was enabled on the source device)"
     override val backupTotpCodeLabel = "Current TOTP code"
+    override val profileServerTotp = "🔒 Server login TOTP protection"
+    override val serverTotpTitle = "Login TOTP protection"
+    override val serverTotpDescription = "The server requires this code on every registration/login for your account. The secret is bound to the account once and can never be reissued — someone with only a stolen private key (e.g. from a backup) can neither log in as you, nor set their own secret in place of yours, nor turn this protection off without the current code."
+    override val serverTotpErrNotConnected = "No connection to the server"
+    override val serverTotpErrSetupFailed = "Could not enable — it may already be enabled on this account"
+    override val serverTotpErrDisableFailed = "Invalid code — disable refused"
+    override val serverTotpSetupSuccess = "Login protection enabled"
+    override val serverTotpDisableSuccess = "Login protection disabled"
+    override val serverTotpDisableCodeLabel = "Current code to disable"
+    override val serverTotpDisableButton = "Disable (requires current code)"
 }
 
 val enStrings = AppStrings("en", en1, en2, en3, en4, en5, en6, en7, en8, en9)

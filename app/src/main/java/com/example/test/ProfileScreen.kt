@@ -159,7 +159,8 @@ fun ProfileScreen(
     onOpenBackup: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onOpenWipeSettings: () -> Unit = {},
-    onOpenTotpSettings: () -> Unit = {}
+    onOpenTotpSettings: () -> Unit = {},
+    onOpenServerTotpSettings: () -> Unit = {}
 ) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
@@ -759,6 +760,8 @@ fun ProfileScreen(
                         PRow(s.profileBackup,     onClick = onOpenBackup,               trailing = { PChevron() })
                         PDivider()
                         PRow(s.profileTotp,       onClick = onOpenTotpSettings,         trailing = { PChevron() })
+                        PDivider()
+                        PRow(s.profileServerTotp, onClick = onOpenServerTotpSettings,   trailing = { PChevron() })
                         PDivider()
                         PRow(s.profileDiagnostics, onClick = onOpenDiagnostics,         trailing = { PChevron() })
                         PDivider()

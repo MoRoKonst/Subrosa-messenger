@@ -831,6 +831,7 @@ fun AppNavigation() {
         "security_diagnostics" -> SecurityDiagnosticsScreen(onBack = { screen = "profile" })
         "wipe_settings" -> WipeSettingsScreen(onBack = { screen = "profile" })
         "totp_settings" -> TotpSettingsScreen(onBack = { screen = "profile" })
+        "server_totp_settings" -> ServerTotpSettingsScreen(onBack = { screen = "profile" })
 
         "incoming_call" -> IncomingCallScreen(
             from    = callFromUser,
@@ -942,7 +943,8 @@ fun AppNavigation() {
             onOpenBackup = { screen = "backup" },
             onOpenDiagnostics = { screen = "security_diagnostics" },
             onOpenWipeSettings = { screen = "wipe_settings" },
-            onOpenTotpSettings = { screen = "totp_settings" }
+            onOpenTotpSettings = { screen = "totp_settings" },
+            onOpenServerTotpSettings = { screen = "server_totp_settings" }
         )
 
         "verify_key" -> VerifyKeyScreen(

@@ -136,6 +136,7 @@ class MessengerService : Service() {
     private var handshakeDone = false
     private var reconnectAttempts = 0
     private var failuresOnCurrentServer = 0
+    private var totpRequiredNotified = false
     private val MAX_FAILURES_BEFORE_SWITCH = 3
     private var username = ""
 
@@ -201,6 +202,8 @@ class MessengerService : Service() {
     var onGroupMessageReceived: ((String, GroupMessage) -> Unit)? = null
     var onGroupReactionReceived: ((String, String, String, String) -> Unit)? = null
     var onGroupInviteReceived: ((Group, String) -> Unit)? = null
+    var onTotpSetupResult: ((Boolean, String?) -> Unit)? = null
+    var onTotpDisableResult: ((Boolean) -> Unit)? = null
     var onChannelPostReceived: ((String, ChannelPost) -> Unit)? = null
     var onChannelCreated: ((Channel) -> Unit)? = null
     var onChannelPostDeleted: ((String, String) -> Unit)? = null
@@ -891,6 +894,32 @@ class MessengerService : Service() {
         coverTrafficJob = null
     }
 
+    /** One-time provisioning of the server-side registration TOTP secret.
+     * The server refuses this outright if a secret is already on file for
+     * this account, so it's only ever meaningful the first time. */
+    fun sendTotpSetup(secretBase32: String, code: String) {
+        if (!isConnected) {
+            onTotpSetupResult?.invoke(false, "not_connected")
+            return
+        }
+        sendWs(JSONObject().apply {
+            put("type", "totp_setup")
+            put("secret", secretBase32)
+            put("code", code)
+        }.toString())
+    }
+
+    fun sendTotpDisable(code: String) {
+        if (!isConnected) {
+            onTotpDisableResult?.invoke(false)
+            return
+        }
+        sendWs(JSONObject().apply {
+            put("type", "totp_disable")
+            put("code", code)
+        }.toString())
+    }
+
     private fun sendWs(json: String) {
         val mode = UserStorage.getCoverTrafficMode(this)
         if (mode == UserStorage.CoverTrafficMode.AGGRESSIVE && isConnected) {
@@ -992,6 +1021,7 @@ class MessengerService : Service() {
 
                 val displayName = UserStorage.getUsername(this@MessengerService)
                 val myAvatarB64 = UserStorage.getMyAvatar(this@MessengerService) ?: ""
+                val serverTotpSecret = TotpManager.getServerSecret(this@MessengerService)
                 sendWs(JSONObject().apply {
                     put("type", "register")
                     put("from", username)
@@ -1000,6 +1030,7 @@ class MessengerService : Service() {
                     put("protocol_version", ProtocolVersion.CURRENT_VERSION)
                     put("device_id", UserStorage.getDeviceId(this@MessengerService))
                     if (myAvatarB64.isNotEmpty()) put("avatar", myAvatarB64)
+                    if (serverTotpSecret != null) put("totp_code", TotpManager.currentCode(serverTotpSecret))
                 }.toString())
 
                 val contacts = ChatStorage.getContacts(this@MessengerService)
@@ -1109,6 +1140,7 @@ class MessengerService : Service() {
             "handshake_ok" -> {
                 isConnected = true
                 handshakeDone = true
+                totpRequiredNotified = false
                 Log.d(TAG, "Handshake завершён успешно")
                 PanicNotificationManager.show(this@MessengerService)
 
@@ -1153,6 +1185,38 @@ class MessengerService : Service() {
                     Log.d(TAG, "Prekey bundle republish по запросу сервера")
                 } catch (e: Exception) {
                     Log.e(TAG, "Ошибка republish prekey bundle: ${e.message}")
+                }
+            }
+
+            "totp_setup_ok" -> {
+                withContext(Dispatchers.Main) { onTotpSetupResult?.invoke(true, null) }
+            }
+
+            "totp_setup_failed" -> {
+                val reason = json.optString("reason", null)
+                withContext(Dispatchers.Main) { onTotpSetupResult?.invoke(false, reason) }
+            }
+
+            "totp_disable_ok" -> {
+                withContext(Dispatchers.Main) { onTotpDisableResult?.invoke(true) }
+            }
+
+            "totp_disable_failed" -> {
+                withContext(Dispatchers.Main) { onTotpDisableResult?.invoke(false) }
+            }
+
+            "totp_required" -> {
+                // Server rejected register() because this account has server-side
+                // TOTP enabled and no (or an invalid) code was presented — happens
+                // when a device doesn't locally hold the secret (e.g. a restored
+                // backup, by design: the secret is deliberately not part of any
+                // backup). There's no in-app "enter code to unlock this pending
+                // login" flow yet (docs/ISSUE_backup_identity_hijack.md notes this
+                // as a follow-up) — surface it once so it's not a silent, endless
+                // reconnect loop against the server.
+                if (!totpRequiredNotified) {
+                    totpRequiredNotified = true
+                    Log.e(TAG, "register отклонён сервером: требуется TOTP-код для этого аккаунта")
                 }
             }
 
