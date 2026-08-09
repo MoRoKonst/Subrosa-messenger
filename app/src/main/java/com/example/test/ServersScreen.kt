@@ -22,7 +22,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.clickable
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
+import androidx.core.content.ContextCompat
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import kotlinx.coroutines.delay
 
 private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
@@ -33,7 +41,7 @@ fun ServersScreen(onBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     var servers by remember { mutableStateOf(ServerManager.getServers(context)) }
     var fixedMode by remember { mutableStateOf(ServerManager.isFixedMode(context)) }
@@ -41,9 +49,61 @@ fun ServersScreen(onBack: () -> Unit) {
     var pendingCoverMode by remember { mutableStateOf<UserStorage.CoverTrafficMode?>(null) }
     var showCoverWarning by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
-    var newHost by remember { mutableStateOf("") }
-    var newPort by remember { mutableStateOf("9000") }
+    // One field instead of three: "myserver.com", "myserver.com:9000", or a
+    // full "wss://myserver.com:9000/path" all work — parsed on confirm below.
+    // Port only needs typing when it isn't the 9000 default.
+    var newAddress by remember { mutableStateOf("") }
     var newName by remember { mutableStateOf("") }
+    var addDialogError by remember { mutableStateOf("") }
+
+    fun addServerFromQr(payload: String?) {
+        if (payload == null) return
+        val server = parseServerQrPayload(payload)
+        if (server == null) {
+            addDialogError = s.serversQrInvalid
+            return
+        }
+        ServerManager.addServer(context, server)
+        servers = ServerManager.getServers(context)
+        showAddDialog = false
+        newAddress = ""
+        newName = ""
+        addDialogError = ""
+    }
+
+    val scanServerQrLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val scanned = result.contents
+        if (scanned == null) return@rememberLauncherForActivityResult // user cancelled, not an error
+        addServerFromQr(scanned)
+    }
+
+    val cameraPermLauncherForServer = rememberLauncherForActivityResult(RequestPermission()) { granted ->
+        if (granted) {
+            scanServerQrLauncher.launch(ScanOptions().apply {
+                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                setPrompt(s.serversScanQrPrompt)
+                setBeepEnabled(false)
+            })
+        } else {
+            addDialogError = s.profileCameraPermReq
+        }
+    }
+
+    val pickQrImageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val bitmap = try {
+            val stream = context.contentResolver.openInputStream(uri)
+            stream?.use { android.graphics.BitmapFactory.decodeStream(it) }
+        } catch (e: Exception) {
+            null
+        }
+        val decoded = bitmap?.let { decodeQrFromBitmap(it) }
+        if (decoded == null) {
+            addDialogError = s.serversQrNotFound
+        } else {
+            addServerFromQr(decoded)
+        }
+    }
 
     var isReallyConnected by remember { mutableStateOf(MessengerService.connected) }
     var currentServer by remember { mutableStateOf(ServerManager.getCurrentServer(context)) }
@@ -342,11 +402,11 @@ fun ServersScreen(onBack: () -> Unit) {
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
-                        value = newHost,
-                        onValueChange = { newHost = it },
+                        value = newAddress,
+                        onValueChange = { newAddress = it },
                         label = { Text(s.serversHost, fontFamily = AppFont) },
                         modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("192.168.1.6", fontFamily = AppFont) },
+                        placeholder = { Text("192.168.1.6  or  myserver.com:9000", fontFamily = AppFont) },
                         textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = c.accent,
@@ -358,49 +418,129 @@ fun ServersScreen(onBack: () -> Unit) {
                             cursorColor = c.accent
                         )
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = newPort,
-                        onValueChange = { newPort = it },
-                        label = { Text(s.serversPort, fontFamily = AppFont) },
-                        modifier = Modifier.fillMaxWidth(),
-                        textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = c.accent,
-                            unfocusedBorderColor = c.textPrimary.copy(alpha = 0.6f),
-                            focusedLabelColor = c.accent,
-                            unfocusedLabelColor = c.textPrimary.copy(alpha = 0.6f),
-                            focusedTextColor = c.textPrimary,
-                            unfocusedTextColor = c.textPrimary,
-                            cursorColor = c.accent
-                        )
-                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            addDialogError = ""
+                            val granted = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.CAMERA
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (granted) {
+                                scanServerQrLauncher.launch(ScanOptions().apply {
+                                    setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                    setPrompt(s.serversScanQrPrompt)
+                                    setBeepEnabled(false)
+                                })
+                            } else {
+                                cameraPermLauncherForServer.launch(Manifest.permission.CAMERA)
+                            }
+                        }) { Text(s.serversScanQrButton, color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
+
+                        OutlinedButton(onClick = {
+                            addDialogError = ""
+                            pickQrImageLauncher.launch("image/*")
+                        }) { Text(s.serversUploadQrButton, color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
+                    }
+
+                    if (addDialogError.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(addDialogError, color = c.error, fontFamily = AppFont, fontSize = 12.sp)
+                    }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (newHost.isNotEmpty()) {
+                    val (parsedHost, parsedPort) = parseServerAddress(newAddress)
+                    if (parsedHost.isNotEmpty()) {
                         ServerManager.addServer(
                             context,
                             ServerManager.Server(
-                                host = newHost,
-                                port = newPort.toIntOrNull() ?: 9000,
+                                host = parsedHost,
+                                port = parsedPort,
                                 name = newName
                             )
                         )
                         servers = ServerManager.getServers(context)
                         showAddDialog = false
-                        newHost = ""
-                        newPort = "9000"
+                        newAddress = ""
                         newName = ""
+                        addDialogError = ""
                     }
                 }) { Text(s.add, color = c.accent, fontFamily = AppFont) }
             },
             dismissButton = {
-                TextButton(onClick = { showAddDialog = false }) {
+                TextButton(onClick = { showAddDialog = false; addDialogError = "" }) {
                     Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
                 }
             }
         )
+    }
+}
+
+/** Turns whatever the user typed into (host, port) — accepts a bare host
+ *  ("myserver.com"), host:port ("myserver.com:9000"), or a full URL
+ *  ("wss://myserver.com:9000"). Defaults to port 9000 when none is given,
+ *  matching every default server entry elsewhere in this file. Reduces the
+ *  "add server" dialog from three fields (host, port, name) to two (address,
+ *  optional name) — the port rarely needs to be anything other than 9000. */
+/** Parses a scanned/uploaded server QR payload — `subrosa://server?host=...
+ *  &port=...&code=...&name=...`, `code`/`name` optional. Returns null if the
+ *  text isn't a recognizable Subrosa server link at all, so the caller can
+ *  show a clear "not a valid code" error instead of silently doing nothing.
+ *  See docs/ISSUE_backup_identity_hijack.md, "server-side allowlist" — `code`
+ *  is only meaningful for a server running SERVER_ACCESS_PROTECTED; a plain
+ *  link without one just carries the address, same as typing it manually. */
+private fun parseServerQrPayload(text: String): ServerManager.Server? {
+    return try {
+        val uri = android.net.Uri.parse(text.trim())
+        if (uri.scheme != "subrosa" || uri.host != "server") return null
+        val host = uri.getQueryParameter("host")?.takeIf { it.isNotBlank() } ?: return null
+        val port = uri.getQueryParameter("port")?.toIntOrNull() ?: 9000
+        val code = uri.getQueryParameter("code")?.takeIf { it.isNotBlank() }
+        val name = uri.getQueryParameter("name") ?: ""
+        ServerManager.Server(host = host, port = port, name = name, accessCode = code)
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/** Decodes a QR code from an already-loaded bitmap (uploaded image file, not
+ *  live camera) — for the case where the person only has a phone and the QR
+ *  arrived as a picture (chat, email) rather than something to point a
+ *  camera at. Returns null if no QR is found in the image at all. */
+private fun decodeQrFromBitmap(bitmap: android.graphics.Bitmap): String? {
+    return try {
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        val source = com.google.zxing.RGBLuminanceSource(width, height, pixels)
+        val binaryBitmap = com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(source))
+        com.google.zxing.MultiFormatReader().decode(binaryBitmap).text
+    } catch (e: Exception) {
+        null
+    }
+}
+
+private fun parseServerAddress(input: String): Pair<String, Int> {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return "" to 9000
+    return try {
+        if (trimmed.contains("://")) {
+            val uri = android.net.Uri.parse(trimmed)
+            val host = uri.host ?: trimmed
+            val port = if (uri.port != -1) uri.port else 9000
+            host to port
+        } else {
+            val parts = trimmed.split(":")
+            if (parts.size == 2) {
+                parts[0] to (parts[1].toIntOrNull() ?: 9000)
+            } else {
+                trimmed to 9000
+            }
+        }
+    } catch (e: Exception) {
+        trimmed to 9000
     }
 }

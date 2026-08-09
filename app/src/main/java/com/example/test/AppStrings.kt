@@ -85,6 +85,9 @@ interface IStr4 {
     val serversDefault: (Int) -> String; val serversConnected: String
     val serversConnecting: String; val serversAddTitle: String
     val serversName: String; val serversHost: String; val serversPort: String
+    val serversScanQrButton: String; val serversUploadQrButton: String
+    val serversScanQrPrompt: String; val serversQrInvalid: String; val serversQrNotFound: String
+    val serversAccessCodeRequired: String
     val groupInfoTitle: String; val groupInfoNotFound: String
     val groupInfoMembersCount: (Int) -> String; val groupInfoDescription: String
     val groupInfoAddDescription: String; val groupInfoNoDescription: String
@@ -411,6 +414,12 @@ private val ru4 = object : IStr4 {
     override val serversAddTitle = "Добавить сервер"
     override val serversName = "Название"
     override val serversHost = "Хост (IP или домен)"
+    override val serversScanQrButton = "📷 Сканировать QR"
+    override val serversUploadQrButton = "🖼 Загрузить QR-файл"
+    override val serversScanQrPrompt = "Наведи камеру на QR-код сервера"
+    override val serversQrInvalid = "Это не похоже на код сервера Subrosa"
+    override val serversQrNotFound = "QR-код не найден на фото"
+    override val serversAccessCodeRequired = "Этот сервер требует код доступа для регистрации — попроси у оператора QR-код или ссылку"
     override val serversPort = "Порт"
     override val groupInfoTitle = "Информация о группе"
     override val groupInfoNotFound = "Группа не найдена"
@@ -877,6 +886,12 @@ private val en4 = object : IStr4 {
     override val serversAddTitle = "Add server"
     override val serversName = "Name"
     override val serversHost = "Host (IP or domain)"
+    override val serversScanQrButton = "📷 Scan QR"
+    override val serversUploadQrButton = "🖼 Upload QR file"
+    override val serversScanQrPrompt = "Point the camera at the server's QR code"
+    override val serversQrInvalid = "This doesn't look like a Subrosa server code"
+    override val serversQrNotFound = "No QR code found in the photo"
+    override val serversAccessCodeRequired = "This server requires an access code to register — ask the operator for a QR code or link"
     override val serversPort = "Port"
     override val groupInfoTitle = "Group info"
     override val groupInfoNotFound = "Group not found"

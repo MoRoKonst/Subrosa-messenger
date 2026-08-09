@@ -1046,6 +1046,11 @@ class MessengerService : Service() {
                 // TOTP-protected backup import) can just always include the
                 // current code. See docs/ISSUE_backup_identity_hijack.md.
                 val totpSecret = TotpManager.getSecret(this@MessengerService)
+                // Only relevant for a server running SERVER_ACCESS_PROTECTED —
+                // sent unconditionally when present, same "let the server
+                // decide" principle as totp_code above. Harmless once already
+                // consumed or on a server that doesn't check it at all.
+                val accessCode = ServerManager.getCurrentServer(this@MessengerService)?.accessCode
                 sendWs(JSONObject().apply {
                     put("type", "register")
                     put("from", username)
@@ -1055,6 +1060,7 @@ class MessengerService : Service() {
                     put("device_id", UserStorage.getDeviceId(this@MessengerService))
                     if (myAvatarB64.isNotEmpty()) put("avatar", myAvatarB64)
                     if (totpSecret != null) put("totp_code", TotpManager.currentCode(totpSecret))
+                    if (!accessCode.isNullOrBlank()) put("access_code", accessCode)
                 }.toString())
 
                 val contacts = ChatStorage.getContacts(this@MessengerService)
@@ -1263,6 +1269,20 @@ class MessengerService : Service() {
                 if (!totpRequiredNotified) {
                     totpRequiredNotified = true
                     Log.e(TAG, "register отклонён сервером: новое устройство требует TOTP-код")
+                }
+            }
+
+            "access_code_required" -> {
+                // Server has SERVER_ACCESS_PROTECTED on and rejected this as a
+                // first-ever registration with no/invalid access_code — unlike
+                // totp_required (an existing account on a new device), this is
+                // typically a brand-new user staring at the register screen
+                // right now, so worth a visible signal, not just a log line.
+                Log.e(TAG, "register отклонён сервером: требуется код доступа для нового аккаунта")
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        this@MessengerService, s.serversAccessCodeRequired, android.widget.Toast.LENGTH_LONG
+                    ).show()
                 }
             }
 

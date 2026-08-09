@@ -23,12 +23,18 @@ import argparse
 import base64
 import hashlib
 import hmac
+import io
 import os
 import struct
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# Same UTF-8 stdout reconfiguration as server.py — without it, Cyrillic
+# output can break on a Windows console using a non-UTF-8 codepage.
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
 
 TIME_STEP_SECONDS = 30
 CODE_DIGITS = 6

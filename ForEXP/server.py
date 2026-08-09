@@ -14,6 +14,7 @@ import hashlib
 import struct
 import tempfile
 import os
+import urllib.parse
 from collections import defaultdict
 
 if hasattr(sys.stdout, 'buffer'):
@@ -99,6 +100,21 @@ user_avatars = {}
 user_totp_secrets = {}
 # username → last accepted 30s time-step counter, to reject code replay
 user_totp_last_counter = {}
+
+# ─── Optional server access-code allowlist ─────────────────────────────────────
+# Off by default (personal self-hosting doesn't need this — it's for a private/
+# business deployment that wants to control who can even create an account).
+# Enabled via SERVER_ACCESS_PROTECTED. When on, a fingerprint's very FIRST-EVER
+# register() on this server must include a valid, unused access_code — never
+# required again afterward (checked against `registered_fingerprints`, not the
+# in-memory `clients` dict, so it survives restarts and reconnects). Codes are
+# generated at startup (SERVER_ACCESS_CODE_COUNT) or any time later via
+# ForEXP/admin_gen_codes.py, which writes straight into the same SQLite file —
+# register() always reads the DB live, so no server restart is needed to add
+# more. All code validity/consumption logic lives here, server-side, on
+# purpose — the client only ever passes through whatever it scanned, it never
+# decides whether a code is required or valid.
+SERVER_ACCESS_PROTECTED = os.environ.get("SERVER_ACCESS_PROTECTED", "").strip().lower() in ("1", "true", "yes")
 
 # ─── Federation ───────────────────────────────────────────────────────────────
 # Set env FEDERATION_SECRET to the same value on all servers (shared symmetric key).
@@ -215,6 +231,26 @@ def _db_setup_sync():
                 username   TEXT PRIMARY KEY,
                 secret     TEXT NOT NULL,
                 created_at REAL NOT NULL
+            )
+        """)
+        # Optional access-code allowlist — see SERVER_ACCESS_PROTECTED above.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS server_access_codes (
+                code       TEXT PRIMARY KEY,
+                used       INTEGER NOT NULL DEFAULT 0,
+                used_by    TEXT,
+                used_at    REAL,
+                created_at REAL NOT NULL
+            )
+        """)
+        # Every fingerprint that has EVER completed register() on this server —
+        # not the same as `clients` (in-memory, only currently-connected).
+        # Existence here is what makes the access-code check a one-time,
+        # first-registration-only gate instead of firing on every reconnect.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS registered_fingerprints (
+                fingerprint         TEXT PRIMARY KEY,
+                first_registered_at REAL NOT NULL
             )
         """)
         conn.commit()
@@ -365,6 +401,88 @@ async def db_save_totp(username, secret):
 async def db_delete_totp(username):
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _db_delete_totp_sync, username)
+
+
+def _db_gen_access_codes_sync(count):
+    codes = [secrets.token_hex(4).upper() for _ in range(count)]
+    with sqlite3.connect(DB_PATH) as conn:
+        now = time.time()
+        for c in codes:
+            conn.execute(
+                "INSERT OR IGNORE INTO server_access_codes (code, used, created_at) VALUES (?, 0, ?)",
+                (c, now)
+            )
+        conn.commit()
+    return codes
+
+
+def _db_count_access_codes_sync():
+    with sqlite3.connect(DB_PATH) as conn:
+        total = conn.execute("SELECT COUNT(*) FROM server_access_codes").fetchone()[0]
+        unused = conn.execute("SELECT COUNT(*) FROM server_access_codes WHERE used = 0").fetchone()[0]
+    return total, unused
+
+
+def _db_check_and_consume_access_code_sync(code, fingerprint):
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT used FROM server_access_codes WHERE code = ?", (code,)).fetchone()
+        if row is None or row[0]:
+            return False
+        conn.execute(
+            "UPDATE server_access_codes SET used = 1, used_by = ?, used_at = ? WHERE code = ?",
+            (fingerprint, time.time(), code)
+        )
+        conn.commit()
+        return True
+
+
+def _db_is_fingerprint_registered_sync(fingerprint):
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM registered_fingerprints WHERE fingerprint = ?", (fingerprint,)
+        ).fetchone()
+    return row is not None
+
+
+def _db_mark_fingerprint_registered_sync(fingerprint):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO registered_fingerprints (fingerprint, first_registered_at) VALUES (?, ?)",
+            (fingerprint, time.time())
+        )
+        conn.commit()
+
+
+async def db_check_and_consume_access_code(code, fingerprint):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _db_check_and_consume_access_code_sync, code, fingerprint)
+
+
+async def db_is_fingerprint_registered(fingerprint):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _db_is_fingerprint_registered_sync, fingerprint)
+
+
+async def db_mark_fingerprint_registered(fingerprint):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _db_mark_fingerprint_registered_sync, fingerprint)
+
+
+def build_access_link(code):
+    """Turns a bare access code into a scannable subrosa://server?... link,
+    using SERVER_URL for the address — same link format the Android client's
+    parseServerQrPayload() expects. Returns just the code (with a manual-setup
+    note) if SERVER_URL isn't configured, since there's no address to embed."""
+    if not SERVER_URL:
+        return None
+    try:
+        raw = SERVER_URL if "://" in SERVER_URL else f"wss://{SERVER_URL}"
+        parsed = urllib.parse.urlparse(raw)
+        host = parsed.hostname or SERVER_URL
+        port = parsed.port or 9000
+        return f"subrosa://server?host={host}&port={port}&code={code}"
+    except Exception:
+        return None
 
 
 def _totp_code_at_counter(secret_b32: str, counter: int) -> str:
@@ -1073,6 +1191,19 @@ async def handle_client(websocket):
                 fingerprint = hashlib.sha256(key_bytes).digest()[:8].hex().upper()
                 username    = fingerprint
 
+                # Optional access-code allowlist — see SERVER_ACCESS_PROTECTED.
+                # Only for this fingerprint's very first-ever registration; a
+                # client is free to keep sending a (by then already-consumed,
+                # or simply absent) access_code on every later reconnect —
+                # harmless, since it's not even looked at once the fingerprint
+                # is already known.
+                if SERVER_ACCESS_PROTECTED and not await db_is_fingerprint_registered(username):
+                    access_code = (message.get("access_code") or "").strip().upper()
+                    if not access_code or not await db_check_and_consume_access_code(access_code, username):
+                        print(f"[SECURITY] register: неверный/отсутствующий access_code для нового аккаунта {username} от {ip}")
+                        await send_safe(websocket, json.dumps({"type": "access_code_required"}))
+                        continue
+
                 totp_rejected = False
                 async with lock:
                     existing = clients.get(username)
@@ -1128,6 +1259,7 @@ async def handle_client(websocket):
                     cleanup_stale_rate_limits()
 
                 print(f"[OK] Зарегистрирован: {username}")
+                asyncio.create_task(db_mark_fingerprint_registered(username))
 
                 # ── Обмен аватарами ───────────────────────────────────────────
                 incoming_avatar = message.get("avatar", "")
@@ -2452,6 +2584,28 @@ def start_server():
     print(f"[DB] Prekey bundles загружено: {len(loaded_bundles)}")
     print(f"[DB] Аватаров загружено: {len(loaded_avatars)}")
     print(f"[DB] Аккаунтов с TOTP-защитой (новых устройств): {len(loaded_totp)}")
+
+    if SERVER_ACCESS_PROTECTED:
+        total_codes, unused_codes = _db_count_access_codes_sync()
+        if total_codes == 0:
+            want_count = int(os.environ.get("SERVER_ACCESS_CODE_COUNT", "0") or "0")
+            if want_count > 0:
+                new_codes = _db_gen_access_codes_sync(want_count)
+                print(f"[ACCESS] SERVER_ACCESS_PROTECTED включён — сгенерировано {len(new_codes)} одноразовых кодов доступа:")
+                for c in new_codes:
+                    link = build_access_link(c)
+                    if link:
+                        print(f"[ACCESS]   {c}   →   {link}")
+                    else:
+                        print(f"[ACCESS]   {c}   (SERVER_URL не задан — ссылку/QR собери вручную)")
+                print("[ACCESS] Раздай ссылки пользователям (сгенерируй QR из ссылки любым генератором — "
+                      "в приложении есть сканер и загрузка QR-файла). Ещё коды позже — без рестарта: "
+                      "python3 ForEXP/admin_gen_codes.py <N>")
+            else:
+                print("[ACCESS] SERVER_ACCESS_PROTECTED включён, но кодов нет и SERVER_ACCESS_CODE_COUNT не задан — "
+                      "никто новый не сможет зарегистрироваться. Запусти: python3 ForEXP/admin_gen_codes.py <N>")
+        else:
+            print(f"[ACCESS] SERVER_ACCESS_PROTECTED включён, неиспользованных кодов: {unused_codes}/{total_codes}")
 
     # Печатаем строку подключения для пользователей
     if SERVER_URL:
