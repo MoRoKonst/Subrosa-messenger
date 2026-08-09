@@ -1288,10 +1288,68 @@ file.
     **Not done**: no live-device/browser visual or contrast-accessibility
     check on any of the three surfaces — this was a mechanical value swap,
     not a redesign pass.
-15. Optional server-side client access-list/allowlist — explicitly
-    "needs more thought," not yet concretely scoped. Noted tradeoff: adds
-    a failure point/friction that cuts against the product's own
-    self-hosting-should-be-easy goal.
+15. ~~Optional server-side client access-list/allowlist~~ — **done**.
+    Original note said "needs more thought" — turned out the real blocker
+    was that a fingerprint-based allowlist is a chicken-and-egg problem
+    (the operator has no way to learn someone's fingerprint before they've
+    even installed the app). Reframed as **one-time access codes handed
+    out by the operator**, distributed as a scannable QR/link, closes the
+    same gap (private/business server rejects registration from anyone
+    the operator didn't explicitly invite) without needing to know
+    anything about the person in advance.
+
+    **Server (`server.py`)**: off by default (`SERVER_ACCESS_PROTECTED`),
+    personal self-hosting is entirely unaffected. When on, a fingerprint's
+    **very first-ever** `register()` on this server (tracked in a new
+    `registered_fingerprints` table, not the in-memory `clients` dict, so
+    it survives restarts) must include a valid, unused `access_code` —
+    never checked again on later reconnects, so it doesn't add friction to
+    normal use once an account exists. Codes: `server_access_codes` SQLite
+    table, one-time (consumed on first successful use), generated at
+    startup (`SERVER_ACCESS_CODE_COUNT`) or any time later via new
+    **`ForEXP/admin_gen_codes.py`** — writes straight into the same DB
+    file, `register()` always reads it live, so no restart needed to add
+    more (same "separate admin script" pattern as `admin_logs.py`). Both
+    the startup printout and the script build a ready `subrosa://server?
+    host=...&port=...&code=...` link via `SERVER_URL`, not just the bare
+    code — the operator has something to turn into a QR immediately.
+    Found one real bug only by actually running `admin_gen_codes.py`
+    instead of just `ast.parse`-checking it: an arrow character in the
+    printed output broke on a Windows console using a non-UTF-8 codepage.
+    Fixed there and added the same UTF-8 stdout reconfiguration `server.py`
+    already had to `admin_logs.py` too, which had the identical latent
+    risk and was never actually run to catch it.
+
+    **Client (Android only)**: `ServerManager.Server` gained an optional
+    `accessCode` field, sent with every `register()` when present (client
+    never decides whether it's required — that's entirely the server's
+    call, matching the same principle as `totp_code`). "Add server"
+    dialog (`ServersScreen.kt`) gained two new entry points alongside the
+    existing manual text field: **scan with camera** and **upload a QR
+    image file** (for someone who only has a phone and received the QR as
+    a picture, not something to point a camera at) — both already
+    possible with existing dependencies (`zxing-android-embedded` for the
+    camera scanner, already used for contact invite codes; `zxing:core`
+    for decoding an uploaded bitmap directly, no new library needed for
+    either). Explicit error shown if no QR is found in an uploaded photo,
+    or if a scanned/uploaded code isn't a recognizable `subrosa://server`
+    link. Server-side rejection (`access_code_required`) surfaces as a
+    visible Toast, not just a log line — unlike the device-gated TOTP's
+    silent `totp_required` (an *existing* account being denied a new
+    device), this is typically a brand-new user staring at the register
+    screen right now.
+
+    **Not done**: Desktop (no camera-scan UI there, out of scope this
+    pass), no image-generation of the QR itself server-side — the
+    operator pastes the printed link into any external QR generator, or
+    just sends the raw text link (the client's manual-entry field doesn't
+    currently parse the `subrosa://` URI form, only bare host/host:port/
+    wss:// — a gap worth closing later so the text link alone is enough
+    without a QR image at all). `compileDebugKotlin` + `ast.parse` +
+    one live functional run of `admin_gen_codes.py` (generate → build
+    link → persist to a real SQLite file → verify contents) all green.
+    No live two-device registration test against a running protected
+    server.
 
 ---
 

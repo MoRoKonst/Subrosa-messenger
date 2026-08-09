@@ -15,7 +15,14 @@ object ServerManager {
         val port: Int = 9000,
         val name: String = "",
         val enabled: Boolean = true,
-        val path: String = ""
+        val path: String = "",
+        // One-time access code from a server's QR/link (see
+        // docs/ISSUE_backup_identity_hijack.md, "server-side allowlist") — sent
+        // with every register() to this server. Harmless once consumed/if the
+        // server isn't in protected mode: the server only ever looks at it for
+        // this account's very first registration, ignored on every reconnect
+        // after. Not required — most servers have none.
+        val accessCode: String? = null
     ) {
         fun toWssUrl(): String {
 
@@ -57,11 +64,12 @@ object ServerManager {
             val servers = (0 until array.length()).map { i ->
                 val obj = array.getJSONObject(i)
                 Server(
-                    host    = obj.getString("host"),
-                    port    = obj.optInt("port", 443),
-                    name    = obj.optString("name", ""),
-                    enabled = obj.optBoolean("enabled", true),
-                    path    = obj.optString("path", "")
+                    host       = obj.getString("host"),
+                    port       = obj.optInt("port", 443),
+                    name       = obj.optString("name", ""),
+                    enabled    = obj.optBoolean("enabled", true),
+                    path       = obj.optString("path", ""),
+                    accessCode = obj.optString("accessCode", null)
                 )
             }
 
@@ -91,6 +99,7 @@ object ServerManager {
                 put("name", server.name)
                 put("enabled", server.enabled)
                 put("path", server.path)
+                if (server.accessCode != null) put("accessCode", server.accessCode)
             })
         }
         prefs.edit().putString(KEY_SERVERS, array.toString()).apply()
@@ -129,7 +138,7 @@ object ServerManager {
     }
 
     private fun getDefaultServers() = listOf(
-        Server("api.subrosamessenger.com", 443, "Основной сервер", true, "ws"),
+        Server("api.subrosamessenger.com", 8443, "Основной сервер", true, "ws"), // TEMP: :8443 напрямую в обход Cloudflare, пока не починим проксирование WS. Вернуть на 443, когда почините.
         Server("ws://amqvpheooju3fg7tafxkmf73c3vg4xg7nycelepiie6jdjzbsqrvrcqd.onion", 80, "Onion (Tor)", true, "")
     )
 
