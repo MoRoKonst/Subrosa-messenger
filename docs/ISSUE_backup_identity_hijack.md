@@ -1206,15 +1206,20 @@ file.
     path construction or signature check, so legitimate transfers (UUID-based
     file_id) are unaffected. Compiles clean on both platforms.
     ~~**Noted but not fixed**: Desktop's `handleFileChunk` doesn't verify a
-    chunk signature at all~~ — **done, separate later pass**. Added the
-    same `senderKey`/`CryptoManager.verifyChunk(...)` check Android already
-    had, right at the top of `handleFileChunk` before any chunk is
-    buffered/decrypted — a malicious or compromised contact could
-    previously inject arbitrary chunk data attributed to themselves with
-    no valid signature required at all. `image_chunk`/`video_chunk`
-    handling on Desktop **not** audited for the same gap this pass — only
-    the specifically-flagged `file_chunk` path was in scope. Compiles
-    clean. Desktop isn't tracked in this repo.
+    chunk signature at all~~ — **done, both `file_chunk` and
+    `image_chunk`**. Added the same `senderKey`/`CryptoManager.verifyChunk(...)`
+    check Android already had, right at the top of each handler before any
+    chunk is buffered/decrypted — a malicious or compromised contact could
+    previously inject arbitrary chunk data attributed to themselves with no
+    valid signature required at all. Worth noting: the sending side signs
+    via `DesktopCryptoManager.signChunk()` while verification uses
+    `CryptoManager.verifyChunk()` — different class facades, but both
+    ultimately resolve to the exact same `DesktopKeyStore`-backed keypair
+    (`CryptoManager.getSoftwareKeyPair()` and `DesktopCryptoManager.keyPair`
+    are the same key on disk), confirmed by reading through both before
+    trusting the cross-class check. `video_chunk` has no handler on Desktop
+    at all — that feature (video circles) doesn't exist there, nothing to
+    fix. Compiles clean. Desktop isn't tracked in this repo.
 12a. Leftover "B-CON" brand-string tail from the rebrand, found while
     looking at ChatsScreen — fixed: header text on ChatsScreen ("B-CON"→
     "SUBROSA"), theme name ("Синяя"/"Navy" → "Бордовая"/"Burgundy" to match
