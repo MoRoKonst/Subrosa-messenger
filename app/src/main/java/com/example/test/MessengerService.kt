@@ -202,9 +202,6 @@ class MessengerService : Service() {
     var onGroupMessageReceived: ((String, GroupMessage) -> Unit)? = null
     var onGroupReactionReceived: ((String, String, String, String) -> Unit)? = null
     var onGroupInviteReceived: ((Group, String) -> Unit)? = null
-    var onTotpSetupResult: ((Boolean, String?) -> Unit)? = null
-    var onTotpDisableResult: ((Boolean) -> Unit)? = null
-    var onAdminLogsResult: ((Boolean, String?) -> Unit)? = null
     var onChannelPostReceived: ((String, ChannelPost) -> Unit)? = null
     var onChannelCreated: ((Channel) -> Unit)? = null
     var onChannelPostDeleted: ((String, String) -> Unit)? = null
@@ -902,45 +899,6 @@ class MessengerService : Service() {
     private fun rosterPayload(groupId: String, members: List<String>, admins: List<String>): String =
         "$groupId|${members.joinToString(",")}|${admins.joinToString(",")}"
 
-    /** One-time provisioning of the server-side registration TOTP secret.
-     * The server refuses this outright if a secret is already on file for
-     * this account, so it's only ever meaningful the first time. */
-    fun sendTotpSetup(secretBase32: String, code: String) {
-        if (!isConnected) {
-            onTotpSetupResult?.invoke(false, "not_connected")
-            return
-        }
-        sendWs(JSONObject().apply {
-            put("type", "totp_setup")
-            put("secret", secretBase32)
-            put("code", code)
-        }.toString())
-    }
-
-    fun sendTotpDisable(code: String) {
-        if (!isConnected) {
-            onTotpDisableResult?.invoke(false)
-            return
-        }
-        sendWs(JSONObject().apply {
-            put("type", "totp_disable")
-            put("code", code)
-        }.toString())
-    }
-
-    /** Only succeeds if this account is the server's configured admin
-     * (ADMIN_FINGERPRINT) and the code is valid — a normal user account
-     * will always get admin_get_logs_failed here, harmlessly. */
-    fun sendAdminGetLogs(code: String) {
-        if (!isConnected) {
-            onAdminLogsResult?.invoke(false, null)
-            return
-        }
-        sendWs(JSONObject().apply {
-            put("type", "admin_get_logs")
-            put("code", code)
-        }.toString())
-    }
 
     private fun sendWs(json: String) {
         val mode = UserStorage.getCoverTrafficMode(this)
@@ -1205,32 +1163,6 @@ class MessengerService : Service() {
                 } catch (e: Exception) {
                     Log.e(TAG, "Ошибка republish prekey bundle: ${e.message}")
                 }
-            }
-
-            "totp_setup_ok" -> {
-                withContext(Dispatchers.Main) { onTotpSetupResult?.invoke(true, null) }
-            }
-
-            "totp_setup_failed" -> {
-                val reason = json.optString("reason", null)
-                withContext(Dispatchers.Main) { onTotpSetupResult?.invoke(false, reason) }
-            }
-
-            "totp_disable_ok" -> {
-                withContext(Dispatchers.Main) { onTotpDisableResult?.invoke(true) }
-            }
-
-            "totp_disable_failed" -> {
-                withContext(Dispatchers.Main) { onTotpDisableResult?.invoke(false) }
-            }
-
-            "admin_logs" -> {
-                val data = json.optString("data", "")
-                withContext(Dispatchers.Main) { onAdminLogsResult?.invoke(true, data) }
-            }
-
-            "admin_get_logs_failed" -> {
-                withContext(Dispatchers.Main) { onAdminLogsResult?.invoke(false, null) }
             }
 
             "mailbox_result" -> handleMailboxResult(json)
