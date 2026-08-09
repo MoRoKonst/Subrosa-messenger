@@ -53,7 +53,7 @@ import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlin.math.absoluteValue
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import com.subrosa.messenger.ui.theme.SubrosaTheme
 import com.subrosa.messenger.ui.theme.subrosaColorsFor
 import kotlinx.coroutines.Dispatchers
@@ -71,7 +71,7 @@ private fun extractFingerprint(inviteCode: String): String? {
 
 @Composable
 private fun PSection(label: String) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     Text(
         text = label.uppercase(),
         modifier = Modifier
@@ -93,7 +93,7 @@ private fun PRow(
     onClick: (() -> Unit)? = null,
     trailing: @Composable () -> Unit = {}
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -124,7 +124,7 @@ private fun PRow(
 
 @Composable
 private fun PDivider() {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     HorizontalDivider(
         modifier = Modifier.padding(horizontal = 20.dp),
         color = c.textPrimary.copy(alpha = 0.08f),
@@ -134,7 +134,7 @@ private fun PDivider() {
 
 @Composable
 private fun PChevron() {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     Icon(
         imageVector = Icons.Default.KeyboardArrowRight,
         contentDescription = null,
@@ -158,12 +158,13 @@ fun ProfileScreen(
     onOpenServers: () -> Unit,
     onOpenBackup: () -> Unit,
     onOpenDiagnostics: () -> Unit,
-    onOpenWipeSettings: () -> Unit = {}
+    onOpenWipeSettings: () -> Unit = {},
+    onOpenTotpSettings: () -> Unit = {}
 ) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
     var showNotMeConfirm   by remember { mutableStateOf(false) }
@@ -331,7 +332,7 @@ fun ProfileScreen(
 
     val avatarColor = remember(displayName) {
         listOf(
-            Color(0xFF2481CC), Color(0xFFE74C3C), Color(0xFF27AE60),
+            Color(0xFFC77B4F), Color(0xFFE74C3C), Color(0xFF27AE60),
             Color(0xFFF39C12), Color(0xFF9B59B6), Color(0xFF1ABC9C)
         )[displayName.hashCode().absoluteValue % 6]
     }
@@ -757,6 +758,7 @@ fun ProfileScreen(
                         PDivider()
                         PRow(s.profileBackup,     onClick = onOpenBackup,               trailing = { PChevron() })
                         PDivider()
+                        PRow(s.profileTotp,       onClick = onOpenTotpSettings,         trailing = { PChevron() })
                         PDivider()
                         PRow(s.profileDiagnostics, onClick = onOpenDiagnostics,         trailing = { PChevron() })
                         PDivider()

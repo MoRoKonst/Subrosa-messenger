@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.size
 import androidx.core.content.FileProvider
 import java.io.File
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -36,7 +36,7 @@ fun BackupScreen(onBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val scope = rememberCoroutineScope()
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     var password by remember { mutableStateOf("") }
@@ -45,6 +45,8 @@ fun BackupScreen(onBack: () -> Unit) {
     var isError by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var pendingBackupContent by remember { mutableStateOf<String?>(null) }
+    var totpSecretInput by remember { mutableStateOf("") }
+    var totpCodeInput by remember { mutableStateOf("") }
 
     val saveFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -80,13 +82,15 @@ fun BackupScreen(onBack: () -> Unit) {
                         ?.bufferedReader()?.readText() ?: ""
                 }
                 val result = withContext(Dispatchers.IO) {
-                    BackupManager.importBackup(context, content, pwd)
+                    BackupManager.importBackup(context, content, pwd, totpSecretInput, totpCodeInput)
                 }
                 if (result.isSuccess) {
                     message = "✓ ${result.getOrNull()}"
                     isError = false
                     password = ""
                     confirmPassword = ""
+                    totpSecretInput = ""
+                    totpCodeInput = ""
                 } else {
                     message = s.error(result.exceptionOrNull()?.message ?: "")
                     isError = true
@@ -264,6 +268,28 @@ fun BackupScreen(onBack: () -> Unit) {
                         Text("В файлы", fontFamily = AppFont, color = Color.White, fontSize = 13.sp)
                     }
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = totpSecretInput,
+                    onValueChange = { totpSecretInput = it },
+                    label = { Text(s.backupTotpSecretLabel, fontFamily = AppFont) },
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
+                    colors = fieldColors
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = totpCodeInput,
+                    onValueChange = { totpCodeInput = it },
+                    label = { Text(s.backupTotpCodeLabel, fontFamily = AppFont) },
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
+                    colors = fieldColors
+                )
 
                 Spacer(modifier = Modifier.height(8.dp))
 

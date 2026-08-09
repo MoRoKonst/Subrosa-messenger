@@ -37,6 +37,7 @@ object BackupManager {
         val backup = JSONObject().apply {
             put("version", 6)
             put("timestamp", System.currentTimeMillis())
+            put("totp_enabled", TotpManager.isEnabled(context))
             put("username", username)
             put("display_name", displayName)
 
@@ -131,7 +132,13 @@ object BackupManager {
         return result
     }
 
-    fun importBackup(context: Context, encryptedData: String, password: String): Result<String> {
+    fun importBackup(
+        context: Context,
+        encryptedData: String,
+        password: String,
+        totpSecret: String? = null,
+        totpCode: String? = null
+    ): Result<String> {
         return try {
             val decryptedBytes = decryptBackup(encryptedData, password)
 
@@ -145,6 +152,19 @@ object BackupManager {
 
             val backup = JSONObject(String(jsonBytes, Charsets.UTF_8))
             jsonBytes.fill(0)
+
+            if (backup.optBoolean("totp_enabled", false)) {
+                if (totpSecret.isNullOrBlank() || totpCode.isNullOrBlank()) {
+                    return Result.failure(IllegalStateException("Этот бэкап защищён TOTP — введите секрет и текущий код"))
+                }
+                if (!TotpManager.verifyCode(totpSecret, totpCode)) {
+                    return Result.failure(IllegalStateException("Неверный TOTP-код"))
+                }
+                if (!StorageKeyManager.isUnlocked) {
+                    return Result.failure(IllegalStateException("Приложение заблокировано — сначала разблокируйте его, чтобы импортировать бэкап"))
+                }
+                TotpManager.enable(context, totpSecret)
+            }
 
             val username = UserStorage.getUserId(context)
             val version = backup.optInt("version", 1)

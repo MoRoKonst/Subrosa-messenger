@@ -30,7 +30,7 @@ import androidx.fragment.app.FragmentActivity
 import com.subrosa.messenger.ui.theme.TESTTheme
 import com.subrosa.messenger.ui.theme.SubrosaTheme
 import com.subrosa.messenger.ui.theme.subrosaColorsFor
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import java.io.File
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.Dispatchers
@@ -260,13 +260,13 @@ class MainActivity : FragmentActivity() {
                             },
                             dismissButton = {
                                 TextButton(onClick = { finish() }) {
-                                    Text(s.close, color = Color(0xFF00E5FF), fontFamily = appFont)
+                                    Text(s.close, color = Color(0xFFD9A566), fontFamily = appFont)
                                 }
                             }
                         )
                         result?.level == RootDetector.RootLevel.WARNING -> AlertDialog(
                             onDismissRequest = { rootCheckResult = null },
-                            containerColor = Color(0xFF091a66),
+                            containerColor = Color(0xFF4A151A),
                             title = { Text(s.rootWarningTitle, color = Color(0xFFFFCC00), fontFamily = appFont) },
                             text = {
                                 Column {
@@ -287,7 +287,7 @@ class MainActivity : FragmentActivity() {
                             },
                             confirmButton = {
                                 TextButton(onClick = { rootCheckResult = null }) {
-                                    Text(s.rootWarningConfirm, color = Color(0xFF00E5FF), fontFamily = appFont)
+                                    Text(s.rootWarningConfirm, color = Color(0xFFD9A566), fontFamily = appFont)
                                 }
                             }
                         )
@@ -546,7 +546,7 @@ class MainActivity : FragmentActivity() {
 
 @Composable
 fun TorLoadingScreen(progress: Int, status: String) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val appFont = FontFamily(Font(R.font.jetbrainsmono_regular))
 
     Box(
@@ -562,7 +562,7 @@ fun TorLoadingScreen(progress: Int, status: String) {
             Text("🧅", fontSize = 64.sp, modifier = Modifier.padding(bottom = 24.dp))
 
             Text(
-                "B-CON Messenger",
+                "Subrosa Messenger",
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
                 color = c.accent,
@@ -830,6 +830,7 @@ fun AppNavigation() {
         "servers" -> ServersScreen(onBack = { screen = "profile" })
         "security_diagnostics" -> SecurityDiagnosticsScreen(onBack = { screen = "profile" })
         "wipe_settings" -> WipeSettingsScreen(onBack = { screen = "profile" })
+        "totp_settings" -> TotpSettingsScreen(onBack = { screen = "profile" })
 
         "incoming_call" -> IncomingCallScreen(
             from    = callFromUser,
@@ -940,7 +941,8 @@ fun AppNavigation() {
             onOpenServers = { screen = "servers" },
             onOpenBackup = { screen = "backup" },
             onOpenDiagnostics = { screen = "security_diagnostics" },
-            onOpenWipeSettings = { screen = "wipe_settings" }
+            onOpenWipeSettings = { screen = "wipe_settings" },
+            onOpenTotpSettings = { screen = "totp_settings" }
         )
 
         "verify_key" -> VerifyKeyScreen(
@@ -988,7 +990,7 @@ fun AppNavigation() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(Color(0xFF141e4a), Color(0xFF0d1238)))),
+                .background(Brush.verticalGradient(listOf(Color(0xFF2B0F14), Color(0xFF180A0C)))),
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -1038,13 +1040,13 @@ fun AppNavigation() {
                     ),
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFF2481CC),
+                        focusedBorderColor = Color(0xFFC77B4F),
                         unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                        focusedLabelColor = Color(0xFF2481CC),
+                        focusedLabelColor = Color(0xFFC77B4F),
                         unfocusedLabelColor = Color.White.copy(alpha = 0.5f),
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White,
-                        cursorColor = Color(0xFF2481CC),
+                        cursorColor = Color(0xFFC77B4F),
                         errorBorderColor = Color(0xFFE74C3C),
                         errorLabelColor = Color(0xFFE74C3C)
                     )
@@ -1072,7 +1074,7 @@ fun AppNavigation() {
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2481CC))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC77B4F))
                 ) {
                     Text(s.loginButton, fontFamily = lockFont, fontSize = 16.sp)
                 }

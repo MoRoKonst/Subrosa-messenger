@@ -237,6 +237,13 @@ interface IStr9 {
     val panicButtonDecoyLabel: String; val panicButtonDecoySubtitle: String
     val panicNotifTitle: String; val panicNotifText: String; val panicNotifButton: String
     val calcDisguiseLabel: String; val calcDisguiseSubtitle: String
+    val profileTotp: String
+    val totpTitle: String; val totpDescription: String
+    val totpStatusEnabled: String; val totpStatusDisabled: String
+    val totpSetupButton: String; val totpDisableButton: String
+    val totpSecretLabel: String; val totpCodeLabel: String; val totpConfirmButton: String
+    val totpErrInvalidCode: String; val totpEnabledSuccess: String
+    val backupTotpSecretLabel: String; val backupTotpCodeLabel: String
 }
 
 data class AppStrings(
@@ -696,6 +703,20 @@ private val ru9 = object : IStr9 {
     override val panicNotifButton = "УНИЧТОЖИТЬ"
     override val calcDisguiseLabel = "Маскировка под калькулятор"
     override val calcDisguiseSubtitle = "Иконка и название заменяются на «Калькулятор». Для входа в мессенджер введите 4 + 20 ="
+    override val profileTotp = "🔐 Двухфакторная защита бэкапа"
+    override val totpTitle = "TOTP-защита бэкапа"
+    override val totpDescription = "Дополнительный фактор для восстановления бэкапа на новом устройстве. Секрет нужно сохранить отдельно (например, в KeePass) — он не хранится внутри самого бэкапа, поэтому файла и пароля бэкапа одних будет недостаточно для угона identity."
+    override val totpStatusEnabled = "Включено"
+    override val totpStatusDisabled = "Выключено"
+    override val totpSetupButton = "Настроить"
+    override val totpDisableButton = "Выключить"
+    override val totpSecretLabel = "Секрет (сохраните его отдельно, не рядом с бэкапом)"
+    override val totpCodeLabel = "Код из приложения-аутентификатора"
+    override val totpConfirmButton = "Подтвердить и включить"
+    override val totpErrInvalidCode = "Неверный код"
+    override val totpEnabledSuccess = "TOTP-защита включена"
+    override val backupTotpSecretLabel = "TOTP-секрет (если был включён на исходном устройстве)"
+    override val backupTotpCodeLabel = "Текущий TOTP-код"
 }
 
 val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9)
@@ -1143,6 +1164,20 @@ private val en9 = object : IStr9 {
     override val panicNotifButton = "DESTROY"
     override val calcDisguiseLabel = "Calculator disguise"
     override val calcDisguiseSubtitle = "Replaces the icon and name with «Calculator». Enter 4 + 20 = to access the messenger"
+    override val profileTotp = "🔐 Backup two-factor protection"
+    override val totpTitle = "TOTP backup protection"
+    override val totpDescription = "An extra factor for restoring a backup on a new device. Save the secret separately (e.g. in KeePass) — it is not stored inside the backup itself, so the backup file and password alone won't be enough to hijack the identity."
+    override val totpStatusEnabled = "Enabled"
+    override val totpStatusDisabled = "Disabled"
+    override val totpSetupButton = "Set up"
+    override val totpDisableButton = "Disable"
+    override val totpSecretLabel = "Secret (save it separately, not next to the backup)"
+    override val totpCodeLabel = "Code from your authenticator app"
+    override val totpConfirmButton = "Confirm and enable"
+    override val totpErrInvalidCode = "Invalid code"
+    override val totpEnabledSuccess = "TOTP protection enabled"
+    override val backupTotpSecretLabel = "TOTP secret (if it was enabled on the source device)"
+    override val backupTotpCodeLabel = "Current TOTP code"
 }
 
 val enStrings = AppStrings("en", en1, en2, en3, en4, en5, en6, en7, en8, en9)
