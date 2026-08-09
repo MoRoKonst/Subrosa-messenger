@@ -711,7 +711,15 @@ class MessengerService : Service() {
                             sendAnonOrDirect(to, packet)
                         }
                     } catch (e: Exception) {
-                        sendWs(signalJson)
+                        // Fail closed, not open: if signalJson itself doesn't
+                        // parse we don't even reliably have a "to" to route
+                        // by, so a raw sendWs() here was both a metadata leak
+                        // (bypasses sendAnonOrDirect above) and pointless —
+                        // the server/recipient can't make sense of malformed
+                        // call signaling either way. See
+                        // docs/ISSUE_backup_identity_hijack.md, "прямая
+                        // адресация, не через анон-токен", item 4.
+                        Log.e(TAG, "call_signal: не удалось разобрать пакет, сигнал отброшен — ${e.message}")
                     }
                 }
             }
@@ -1169,6 +1177,13 @@ class MessengerService : Service() {
                             pollMailbox()
                     }
                 }
+
+                scope.launch(Dispatchers.IO) {
+                    while (isConnected && scope.isActive) {
+                        delay(60_000)
+                        if (isConnected) checkContactSilence()
+                    }
+                }
             }
 
             "prekey_bundle_request" -> {
@@ -1301,7 +1316,33 @@ class MessengerService : Service() {
 
                 val myId = UserStorage.getUserId(this@MessengerService)
                 ChatStorage.markDelivered(this@MessengerService, myId, from, messageId)
+                ContactHealthManager.recordDelivered(this@MessengerService, from)
                 withContext(Dispatchers.Main) { onDeliveredReceived?.invoke(messageId) }
+            }
+
+            // ── "Забота о собеседнике": peer health-check ping/pong ────────────
+            // See docs/ISSUE_backup_identity_hijack.md and ContactHealthManager.
+            // Receiving either type just proves the channel is alive right now —
+            // reset the silence clock. A pong is sent back in response to a ping
+            // (via sendAnonOrDirect, same as any other packet — no special
+            // exemption from token consumption) so the *pinger* also sees the
+            // round-trip complete, not just the recipient.
+            "contact_ping" -> {
+                val from = json.optString("from", null) ?: return
+                ContactHealthManager.recordIncoming(this@MessengerService, from)
+                Log.d(TAG, "contact_ping от $from — отвечаем pong")
+                sendAnonOrDirect(from, JSONObject().apply {
+                    put("type", "contact_pong")
+                    put("from", username)
+                    put("to", from)
+                    put("id", json.optString("id", UUID.randomUUID().toString()))
+                })
+            }
+
+            "contact_pong" -> {
+                val from = json.optString("from", null) ?: return
+                ContactHealthManager.recordIncoming(this@MessengerService, from)
+                Log.d(TAG, "contact_pong от $from — канал восстановлен")
             }
 
             "edit" -> {
@@ -2507,6 +2548,7 @@ class MessengerService : Service() {
     }
 
     fun send(to: String, text: String, replyToId: String? = null): String {
+        ContactHealthManager.recordOutgoingAttempt(this, to)
         if (isConnected) {
 
             val mailboxTag = AnonTokenManager.getContactMailboxTag(this, to)
@@ -2655,8 +2697,14 @@ class MessengerService : Service() {
         try {
             val encrypted = CryptoManager.encrypt(text, publicKey, pqKey)
             val signature = CryptoManager.sign(encrypted)
+            // Routed the same as everything else now, instead of an
+            // unconditional direct sendWs() — see docs/ISSUE_backup_identity_hijack.md,
+            // "прямая адресация, не через анон-токен", item 3. sendAnonOrDirect
+            // applies its own padding to whichever wrapper it actually sends
+            // (anon_message or the queued packet later), so the packet here
+            // is intentionally left unpadded.
             scope.launch(Dispatchers.IO) {
-                sendWs(addPadding(JSONObject().apply {
+                sendAnonOrDirect(to, JSONObject().apply {
                     put("type", "message")
                     put("from", username)
                     put("to", to)
@@ -2664,7 +2712,7 @@ class MessengerService : Service() {
                     put("signature", signature)
                     put("id", id)
                     put("protocol_version", ProtocolVersion.LEGACY_VERSION)
-                }).toString())
+                })
             }
         } catch (e: Exception) {
             Log.e(TAG, "sendEncrypted error: ${e.message}")
@@ -3349,6 +3397,7 @@ class MessengerService : Service() {
                 put("name", UserStorage.getUsername(this@MessengerService))
                 put("text", "__beacon_tokens_only__")
                 put("tokens", org.json.JSONArray(tokens))
+                put("mailbox_tag", AnonTokenManager.getOrCreateMyPersistentMailboxTag(this@MessengerService))
                 put("id", UUID.randomUUID().toString())
             }.toString()
             val blob = CryptoManager.encryptClassicalOnly(inner, publicKey)
@@ -3455,7 +3504,14 @@ class MessengerService : Service() {
             Log.w(TAG, "sendAnonTokensTo: нет ключа для $contact, пропускаем — попробуем при следующем сообщении")
             return
         }
-        val systemText = "__beacon_tokens__:${org.json.JSONArray(tokens)}"
+        // Piggybacks my persistent mailbox tag on every token exchange — see
+        // AnonTokenManager.getOrCreateMyPersistentMailboxTag(), the tag
+        // freshness fix. Nearly free: this message already goes out.
+        val tokenPayload = JSONObject().apply {
+            put("tokens", org.json.JSONArray(tokens))
+            put("mailbox_tag", AnonTokenManager.getOrCreateMyPersistentMailboxTag(this@MessengerService))
+        }
+        val systemText = "__beacon_tokens__:$tokenPayload"
         val encrypted = CryptoManager.encrypt(systemText, recipientKey, recipientPqKey)
         val signature = CryptoManager.sign(encrypted)
         val payload = JSONObject().apply {
@@ -3483,14 +3539,31 @@ class MessengerService : Service() {
     }
 
     private suspend fun handleIncomingDecryptedMessage(from: String, decryptedText: String, messageId: String?, json: JSONObject) {
+        ContactHealthManager.recordIncoming(this@MessengerService, from)
         if (decryptedText.startsWith("__beacon_tokens__:")) {
             try {
-                val arr = org.json.JSONArray(decryptedText.removePrefix("__beacon_tokens__:"))
-                val tokens = (0 until arr.length()).map { arr.getString(it) }
+                val raw = decryptedText.removePrefix("__beacon_tokens__:")
+                // New shape is a JSON object (tokens + mailbox_tag); falls back
+                // to the old bare-array shape for an unpatched peer mid-rollout.
+                val objAttempt = runCatching { org.json.JSONObject(raw) }.getOrNull()
+                val tokensJsonArr = objAttempt?.getJSONArray("tokens") ?: org.json.JSONArray(raw)
+                val tokens = (0 until tokensJsonArr.length()).map { tokensJsonArr.getString(it) }
+                val freshTag = objAttempt?.optString("mailbox_tag", null)
                 AnonTokenManager.addContactTokens(this@MessengerService, from, tokens)
                 flushPendingAnon(from)
 
-                AnonTokenManager.clearContactMailboxTag(this@MessengerService, from)
+                // Refreshed to the sender's persistent tag instead of cleared —
+                // see AnonTokenManager.getOrCreateMyPersistentMailboxTag(),
+                // "tag freshness" fix. Without this, getContactMailboxTag(from)
+                // goes permanently null after the very first bootstrap, and
+                // both the session_init mailbox fallback and the health-check
+                // protocol below silently stop having anything to fall back to
+                // for any contact past that point.
+                if (freshTag != null) {
+                    AnonTokenManager.setContactMailboxTag(this@MessengerService, from, freshTag)
+                } else {
+                    AnonTokenManager.clearContactMailboxTag(this@MessengerService, from)
+                }
                 ChatStorage.addContact(this@MessengerService, from)
                 Log.d(TAG, "Получены анонимные токены от $from: ${tokens.size} шт.")
                 if (tokensSentThisSession.add(from)) {
@@ -3559,6 +3632,58 @@ class MessengerService : Service() {
                 put("type", "mailbox_fetch")
                 put("tags", org.json.JSONArray(tags))
             }.toString())
+        }
+    }
+
+    /** "Забота о собеседнике" — checked once a minute per contact while
+     * connected. See ContactHealthManager and
+     * docs/ISSUE_backup_identity_hijack.md for the full design. Two stages:
+     * (1) on first detected silence, ping — consumes a real contact token
+     * if one exists (delivered normally), or falls through sendAnonOrDirect's
+     * existing queue-and-bootstrap cascade if not (which itself already
+     * attempts a mailbox token deposit — this is the "I'm the dry one"
+     * case). (2) if still silent after a wait with no pong, one explicit
+     * mailbox deposit of a fresh token batch, addressed to the contact's
+     * current (now never-stale, see the tag-freshness fix) mailbox tag —
+     * covers "they're the dry one and my ping never reached them a
+     * different way". No third stage: after that, this contact is left
+     * alone until real traffic resumes, matching the design's "one-off,
+     * not a loop" requirement — the always-running pollMailbox() loop
+     * above remains the ambient backstop for any deposit meant for us.
+     */
+    private fun checkContactSilence() {
+        ChatStorage.getContacts(this).forEach { contactId ->
+            if (!ContactHealthManager.isSilent(this, contactId)) return@forEach
+
+            when (ContactHealthManager.getState(this, contactId)) {
+                ContactHealthManager.PingState.NONE -> {
+                    Log.d(TAG, "contact-health: $contactId молчит ${ContactHealthManager.SILENCE_THRESHOLD_MS / 60_000} мин — пингуем")
+                    sendAnonOrDirect(contactId, JSONObject().apply {
+                        put("type", "contact_ping")
+                        put("from", username)
+                        put("to", contactId)
+                        put("id", UUID.randomUUID().toString())
+                    })
+                    ContactHealthManager.setState(this, contactId, ContactHealthManager.PingState.PINGED)
+                }
+
+                ContactHealthManager.PingState.PINGED -> {
+                    if (ContactHealthManager.stateElapsedMs(this, contactId) < ContactHealthManager.MAILBOX_RETRY_WAIT_MS) {
+                        return@forEach
+                    }
+                    val mailboxTag = AnonTokenManager.getContactMailboxTag(this, contactId)
+                    val recipientKey = publicKeys[contactId] ?: ChatStorage.getContactPublicKey(this, contactId)
+                    if (mailboxTag != null && recipientKey != null) {
+                        Log.d(TAG, "contact-health: $contactId не ответил на pong-ожидание — один запасной депозит токенов через mailbox")
+                        depositTokensViaMailbox(contactId, mailboxTag, recipientKey)
+                    } else {
+                        Log.d(TAG, "contact-health: $contactId — нет mailbox-тега/ключа для запасного депозита, сдаёмся")
+                    }
+                    ContactHealthManager.setState(this, contactId, ContactHealthManager.PingState.MAILBOX_TRIED)
+                }
+
+                ContactHealthManager.PingState.MAILBOX_TRIED -> { /* one-off — nothing further until real traffic resumes */ }
+            }
         }
     }
 
@@ -3717,6 +3842,11 @@ class MessengerService : Service() {
                         AnonTokenManager.addContactTokens(this@MessengerService, from, tokens)
                         flushPendingAnon(from)
                         markChannelReady(from)
+                        // Same tag-freshness refresh as the anon_message token
+                        // path — a mailbox-delivered token batch can carry it too.
+                        innerJson.optString("mailbox_tag", null)?.let { freshTag ->
+                            AnonTokenManager.setContactMailboxTag(this@MessengerService, from, freshTag)
+                        }
                         withContext(Dispatchers.Main) { onChannelReady?.invoke(from) }
                         if (tokensSentThisSession.add(from)) {
                             scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }

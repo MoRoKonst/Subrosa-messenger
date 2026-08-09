@@ -68,6 +68,23 @@ object BackupManager {
                         if (publicKey != null) {
                             put("public_key", publicKey)
                         }
+                        // Anon-routing state for this contact — without it, the
+                        // first message to them after a restore has neither a
+                        // token nor a mailbox tag to go out anonymously with,
+                        // and falls back to direct addressing (see
+                        // docs/ISSUE_backup_identity_hijack.md, "прямая
+                        // адресация, не через анон-токен", item 2). Not a new
+                        // exposure: anyone with the backup+password already has
+                        // full identity control and could bootstrap fresh
+                        // tokens/tags the normal way regardless.
+                        val tokens = AnonTokenManager.getContactTokens(context, contactId)
+                        if (tokens.isNotEmpty()) {
+                            put("anon_tokens", JSONArray(tokens))
+                        }
+                        val mailboxTag = AnonTokenManager.getContactMailboxTag(context, contactId)
+                        if (mailboxTag != null) {
+                            put("mailbox_tag", mailboxTag)
+                        }
                     })
                 }
             })
@@ -222,6 +239,16 @@ object BackupManager {
                     if (obj.has("public_key")) {
                         ChatStorage.saveContactPublicKey(context, contactId, obj.getString("public_key"))
                     }
+
+                    val tokensArr = obj.optJSONArray("anon_tokens")
+                    if (tokensArr != null) {
+                        val tokens = (0 until tokensArr.length()).map { tokensArr.getString(it) }
+                        AnonTokenManager.addContactTokens(context, contactId, tokens)
+                    }
+                    obj.optString("mailbox_tag", null)?.let { tag ->
+                        AnonTokenManager.setContactMailboxTag(context, contactId, tag)
+                    }
+
                     restoredContactIds.add(contactId)
                 }
                 // The backup never carries Double Ratchet session state —
