@@ -286,6 +286,23 @@ def _db_setup_sync():
                 created_at REAL NOT NULL
             )
         """)
+        # One-time recovery codes issued alongside a TOTP secret at setup time —
+        # the safety net for "lost my authenticator, still have the codes I saved".
+        # Hashed (SHA-256 is fine here: these are server-generated, high-entropy
+        # random tokens, not user-chosen low-entropy passwords, so a fast hash
+        # isn't a brute-force risk the way it would be for a password). Redeeming
+        # one revokes the account's TOTP secret AND all its other recovery codes —
+        # forces a fresh, deliberate re-setup rather than leaving stale codes
+        # usable by whoever else might have seen them.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS totp_recovery_codes (
+                username   TEXT NOT NULL,
+                code_hash  TEXT NOT NULL,
+                used       INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                PRIMARY KEY (username, code_hash)
+            )
+        """)
         # Optional access-code allowlist — see SERVER_ACCESS_PROTECTED above.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS server_access_codes (
@@ -602,6 +619,68 @@ def totp_verify_and_consume(username: str, code: str) -> bool:
         return False
     user_totp_last_counter[username] = matched
     return True
+
+
+def _hash_recovery_code(code: str) -> str:
+    return hashlib.sha256(code.strip().upper().encode()).hexdigest()
+
+
+def generate_recovery_codes(count: int = 8) -> list:
+    """Human-typeable, high-entropy: 10 hex chars, grouped for readability
+    (e.g. 'A1B2C-D3E4F'). Not derived from the TOTP secret -- an independent
+    credential, so losing one doesn't compromise the other."""
+    codes = []
+    for _ in range(count):
+        raw = secrets.token_hex(5).upper()
+        codes.append(f"{raw[:5]}-{raw[5:]}")
+    return codes
+
+
+def _db_save_recovery_codes_sync(username: str, codes: list):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM totp_recovery_codes WHERE username = ?", (username,))
+        now = time.time()
+        for code in codes:
+            conn.execute(
+                "INSERT INTO totp_recovery_codes (username, code_hash, used, created_at) VALUES (?, ?, 0, ?)",
+                (username, _hash_recovery_code(code), now)
+            )
+        conn.commit()
+
+
+def _db_delete_recovery_codes_sync(username: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM totp_recovery_codes WHERE username = ?", (username,))
+        conn.commit()
+
+
+def _db_check_and_consume_recovery_code_sync(username: str, code: str) -> bool:
+    """One-shot: marks the code used in the same statement it checks it, so
+    two concurrent redemption attempts (same code) can't both succeed."""
+    code_hash = _hash_recovery_code(code)
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.execute(
+            "UPDATE totp_recovery_codes SET used = 1 "
+            "WHERE username = ? AND code_hash = ? AND used = 0",
+            (username, code_hash)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+async def db_save_recovery_codes(username: str, codes: list):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _db_save_recovery_codes_sync, username, codes)
+
+
+async def db_delete_recovery_codes(username: str):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _db_delete_recovery_codes_sync, username)
+
+
+async def db_check_and_consume_recovery_code(username: str, code: str) -> bool:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _db_check_and_consume_recovery_code_sync, username, code)
 
 
 async def db_store(recipient, payload_dict, msg_id=None):
@@ -1292,10 +1371,31 @@ async def handle_client(websocket):
                     # condition that would otherwise produce session_conflict). A
                     # reconnect from an already-known device_id never needs a code.
                     # See user_totp_secrets comment near the top of this file.
+                    recovery_used = False
                     if is_new_device and username in user_totp_secrets:
                         totp_code = message.get("totp_code", "")
                         if not totp_verify_and_consume(username, totp_code):
-                            totp_rejected = True
+                            # Lost-authenticator fallback — a valid, unused
+                            # recovery code substitutes for the TOTP code. On
+                            # success this revokes the secret and all other
+                            # codes (see db_save_recovery_codes/totp_setup) —
+                            # the account is left unprotected until the user
+                            # deliberately re-enables TOTP from the now-
+                            # trusted device, rather than leaving the old
+                            # secret (which the user just proved they can't
+                            # produce codes for) or other codes still valid.
+                            recovery_code = message.get("recovery_code", "")
+                            if recovery_code and await db_check_and_consume_recovery_code(username, recovery_code):
+                                recovery_used = True
+                            else:
+                                totp_rejected = True
+
+                    if recovery_used:
+                        user_totp_secrets.pop(username, None)
+                        user_totp_last_counter.pop(username, None)
+                        asyncio.create_task(db_delete_totp(username))
+                        asyncio.create_task(db_delete_recovery_codes(username))
+                        print(f"[SECURITY] {username}: новое устройство зашло по recovery-коду — TOTP-защита сброшена, требует повторной настройки")
 
                     if not totp_rejected:
                         if existing:
@@ -2400,8 +2500,16 @@ async def handle_client(websocket):
                     continue
                 user_totp_secrets[username] = secret
                 asyncio.create_task(db_save_totp(username, secret))
+                # Recovery codes are the safety net for "lost the authenticator" --
+                # generated once here, shown to the user exactly once by the
+                # client, never retrievable again (only hashes are stored).
+                recovery_codes = generate_recovery_codes()
+                asyncio.create_task(db_save_recovery_codes(username, recovery_codes))
                 print(f"[TOTP] Device-gated registration protection enabled for {username}")
-                await send_safe(websocket, json.dumps({"type": "totp_setup_ok"}))
+                await send_safe(websocket, json.dumps({
+                    "type": "totp_setup_ok",
+                    "recovery_codes": recovery_codes
+                }))
                 continue
 
             # ─── Device-gated registration TOTP: disable ────────────────────────
@@ -2418,6 +2526,7 @@ async def handle_client(websocket):
                 del user_totp_secrets[username]
                 user_totp_last_counter.pop(username, None)
                 asyncio.create_task(db_delete_totp(username))
+                asyncio.create_task(db_delete_recovery_codes(username))
                 print(f"[TOTP] Device-gated registration protection disabled for {username}")
                 await send_safe(websocket, json.dumps({"type": "totp_disable_ok"}))
                 continue
