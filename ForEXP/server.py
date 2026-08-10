@@ -107,6 +107,53 @@ user_totp_secrets = {}
 # username → last accepted 30s time-step counter, to reject code replay
 user_totp_last_counter = {}
 
+# ─── Optional at-rest encryption for stored TOTP secrets ──────────────────────
+# TOTP inherently needs the verifier (this server) to hold the raw shared
+# secret in memory to compute codes — that part can't be avoided, hashing it
+# like a password would make verification impossible. What CAN be avoided:
+# the on-disk SQLite copy being plaintext if the DB file itself ever leaks
+# (stolen backup/snapshot, disk theft) without the attacker also controlling
+# the live server process. Off by default (matches existing plaintext
+# behavior for deployments that never set this). Set TOTP_SECRET_ENCRYPTION_KEY
+# to a Fernet key (`python3 -c "from cryptography.fernet import Fernet;
+# print(Fernet.generate_key().decode())"`) and keep it OUT of whatever backs
+# up the SQLite file — the whole point is the two must not travel together.
+# "fernet1:" prefix marks an encrypted value so existing plaintext rows keep
+# working unchanged (same transparent-migration pattern as the client's own
+# StorageKeyManager.SMK_PREFIX) — they get re-encrypted the next time that
+# account's secret is saved.
+TOTP_FERNET_PREFIX = "fernet1:"
+_totp_fernet = None
+_totp_key_env = os.environ.get("TOTP_SECRET_ENCRYPTION_KEY", "").strip()
+if _totp_key_env:
+    try:
+        from cryptography.fernet import Fernet
+        _totp_fernet = Fernet(_totp_key_env.encode())
+    except Exception as e:
+        print(f"[TOTP] TOTP_SECRET_ENCRYPTION_KEY задан, но невалиден ({e}) — секреты останутся как есть в БД")
+
+
+def _totp_encrypt_for_storage(secret: str) -> str:
+    if not _totp_fernet:
+        return secret
+    return TOTP_FERNET_PREFIX + _totp_fernet.encrypt(secret.encode()).decode()
+
+
+def _totp_decrypt_from_storage(stored: str) -> str:
+    if not stored.startswith(TOTP_FERNET_PREFIX):
+        return stored  # legacy plaintext row, or encryption was never configured
+    if not _totp_fernet:
+        # Encrypted on disk, but no key configured right now — can't recover
+        # it. Fails closed: this account effectively loses its stored secret
+        # until the key is restored, rather than crashing the whole server.
+        print("[TOTP] Зашифрованный секрет в БД, но TOTP_SECRET_ENCRYPTION_KEY не задан — пропущен")
+        return ""
+    try:
+        return _totp_fernet.decrypt(stored[len(TOTP_FERNET_PREFIX):].encode()).decode()
+    except Exception as e:
+        print(f"[TOTP] Не удалось расшифровать секрет из БД ({e}) — пропущен")
+        return ""
+
 # ─── Optional server access-code allowlist ─────────────────────────────────────
 # Off by default (personal self-hosting doesn't need this — it's for a private/
 # business deployment that wants to control who can even create an account).
@@ -381,14 +428,19 @@ async def db_save_avatar(username, avatar_b64):
 def _db_load_totp_sync():
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("SELECT username, secret FROM user_totp").fetchall()
-    return {row[0]: row[1] for row in rows}
+    result = {}
+    for username, stored in rows:
+        secret = _totp_decrypt_from_storage(stored)
+        if secret:
+            result[username] = secret
+    return result
 
 
 def _db_save_totp_sync(username, secret):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO user_totp (username, secret, created_at) VALUES (?, ?, ?)",
-            (username, secret, time.time())
+            (username, _totp_encrypt_for_storage(secret), time.time())
         )
         conn.commit()
 
@@ -2607,6 +2659,7 @@ def start_server():
     print(f"[DB] Prekey bundles загружено: {len(loaded_bundles)}")
     print(f"[DB] Аватаров загружено: {len(loaded_avatars)}")
     print(f"[DB] Аккаунтов с TOTP-защитой (новых устройств): {len(loaded_totp)}")
+    print(f"[TOTP] Шифрование секретов в БД: {'включено' if _totp_fernet else 'выключено (TOTP_SECRET_ENCRYPTION_KEY не задан)'}")
 
     if SERVER_ACCESS_PROTECTED:
         total_codes, unused_codes = _db_count_access_codes_sync()
