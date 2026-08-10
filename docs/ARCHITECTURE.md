@@ -145,6 +145,7 @@ Responsibilities:
 - Chunked file upload and reassembly
 - Notification creation (message, call, channel update)
 - Session conflict handling
+- Outer packet-size padding: `addPadding(packet: JSONObject)` rounds every outgoing WebSocket JSON envelope up to the next multiple of 512 bytes (random string in a `_p` field) right before `sendWs(...)` — see [SECURITY.md](SECURITY.md#traffic-analysis-resistance-padding)
 
 #### `CryptoManager.kt`
 Stateless singleton for all EC cryptography. Keys are stored in `EncryptedSharedPreferences("beacon_ec_keys_enc")` — never in `AndroidKeyStore` directly, to allow software export and key rotation.
@@ -158,6 +159,8 @@ Stateless singleton for all EC cryptography. Keys are stored in `EncryptedShared
 | Key derivation | HKDF-style HMAC-SHA256 |
 
 The private key is stored wrapped with the Storage Master Key (SMK) when the user is logged in (see `StorageKeyManager`).
+
+Also applies content-level padding before encryption — 128–512 random bytes for text (`addPadding`/`removePadding`), 1024–4096 for files/images (`addFilePadding`/`removeFilePadding`) — so ciphertext length doesn't reveal how much real content a message carries. See [SECURITY.md](SECURITY.md#traffic-analysis-resistance-padding) for how this stacks with the packet-level padding above.
 
 #### `SessionKeyManager.kt`
 Manages per-contact Double Ratchet session states. Initialized at app start (before login) from persisted state. Handles:
@@ -195,11 +198,10 @@ Two copies of the SMK are persisted in `EncryptedSharedPreferences("smk_config")
 Values protected by the SMK are prefixed with `"smk1:"` to enable transparent backward-compatible migration. See [SECURITY.md](SECURITY.md) for details.
 
 #### `WipeManager.kt`
-Three-level data destruction:
+Two-level data destruction (a third, `SOFT`, existed briefly but was removed — it was never wired to any trigger while still being shown to the user in `WipeSettingsScreen.kt` as a working option, misleading in a security-critical screen):
 
 | Level | Action |
 |---|---|
-| `SOFT` | Clear in-memory sessions and caches only |
 | `HARD` | Delete all keys, prefs, files, WebView data, databases; optional decoy state creation |
 | `NUCLEAR` | `HARD` + `ActivityManager.clearApplicationUserData()` (atomic system wipe, process killed) |
 
@@ -383,16 +385,17 @@ All messages are JSON objects over WebSocket. Every message has a `type` field.
 | Type | Description |
 |---|---|
 | `challenge` | Random bytes for ECDSA handshake |
-| `auth_ok` | Authentication confirmed |
-| `auth_fail` | Authentication rejected |
+| `handshake_ok` | Signature verified — client may now send `register` |
+| *(none)* | An invalid `challenge_response` signature isn't answered with a distinct rejection type — the server just drops the connection |
+| `totp_required` / `access_code_required` | `register` rejected — device-gated TOTP or access-code allowlist gate not satisfied, see [SECURITY.md](SECURITY.md#device-gated-totp--recovery-codes) |
 | `message` | Relayed encrypted message |
 | `group_message` | Relayed group message |
 | `channel_update` | New channel post |
-| `call_invite` | Incoming call from peer |
+| `call_request_audio` / `call_request_video` | Incoming call ping from peer (two-phase call flow) |
 | `turn_config` | TURN credentials (post-auth) |
 | `session_conflict` | New login from another device |
-| `prekey_bundle` | OPK bundle for X3DH |
-| `opk_low` | Reminder to upload more OPKs |
+| `prekey_bundle_response` / `prekey_bundles_batch_response` | Prekey bundle(s) for X3DH |
+| `prekey_bundle_request` | Server asks this client to republish its OPK pool (running low) |
 
 ### Rate Limiting
 
@@ -425,11 +428,17 @@ Client                              Server
   │  4. Generate OPK bundle           │
   │  5. StorageKeyManager.setup()     │
   │                                   │
-  │──── register {username, pubkey,   │
-  │              signature, opks} ───►│
-  │◄─── auth_ok ──────────────────────│
+  │──── challenge_response            │
+  │      {public_key, signature} ───► │
+  │◄─── handshake_ok ─────────────────│
+  │                                   │
+  │──── register {name, public_key,   │
+  │      device_id, totp_code?,       │
+  │      access_code?} ─────────────► │
   │◄─── turn_config ──────────────────│
 ```
+
+`register`'s `public_key` must match exactly the key just proven in `challenge_response` — mismatches are rejected. `totp_code`/`access_code` are optional, only checked by the server under the conditions in [SECURITY.md](SECURITY.md#device-gated-totp--recovery-codes) (new device_id on an account with TOTP enabled; a private/business server with the access-code allowlist on).
 
 ### One-to-One Messaging
 
@@ -520,18 +529,21 @@ Client                          Server
   │  ECDSA.sign(challenge,        │
   │             privateKey)       │
   │                               │
-  │── register/login {username,   │
-  │     pubKey, signature} ──────►│
+  │── challenge_response          │
+  │   {public_key, signature} ───►│
   │                               │
   │                    ECDSA.verify(
   │                      signature,
   │                      challenge,
-  │                      pubKey)
+  │                      public_key)
   │                               │
-  │◄── auth_ok ───────────────────│
+  │◄── handshake_ok ──────────────│
+  │                               │
+  │── register {name, public_key, │
+  │   device_id, ...} ───────────►│
 ```
 
-Timeout: 15 seconds. If authentication is not completed in time, the server closes the connection.
+Timeout: 15 seconds. If authentication is not completed in time (or the signature fails verification), the server closes the connection without sending a distinct rejection message. `register` is a separate step from `challenge_response` — see the Registration flow above for what happens there (device-gating, access-code allowlist, session_conflict).
 
 ---
 
