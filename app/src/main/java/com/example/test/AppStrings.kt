@@ -79,6 +79,7 @@ interface IStr3 {
     val backupImportWipeTitle: String; val backupImportWipeText: String
     val backupCreated: String; val backupErrEnterPassword: String
     val backupErrPasswordMatch: String; val backupErrPasswordLength: String
+    val backupErrTotpRequired: String
     val backupErrEnterForDecrypt: String
 }
 
@@ -409,6 +410,7 @@ private val ru3 = object : IStr3 {
     override val backupErrEnterPassword = "Введите пароль"
     override val backupErrPasswordMatch = "Пароли не совпадают"
     override val backupErrPasswordLength = "Пароль должен быть минимум 8 символов"
+    override val backupErrTotpRequired = "Сначала включите TOTP-защиту (Профиль → Двухфакторная защита) — без неё файл бэкапа и пароль дают полный доступ к identity, второго фактора нет"
     override val backupErrEnterForDecrypt = "Введите пароль для расшифровки"
 }
 
@@ -887,6 +889,7 @@ private val en3 = object : IStr3 {
     override val backupErrEnterPassword = "Enter password"
     override val backupErrPasswordMatch = "Passwords don't match"
     override val backupErrPasswordLength = "Password must be at least 8 characters"
+    override val backupErrTotpRequired = "Enable TOTP protection first (Profile → Two-factor protection) — without it, the backup file and password alone give full access to the identity, there's no second factor"
     override val backupErrEnterForDecrypt = "Enter password for decryption"
 }
 

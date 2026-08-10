@@ -216,6 +216,16 @@ fun BackupScreen(onBack: () -> Unit) {
 
                 fun launchExport(onSuccess: (String) -> Unit) {
                     when {
+                        // TOTP was opt-in — an important protection left as a
+                        // toggle nobody was pointed at. Export is the one
+                        // moment that actually matters (it's what creates the
+                        // file+password-only attack surface in the first
+                        // place), so gate it here rather than at onboarding —
+                        // no hard app-wide lockout risk if someone loses the
+                        // secret later, since they simply can't create a new
+                        // backup until they re-enable TOTP, existing backups
+                        // are unaffected.
+                        !TotpManager.isEnabled(context) -> { message = s.backupErrTotpRequired; isError = true }
                         password.isEmpty() -> { message = s.backupErrEnterPassword; isError = true }
                         password != confirmPassword -> { message = s.backupErrPasswordMatch; isError = true }
                         password.length < 8 -> { message = s.backupErrPasswordLength; isError = true }
