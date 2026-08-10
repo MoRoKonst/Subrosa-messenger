@@ -616,6 +616,107 @@ fun TorLoadingScreen(progress: Int, status: String) {
     }
 }
 
+/** Listens for MessengerService.onTotpRequired — this device is logged
+ *  into a TOTP-protected account but has no usable code (fresh backup
+ *  restore, lost authenticator). Offers the recovery-code fallback instead
+ *  of leaving the user stuck on a silently-failing reconnect loop. Mounted
+ *  globally (not tied to one screen) since a reconnect can happen at any
+ *  time while logged in. */
+@Composable
+private fun RecoveryCodeGate() {
+    val context = LocalContext.current
+    val s = LocalStrings.current
+    var messengerService by remember { mutableStateOf<MessengerService?>(null) }
+    val connection = remember {
+        object : android.content.ServiceConnection {
+            override fun onServiceConnected(name: android.content.ComponentName, binder: android.os.IBinder) {
+                messengerService = (binder as MessengerService.LocalBinder).getService()
+            }
+            override fun onServiceDisconnected(name: android.content.ComponentName) {
+                messengerService = null
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        try {
+            context.bindService(
+                Intent(context, MessengerService::class.java),
+                connection,
+                android.content.Context.BIND_AUTO_CREATE
+            )
+        } catch (_: Exception) {}
+    }
+    DisposableEffect(Unit) {
+        onDispose { try { context.unbindService(connection) } catch (_: Exception) {} }
+    }
+
+    var showDialog by remember { mutableStateOf(false) }
+    var code by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf(false) }
+    var submitted by remember { mutableStateOf(false) }
+
+    DisposableEffect(messengerService) {
+        val svc = messengerService
+        svc?.onTotpRequired = {
+            if (submitted) {
+                // We already tried a code and totp_required fired again —
+                // that submission was rejected.
+                error = true
+                submitted = false
+            }
+            showDialog = true
+        }
+        onDispose { svc?.onTotpRequired = null }
+    }
+
+    // Doesn't hook into onStatusChanged (a single shared callback slot other
+    // screens also use) — polling avoids fighting over that one slot.
+    LaunchedEffect(showDialog, messengerService) {
+        while (showDialog) {
+            kotlinx.coroutines.delay(1_000)
+            if (messengerService?.isOnline() == true) {
+                showDialog = false
+            }
+        }
+    }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text(s.totpMandatoryTitle) },
+            text = {
+                Column {
+                    Text(s.totpRecoveryPrompt, fontSize = 13.sp)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { code = it; error = false },
+                        label = { Text(s.totpRecoveryFieldLabel) },
+                        singleLine = true,
+                        isError = error,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (error) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(s.totpRecoveryErr, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = code.isNotBlank(),
+                    onClick = {
+                        messengerService?.submitRecoveryCode(code.trim())
+                        code = ""
+                        submitted = true
+                        error = false
+                    }
+                ) { Text(s.totpRecoverySubmit) }
+            }
+        )
+    }
+}
+
 @Composable
 fun AppNavigation() {
     val context = LocalContext.current
@@ -887,8 +988,18 @@ fun AppNavigation() {
                 if (CryptoManager.hasKeys()) {
                     context.startForegroundService(Intent(context, MessengerService::class.java))
                 }
-                screen = "chats"
+                // Mandatory step, not optional — TOTP for new-device
+                // registration only protects an account once it's actually
+                // set up, so a brand-new account is defenseless until this
+                // runs. See docs/ISSUE_backup_identity_hijack.md.
+                screen = "totp_setup_required"
             }
+        )
+
+        "totp_setup_required" -> TotpSettingsScreen(
+            onBack = {},
+            mandatory = true,
+            onCompleted = { screen = "chats" }
         )
 
         "login" -> LoginScreen(
@@ -978,6 +1089,10 @@ fun AppNavigation() {
         )
     }
 
+    }
+
+    if (screen !in listOf("register", "login", "totp_setup_required", "calculator")) {
+        RecoveryCodeGate()
     }
 
     AnimatedVisibility(

@@ -139,6 +139,7 @@ class MessengerService : Service() {
     private var failuresOnCurrentServer = 0
     private val MAX_FAILURES_BEFORE_SWITCH = 3
     private var totpRequiredNotified = false
+    @Volatile private var pendingRecoveryCode: String? = null
     private var username = ""
 
     private val publicKeys = mutableMapOf<String, String>()
@@ -203,8 +204,13 @@ class MessengerService : Service() {
     var onGroupMessageReceived: ((String, GroupMessage) -> Unit)? = null
     var onGroupReactionReceived: ((String, String, String, String) -> Unit)? = null
     var onGroupInviteReceived: ((Group, String) -> Unit)? = null
-    var onTotpSetupResult: ((Boolean, String?) -> Unit)? = null
+    var onTotpSetupResult: ((success: Boolean, reason: String?, recoveryCodes: List<String>?) -> Unit)? = null
     var onTotpDisableResult: ((Boolean) -> Unit)? = null
+    // Fired when the server rejects register() with totp_required — this
+    // device has no usable TOTP code for the account (fresh backup restore,
+    // no authenticator saved locally). Lets a screen offer the recovery-code
+    // fallback instead of just logging and silently retrying forever.
+    var onTotpRequired: (() -> Unit)? = null
     var onChannelPostReceived: ((String, ChannelPost) -> Unit)? = null
     var onChannelCreated: ((Channel) -> Unit)? = null
     var onChannelPostDeleted: ((String, String) -> Unit)? = null
@@ -917,7 +923,7 @@ class MessengerService : Service() {
      * this account, so it's only ever meaningful the first time. */
     fun sendTotpSetup(secretBase32: String, code: String) {
         if (!isConnected) {
-            onTotpSetupResult?.invoke(false, "not_connected")
+            onTotpSetupResult?.invoke(false, "not_connected", null)
             return
         }
         sendWs(JSONObject().apply {
@@ -925,6 +931,16 @@ class MessengerService : Service() {
             put("secret", secretBase32)
             put("code", code)
         }.toString())
+    }
+
+    /** Response to onTotpRequired() — this device has no usable TOTP code
+     *  (fresh backup restore, lost authenticator). Stashes the code for the
+     *  next register() attempt and forces a reconnect to retry immediately
+     *  instead of waiting for whatever the normal reconnect backoff is. */
+    fun submitRecoveryCode(code: String) {
+        pendingRecoveryCode = code.trim()
+        totpRequiredNotified = false
+        webSocket?.close(1000, "recovery_code retry")
     }
 
     fun sendTotpDisable(code: String) {
@@ -1060,6 +1076,13 @@ class MessengerService : Service() {
                 // decide" principle as totp_code above. Harmless once already
                 // consumed or on a server that doesn't check it at all.
                 val accessCode = ServerManager.getCurrentServer(this@MessengerService)?.accessCode
+                // Set by submitRecoveryCode() in response to totp_required on a
+                // device that doesn't have the TOTP secret at all (e.g. a fresh
+                // backup restore, no authenticator saved) — one-shot, cleared
+                // immediately so a wrong/expired code isn't silently retried
+                // forever on every subsequent reconnect.
+                val recoveryCode = pendingRecoveryCode
+                pendingRecoveryCode = null
                 sendWs(JSONObject().apply {
                     put("type", "register")
                     put("from", username)
@@ -1070,6 +1093,7 @@ class MessengerService : Service() {
                     if (myAvatarB64.isNotEmpty()) put("avatar", myAvatarB64)
                     if (totpSecret != null) put("totp_code", TotpManager.currentCode(totpSecret))
                     if (!accessCode.isNullOrBlank()) put("access_code", accessCode)
+                    if (!recoveryCode.isNullOrBlank()) put("recovery_code", recoveryCode)
                 }.toString())
 
                 val contacts = ChatStorage.getContacts(this@MessengerService)
@@ -1250,12 +1274,15 @@ class MessengerService : Service() {
             }
 
             "totp_setup_ok" -> {
-                withContext(Dispatchers.Main) { onTotpSetupResult?.invoke(true, null) }
+                val recoveryCodes = json.optJSONArray("recovery_codes")?.let { arr ->
+                    (0 until arr.length()).map { arr.getString(it) }
+                }
+                withContext(Dispatchers.Main) { onTotpSetupResult?.invoke(true, null, recoveryCodes) }
             }
 
             "totp_setup_failed" -> {
                 val reason = json.optString("reason", null)
-                withContext(Dispatchers.Main) { onTotpSetupResult?.invoke(false, reason) }
+                withContext(Dispatchers.Main) { onTotpSetupResult?.invoke(false, reason, null) }
             }
 
             "totp_disable_ok" -> {
@@ -1269,15 +1296,17 @@ class MessengerService : Service() {
             "totp_required" -> {
                 // Server rejected register() because this device_id is new to
                 // the fingerprint and either no code was included or it didn't
-                // match. Nothing to retry automatically — this device either
-                // doesn't have the secret at all (a genuine attacker, or a
-                // second legitimate device that never went through setup/backup
-                // import) or the clock drifted past the verification window.
-                // Logged once per connection instead of spamming on every
-                // reconnect attempt.
+                // match. This device either doesn't have the secret at all (a
+                // genuine attacker, a second legitimate device that never went
+                // through setup/backup import, or a lost authenticator) or the
+                // clock drifted past the verification window. Notified once
+                // per connection so a screen can offer the recovery-code
+                // fallback instead of just retrying the same failing register()
+                // forever.
                 if (!totpRequiredNotified) {
                     totpRequiredNotified = true
                     Log.e(TAG, "register отклонён сервером: новое устройство требует TOTP-код")
+                    withContext(Dispatchers.Main) { onTotpRequired?.invoke() }
                 }
             }
 

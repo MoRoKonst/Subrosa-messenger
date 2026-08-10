@@ -255,6 +255,12 @@ interface IStr9 {
     val serverTotpErrNotConnected: String
     val totpConfirmingWithServer: String
     val totpErrTimeout: String
+    val totpMandatoryTitle: String; val totpMandatoryIntro: String
+    val totpRecoveryCodesTitle: String; val totpRecoveryCodesHint: String
+    val totpRecoveryCodesConfirm: String; val totpRecoveryCodesContinue: String
+    val totpRecoveryCodesDone: String
+    val totpRecoveryPrompt: String; val totpRecoveryFieldLabel: String
+    val totpRecoverySubmit: String; val totpRecoveryErr: String
     val backupTotpSecretLabel: String; val backupTotpCodeLabel: String
 }
 
@@ -745,6 +751,17 @@ private val ru9 = object : IStr9 {
     override val serverTotpErrNotConnected = "Нет соединения с сервером"
     override val totpConfirmingWithServer = "Подтверждаем с сервером — подождите..."
     override val totpErrTimeout = "Сервер не ответил вовремя — попробуйте ещё раз"
+    override val totpMandatoryTitle = "Защита аккаунта"
+    override val totpMandatoryIntro = "Прежде чем продолжить — настройте TOTP-защиту. Это обязательный шаг: без него сервер не сможет отличить вас от того, кто украдёт ваш ключ."
+    override val totpRecoveryCodesTitle = "⚠️ Резервные коды — сохраните их сейчас"
+    override val totpRecoveryCodesHint = "Каждый код можно использовать один раз, если вы потеряете доступ к приложению-аутентификатору. Больше эти коды нигде не показываются — сохраните их отдельно (например, в KeePass), не рядом с бэкапом."
+    override val totpRecoveryCodesConfirm = "Я сохранил(а) эти коды в надёжном месте"
+    override val totpRecoveryCodesContinue = "Продолжить"
+    override val totpRecoveryCodesDone = "Готово"
+    override val totpRecoveryPrompt = "Этому устройству нужен код для входа в аккаунт, защищённый TOTP. У этого устройства нет приложения-аутентификатора — введите один из резервных кодов, полученных при включении защиты."
+    override val totpRecoveryFieldLabel = "Резервный код"
+    override val totpRecoverySubmit = "Отправить"
+    override val totpRecoveryErr = "Код не принят — проверьте и попробуйте снова"
     override val backupTotpSecretLabel = "TOTP-секрет (если был включён на исходном устройстве)"
     override val backupTotpCodeLabel = "Текущий TOTP-код"
 }
@@ -1224,6 +1241,17 @@ private val en9 = object : IStr9 {
     override val serverTotpErrNotConnected = "No connection to the server"
     override val totpConfirmingWithServer = "Confirming with the server — please wait..."
     override val totpErrTimeout = "The server didn't respond in time — please try again"
+    override val totpMandatoryTitle = "Account protection"
+    override val totpMandatoryIntro = "Before you continue — set up TOTP protection. This step is required: without it, the server can't tell you apart from someone who steals your key."
+    override val totpRecoveryCodesTitle = "⚠️ Recovery codes — save them now"
+    override val totpRecoveryCodesHint = "Each code works once, if you lose access to your authenticator app. These codes won't be shown again — save them separately (e.g. in KeePass), not next to the backup."
+    override val totpRecoveryCodesConfirm = "I saved these codes somewhere safe"
+    override val totpRecoveryCodesContinue = "Continue"
+    override val totpRecoveryCodesDone = "Done"
+    override val totpRecoveryPrompt = "This device needs a code to log into an account protected by TOTP. This device has no authenticator app for it — enter one of the recovery codes you got when you enabled protection."
+    override val totpRecoveryFieldLabel = "Recovery code"
+    override val totpRecoverySubmit = "Submit"
+    override val totpRecoveryErr = "Code not accepted — check it and try again"
     override val backupTotpSecretLabel = "TOTP secret (if it was enabled on the source device)"
     override val backupTotpCodeLabel = "Current TOTP code"
 }

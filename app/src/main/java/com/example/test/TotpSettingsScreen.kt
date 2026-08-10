@@ -1,6 +1,7 @@
 package com.subrosa.messenger
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -23,12 +24,21 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TotpSettingsScreen(onBack: () -> Unit) {
-    androidx.activity.compose.BackHandler { onBack() }
+fun TotpSettingsScreen(
+    onBack: () -> Unit,
+    // Forced onboarding path (right after RegisterScreen) — no back button,
+    // no skipping until setup completes and recovery codes are confirmed
+    // saved. See MainActivity.kt, "totp_setup_required".
+    mandatory: Boolean = false,
+    onCompleted: () -> Unit = {}
+) {
+    if (!mandatory) androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
     val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
+    var recoveryCodes by remember { mutableStateOf<List<String>?>(null) }
+    var recoveryCodesSavedConfirmed by remember { mutableStateOf(false) }
 
     var messengerService by remember { mutableStateOf<MessengerService?>(null) }
     val connection = remember {
@@ -63,7 +73,7 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
 
     DisposableEffect(messengerService) {
         val svc = messengerService
-        svc?.onTotpSetupResult = { success, reason ->
+        svc?.onTotpSetupResult = { success, reason, codes ->
             busy = false
             if (success) {
                 enabled = true
@@ -71,6 +81,7 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
                 codeInput = ""
                 message = s.totpEnabledSuccess
                 isError = false
+                recoveryCodes = codes
             } else {
                 // Keep client and server in sync — a secret the server refused
                 // to register (e.g. it already had one from an earlier attempt)
@@ -105,10 +116,12 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(s.totpTitle, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+                title = { Text(if (mandatory) s.totpMandatoryTitle else s.totpTitle, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.back)
+                    if (!mandatory) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.back)
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -133,6 +146,56 @@ fun TotpSettingsScreen(onBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                if (mandatory) {
+                    Text(
+                        s.totpMandatoryIntro,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = c.textPrimary.copy(alpha = 0.85f),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                val codes = recoveryCodes
+                if (codes != null) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = c.dangerCard),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(s.totpRecoveryCodesTitle, fontWeight = FontWeight.Bold, color = c.textPrimary)
+                            Text(s.totpRecoveryCodesHint, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.75f))
+                            SelectionContainer {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    codes.forEach { code ->
+                                        Text(code, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 15.sp, color = c.textPrimary)
+                                    }
+                                }
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { recoveryCodesSavedConfirmed = !recoveryCodesSavedConfirmed }
+                            ) {
+                                Checkbox(checked = recoveryCodesSavedConfirmed, onCheckedChange = { recoveryCodesSavedConfirmed = it })
+                                Text(s.totpRecoveryCodesConfirm, fontSize = 12.sp, color = c.textPrimary)
+                            }
+                            Button(
+                                onClick = {
+                                    recoveryCodes = null
+                                    recoveryCodesSavedConfirmed = false
+                                    if (mandatory) onCompleted()
+                                },
+                                enabled = recoveryCodesSavedConfirmed,
+                                colors = ButtonDefaults.buttonColors(containerColor = c.accent),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(if (mandatory) s.totpRecoveryCodesContinue else s.totpRecoveryCodesDone, color = Color.White)
+                            }
+                        }
+                    }
+                    return@Column
+                }
+
                 Text(
                     s.totpDescription,
                     fontSize = 13.sp,
