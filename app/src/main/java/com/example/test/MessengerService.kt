@@ -2732,8 +2732,16 @@ class MessengerService : Service() {
                     sendViaMailbox(to, text, publicKey, mailboxTag, id)
                     return id
                 }
-
-                AnonTokenManager.clearContactMailboxTag(this, to)
+                // Found live: this used to call clearContactMailboxTag() here,
+                // treating "public key not cached yet" as "the tag is stale" —
+                // but the key is often just moments away (fetched via
+                // sendWithForwardSecrecy's own requestPrekeyBundle() call
+                // below). Wiping the tag on a purely transient timing gap
+                // permanently killed the only path back into mailbox
+                // bootstrap for that contact — nothing else can ever
+                // rediscover it (see sendAnonTokensTo's chicken-and-egg
+                // comment). Leave it alone; the next send retries mailbox
+                // once the key arrives.
             }
             return sendWithForwardSecrecy(to, text, replyToId = replyToId)
         } else {
