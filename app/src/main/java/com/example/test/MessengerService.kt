@@ -1780,7 +1780,7 @@ class MessengerService : Service() {
                             val decryptedBytes = CryptoManager.decryptFile(encryptedFileData)
                             val file = SecureFileStorage.blobFile(filesDir, videoId)
                             SecureFileStorage.write(this@MessengerService, file, decryptedBytes)
-                            Log.d(TAG, "✅ Видеокружок расшифрован: ${file.absolutePath}")
+                            Log.i(TAG, "ПОЛУЧЕНО video_circle $videoId ← $from @ ${System.currentTimeMillis()}")
                             withContext(Dispatchers.Main) {
                                 onVideoReceived?.invoke(videoId, file, duration)
                             }
@@ -1816,6 +1816,7 @@ class MessengerService : Service() {
 
                     val voiceData = CryptoManager.decrypt(encryptedData)
                     val voiceFile = AudioHelper.decodeAndSave(this@MessengerService, voiceData, voiceId)
+                    Log.i(TAG, "ПОЛУЧЕНО voice $voiceId ← $from @ ${System.currentTimeMillis()}")
                     withContext(Dispatchers.Main) { onVoiceReceived?.invoke(voiceId, voiceFile, duration) }
                 } catch (e: Exception) {
                     Log.e(TAG, "voice error: ${e.message}")
@@ -2723,6 +2724,7 @@ class MessengerService : Service() {
         bootstrapToken: String? = null
     ): String {
         val id = msgId ?: UUID.randomUUID().toString()
+        Log.i(TAG, "ОТПРАВЛЕНО message $id → $to @ ${System.currentTimeMillis()}")
         scope.launch(Dispatchers.IO) {
             try {
                 if (!SessionKeyManager.hasSession(to) && !isFirst) {
@@ -2882,6 +2884,7 @@ class MessengerService : Service() {
     }
 
     fun sendVoice(to: String, voiceBase64: String, voiceId: String, duration: Int) {
+        Log.i(TAG, "ОТПРАВЛЕНО voice $voiceId → $to @ ${System.currentTimeMillis()}")
         scope.launch(Dispatchers.IO) {
             try {
                 val cachedKey = publicKeys[to] ?: ChatStorage.getContactPublicKey(this@MessengerService, to)?.also { publicKeys[to] = it }
@@ -3220,6 +3223,7 @@ class MessengerService : Service() {
     }
 
     fun sendVideoCircle(to: String, videoId: String, videoBytes: ByteArray, duration: Int, encFilePath: String = "") {
+        Log.i(TAG, "ОТПРАВЛЕНО video_circle $videoId → $to @ ${System.currentTimeMillis()}")
         if (!isConnected) {
             if (encFilePath.isNotEmpty()) {
                 synchronized(pendingVideoCircles) {
@@ -3810,6 +3814,7 @@ class MessengerService : Service() {
             ChatStorage.StoredMessage(id = messageId ?: UUID.randomUUID().toString(), text = decryptedText, isOwn = false)
         )
         ChatStorage.addContact(this@MessengerService, from)
+        Log.i(TAG, "ПОЛУЧЕНО message ${messageId ?: "?"} ← $from @ ${System.currentTimeMillis()}")
 
         if (messageId != null) {
             sendAnonOrDirect(from, JSONObject().apply {
@@ -4095,6 +4100,7 @@ class MessengerService : Service() {
                             from,
                             ChatStorage.StoredMessage(id = storedId, text = text, isOwn = false)
                         )
+                        Log.i(TAG, "ПОЛУЧЕНО message $storedId ← $from @ ${System.currentTimeMillis()}")
                         withContext(Dispatchers.Main) { onMessageReceived?.invoke(from, text) }
                     }
                 } catch (e: Exception) {
