@@ -14,7 +14,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,7 +38,9 @@ fun TotpSettingsScreen(
     val context = LocalContext.current
     val s = LocalStrings.current
     val c = LocalSubrosaColors.current
+    val clipboard = LocalClipboardManager.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
+    var secretCopied by remember { mutableStateOf(false) }
     var recoveryCodes by remember { mutableStateOf<List<String>?>(null) }
     var recoveryCodesSavedConfirmed by remember { mutableStateOf(false) }
 
@@ -172,6 +176,13 @@ fun TotpSettingsScreen(
                                     }
                                 }
                             }
+                            var codesCopied by remember { mutableStateOf(false) }
+                            TextButton(onClick = {
+                                clipboard.setText(AnnotatedString(codes.joinToString("\n")))
+                                codesCopied = true
+                            }) {
+                                Text(if (codesCopied) s.profileCodeCopied else s.totpCopySecret, color = c.accent, fontSize = 12.sp)
+                            }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.clickable { recoveryCodesSavedConfirmed = !recoveryCodesSavedConfirmed }
@@ -266,8 +277,21 @@ fun TotpSettingsScreen(
                             }
                         } else {
                             val secret = pendingSecret!!
-                            SelectionContainer {
-                                Text(secret, fontSize = 16.sp, color = c.textPrimary, fontWeight = FontWeight.Bold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                SelectionContainer(modifier = Modifier.weight(1f)) {
+                                    Text(secret, fontSize = 16.sp, color = c.textPrimary, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                // Manual text selection (long-press) is unreliable on
+                                // emulators/some devices with mouse-simulated touch —
+                                // found live while testing the mandatory setup flow. An
+                                // explicit copy button doesn't depend on that at all.
+                                TextButton(onClick = {
+                                    clipboard.setText(AnnotatedString(secret))
+                                    secretCopied = true
+                                }) {
+                                    Text(if (secretCopied) s.profileCodeCopied else s.totpCopySecret, color = c.accent, fontSize = 12.sp)
+                                }
                             }
                             SelectionContainer {
                                 Text(

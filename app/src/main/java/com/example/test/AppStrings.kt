@@ -255,6 +255,7 @@ interface IStr9 {
     val serverTotpErrNotConnected: String
     val totpConfirmingWithServer: String
     val totpErrTimeout: String
+    val totpCopySecret: String
     val totpMandatoryTitle: String; val totpMandatoryIntro: String
     val totpRecoveryCodesTitle: String; val totpRecoveryCodesHint: String
     val totpRecoveryCodesConfirm: String; val totpRecoveryCodesContinue: String
@@ -751,6 +752,7 @@ private val ru9 = object : IStr9 {
     override val serverTotpErrNotConnected = "Нет соединения с сервером"
     override val totpConfirmingWithServer = "Подтверждаем с сервером — подождите..."
     override val totpErrTimeout = "Сервер не ответил вовремя — попробуйте ещё раз"
+    override val totpCopySecret = "Копировать"
     override val totpMandatoryTitle = "Защита аккаунта"
     override val totpMandatoryIntro = "Прежде чем продолжить — настройте TOTP-защиту. Это обязательный шаг: без него сервер не сможет отличить вас от того, кто украдёт ваш ключ."
     override val totpRecoveryCodesTitle = "⚠️ Резервные коды — сохраните их сейчас"
@@ -1241,6 +1243,7 @@ private val en9 = object : IStr9 {
     override val serverTotpErrNotConnected = "No connection to the server"
     override val totpConfirmingWithServer = "Confirming with the server — please wait..."
     override val totpErrTimeout = "The server didn't respond in time — please try again"
+    override val totpCopySecret = "Copy"
     override val totpMandatoryTitle = "Account protection"
     override val totpMandatoryIntro = "Before you continue — set up TOTP protection. This step is required: without it, the server can't tell you apart from someone who steals your key."
     override val totpRecoveryCodesTitle = "⚠️ Recovery codes — save them now"
