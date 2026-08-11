@@ -1015,15 +1015,28 @@ fun AppNavigation() {
                 if (CryptoManager.hasKeys()) {
                     context.startForegroundService(Intent(context, MessengerService::class.java))
                 }
-                val chatId = MainActivity.pendingChatId.value
-                val chatType = MainActivity.pendingChatType.value ?: "chat"
-                if (!chatId.isNullOrEmpty()) {
-                    openedChat = chatId
-                    screen = chatType
-                    MainActivity.pendingChatId.value = null
-                    MainActivity.pendingChatType.value = null
+                // TOTP setup is mandatory, but registering locally
+                // (UserStorage.register()) happens before the app ever
+                // reaches the totp_setup_required screen — closing the app
+                // mid-setup left isRegistered()==true with TOTP still
+                // disabled, and this callback used to route straight to
+                // chats on the next login, silently skipping the mandatory
+                // step entirely. Found live. Deep-link routing (pendingChatId)
+                // is deliberately skipped too in that case — finishing setup
+                // takes priority over the link, which is simply dropped.
+                if (UserStorage.isRegistered(context) && !TotpManager.isEnabled(context)) {
+                    screen = "totp_setup_required"
                 } else {
-                    screen = if (UserStorage.isRegistered(context)) "chats" else "register"
+                    val chatId = MainActivity.pendingChatId.value
+                    val chatType = MainActivity.pendingChatType.value ?: "chat"
+                    if (!chatId.isNullOrEmpty()) {
+                        openedChat = chatId
+                        screen = chatType
+                        MainActivity.pendingChatId.value = null
+                        MainActivity.pendingChatType.value = null
+                    } else {
+                        screen = if (UserStorage.isRegistered(context)) "chats" else "register"
+                    }
                 }
             },
             onPanicMode = {
