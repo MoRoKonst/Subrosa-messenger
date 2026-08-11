@@ -72,8 +72,23 @@ fun WaveformMicButton(
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT
                 )
+                // Found live: "The coroutine scope left the composition" —
+                // root cause was this coroutine swallowing
+                // CancellationException through a broad `catch (e:
+                // Exception)` (it IS a subtype of Exception), instead of
+                // letting it propagate. That skipped the stop()/release()
+                // calls entirely on cancellation (navigating away mid-
+                // recording, rapid toggle) — leaked the AudioRecord AND left
+                // the coroutine's cancellation half-handled, so a later
+                // Animatable.animateTo() from another LaunchedEffect reacting
+                // to the stray `amplitude = 0.15f` write below hit a
+                // composition that had already torn down. Fixed: audioRecord
+                // declared outside try so stop()/release() always run in
+                // `finally` (including on cancellation), and
+                // CancellationException is re-thrown instead of logged.
+                var audioRecord: AudioRecord? = null
                 try {
-                    val audioRecord = AudioRecord(
+                    audioRecord = AudioRecord(
                         MediaRecorder.AudioSource.MIC,
                         sampleRate,
                         AudioFormat.CHANNEL_IN_MONO,
@@ -92,14 +107,19 @@ fun WaveformMicButton(
                         }
                         delay(50)
                     }
-                    audioRecord.stop()
-                    audioRecord.release()
                 } catch (e: SecurityException) {
                     android.util.Log.e("WaveformMicButton", "Нет разрешения: ${e.message}")
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     android.util.Log.e("WaveformMicButton", "Ошибка: ${e.message}")
+                } finally {
+                    try {
+                        audioRecord?.stop()
+                    } catch (_: Exception) {}
+                    audioRecord?.release()
+                    amplitude = 0.15f
                 }
-                amplitude = 0.15f
             }
         } else {
             amplitude = 0.15f
