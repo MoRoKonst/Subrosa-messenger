@@ -1030,7 +1030,14 @@ def report_violation(username, reason):
 def rate_limit_check(username, msg_type, limit=None, window=60):
     default_limits = {
         "message": 50, "reaction": 100, "typing": 200, "prekey_fetch": 10,
-        "anon_message": 100, "mailbox_put": 20, "subscribe_tokens": 10,
+        # Раньше было 100 — легко пробивалось одним видеокружком/файлом
+        # (чанки по 120 000 символов, пачками по 5), особенно если
+        # соединение падало посреди отправки и клиент начинал заново с
+        # первого чанка. Поднято до 500 — тот же порядок, что у уже
+        # существующего call_ice (300) для похожей причины (много мелких
+        # сообщений на одно действие пользователя), плюс отдельно чинится
+        # сам повтор с нуля на клиенте.
+        "anon_message": 500, "mailbox_put": 20, "subscribe_tokens": 10,
         "channel_create": 5, "register_bundle": 20, "profile_update": 10,
         # Call signaling: call_ice legitimately fires many times per single call
         # (one message per ICE candidate, several restarts possible) so it needs
