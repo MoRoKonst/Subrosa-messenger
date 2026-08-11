@@ -133,6 +133,22 @@ object AnonTokenManager {
         return tag
     }
 
+    /** Forces PREF_MY_PERSISTENT_TAG to match [tag] — the tag actually embedded
+     * in the currently active/displayed invite code. Found live: a device with
+     * an invite code cached from before this "persistent tag" concept existed
+     * (still within its 7-day TTL, so ensureMyMailboxTagRegistered() just
+     * reused it as-is) never called getOrCreateMyPersistentMailboxTag() to
+     * seed the pref — so the first read of it (e.g. from
+     * removeMailboxTagIfEphemeral()'s "is this the tag I should never prune"
+     * check) minted an unrelated fresh value instead of matching the tag
+     * actually in use, and the real tag got pruned anyway on first use.
+     * Call this every time the active invite code is resolved (cached or
+     * fresh) so the two can never diverge again. */
+    fun syncMyPersistentMailboxTag(ctx: Context, tag: String) {
+        prefs(ctx).edit().putString(PREF_MY_PERSISTENT_TAG, tag).apply()
+        addMyMailboxTag(ctx, tag)
+    }
+
     /** Wipes all token/tag state for every contact — used when replacing the
      * device's active identity with a different one from a backup, see
      * BackupManager.wipeCurrentIdentityData(). Tokens/tags are meaningless
