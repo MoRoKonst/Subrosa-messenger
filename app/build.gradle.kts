@@ -31,8 +31,8 @@ android {
     defaultConfig {
         applicationId = "com.subrosa.messenger"
         minSdk = 26
-        versionCode = 2
-        versionName = "1.039"
+        versionCode = 3
+        versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures {
@@ -76,6 +76,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     // Биометрия
     implementation("androidx.biometric:biometric:1.1.0")
+    // EXIF-стриппинг (GPS/устройство/даты) для фото, отправленных как файл
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     // WebSocket
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.79") // 1.79+ required for org.bouncycastle.pqc.crypto.mlkem (ML-KEM)
