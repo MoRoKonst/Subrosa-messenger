@@ -3615,29 +3615,31 @@ class MessengerService : Service() {
                 }
                 Log.d(TAG, "Публичный ключ из bundle сохранён: $from")
 
-                if (queued.isNullOrEmpty()) {
-                    // Nothing queued to send — this fetch only wanted the identity
-                    // key (e.g. a chunk-signature check that lacked it), which is
-                    // already cached above. Initiating an X3DH session here with
-                    // nothing to transmit would consume one of the peer's OPKs and
-                    // create local session state the peer is never told about via
-                    // session_init — desynchronizing the two sides until a later
-                    // real message collides with the orphaned session and forces
-                    // a session_reset round-trip.
-                    return
-                }
+                // Found live: this used to `return` right here when nothing was
+                // queued in pendingSessionMessages, on the reasoning that an X3DH
+                // session with nothing to transmit would burn one of the peer's
+                // OPKs for no reason. True — but the early return also skipped the
+                // flushPendingVideoCircles()/flushPendingImages()/
+                // flushPendingFileSends() calls at the bottom of this function,
+                // which is exactly what a video circle / image / file send is
+                // waiting on. Those never touch pendingSessionMessages at all (only
+                // sendWithForwardSecrecy's queued-text path does), so a video-only
+                // key fetch always hit this branch and its flush never happened —
+                // the fetched key just sat cached, unused. Skip only the X3DH
+                // init+send when nothing is queued; still fall through to flush.
+                if (!queued.isNullOrEmpty()) {
+                    val (_, x3dhHeader) = SessionKeyManager.initiateSession(from, bundle)
+                    Log.d(TAG, "X3DH сессия с $from инициирована")
+                    markChannelReady(from)
+                    withContext(Dispatchers.Main) { onChannelReady?.invoke(from) }
 
-                val (_, x3dhHeader) = SessionKeyManager.initiateSession(from, bundle)
-                Log.d(TAG, "X3DH сессия с $from инициирована")
-                markChannelReady(from)
-                withContext(Dispatchers.Main) { onChannelReady?.invoke(from) }
-
-                queued.forEach { (text, msgId) ->
-                    if (text.startsWith("__voice__|")) {
-                        val parts = text.removePrefix("__voice__|").split("|", limit = 3)
-                        sendVoice(from, parts[2], parts[0], parts[1].toIntOrNull() ?: 0)
-                    } else {
-                        sendWithForwardSecrecy(from, text, msgId, x3dhHeader, isFirst = true, bootstrapToken = bundle.bootstrapToken)
+                    queued.forEach { (text, msgId) ->
+                        if (text.startsWith("__voice__|")) {
+                            val parts = text.removePrefix("__voice__|").split("|", limit = 3)
+                            sendVoice(from, parts[2], parts[0], parts[1].toIntOrNull() ?: 0)
+                        } else {
+                            sendWithForwardSecrecy(from, text, msgId, x3dhHeader, isFirst = true, bootstrapToken = bundle.bootstrapToken)
+                        }
                     }
                 }
             } catch (e: SecurityException) {
