@@ -724,7 +724,7 @@ fun AppNavigation() {
     val context = LocalContext.current
     val s = LocalStrings.current
 
-    var torReady by remember { mutableStateOf(TorManager.isConnected) }
+    var torReady by remember { mutableStateOf(TorManager.isConnected || !UserStorage.isTorEnabled(context)) }
     var torProgress by remember { mutableStateOf(TorManager.bootstrapProgress) }
     var torStatus by remember { mutableStateOf(s.torStatusStarting) }
     var torError by remember { mutableStateOf("") }
@@ -742,7 +742,7 @@ fun AppNavigation() {
             torReady = true
         }
 
-        if (TorManager.isConnected || !TorManager.isOrbotInstalled(context)) {
+        if (TorManager.isConnected || !TorManager.isOrbotInstalled(context) || !UserStorage.isTorEnabled(context)) {
             torReady = true
         }
     }
