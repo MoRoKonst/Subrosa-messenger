@@ -489,8 +489,10 @@ class MessengerService : Service() {
         if (TorManager.isConnected) {
 
             scope.launch { connect() }
-        } else {
+        } else if (UserStorage.isTorEnabled(this)) {
             TorManager.start(this, scope)
+        } else {
+            scope.launch { connect() }
         }
         registerNetworkCallback()
         startSilentAudio()

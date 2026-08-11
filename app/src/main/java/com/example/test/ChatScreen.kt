@@ -1003,7 +1003,7 @@ fun ChatScreen(
             colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
         )
 
-        if (!isTorConnected && !torWarningDismissed) {
+        if (!isTorConnected && !torWarningDismissed && UserStorage.isTorEnabled(context)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

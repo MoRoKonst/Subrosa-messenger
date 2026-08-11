@@ -183,6 +183,7 @@ fun ProfileScreen(
     var currentLock        by remember { mutableStateOf(UserStorage.getAutoLockTimeout(context)) }
     var emergencyEnabled        by remember { mutableStateOf(UserStorage.isEmergencyWipeEnabled(context) && isEmergencyServiceEnabled(context)) }
     var showEmergencyInfoDialog by remember { mutableStateOf(false) }
+    var torEnabled              by remember { mutableStateOf(UserStorage.isTorEnabled(context)) }
 
     val displayName      = UserStorage.getUserDisplayName(context)
     val userId           = UserStorage.getUserId(context)
@@ -768,6 +769,24 @@ fun ProfileScreen(
                         PRow(s.profileTotp,       onClick = onOpenTotpSettings,         trailing = { PChevron() })
                         PDivider()
                         PRow(s.profileDiagnostics, onClick = onOpenDiagnostics,         trailing = { PChevron() })
+                        PDivider()
+                        PRow(
+                            title = s.profileTorEnabled,
+                            subtitle = s.profileTorEnabledSub,
+                            trailing = {
+                                Switch(
+                                    checked = torEnabled,
+                                    onCheckedChange = {
+                                        torEnabled = it
+                                        UserStorage.setTorEnabled(context, it)
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = c.accent,
+                                        checkedTrackColor = c.accent.copy(alpha = 0.35f)
+                                    )
+                                )
+                            }
+                        )
                         PDivider()
                         PRow(s.wipeSettingsTitle,  onClick = onOpenWipeSettings,         trailing = { PChevron() })
                         PDivider()

@@ -152,7 +152,9 @@ class MainActivity : FragmentActivity() {
 
         currentTheme.value = UserStorage.getTheme(this)
 
-        TorManager.start(this, activityScope, if (UserStorage.getLanguage(this) == "en") enStrings else ruStrings)
+        if (UserStorage.isTorEnabled(this)) {
+            TorManager.start(this, activityScope, if (UserStorage.getLanguage(this) == "en") enStrings else ruStrings)
+        }
 
         registerReceiver(screenLockReceiver, android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF))
 
