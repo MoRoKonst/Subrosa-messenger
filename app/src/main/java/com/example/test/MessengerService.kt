@@ -152,6 +152,20 @@ class MessengerService : Service() {
 
     private val processedGroupMessageIds = mutableSetOf<String>()
     private val pendingSessionMessages = mutableMapOf<String, MutableList<Pair<String, String>>>()
+
+    /** Every real (non-decoy) target requestPrekeyBundle() is currently
+     * waiting on — populated there, consumed by "prekey_bundles_batch_response".
+     * Found live: that response handler used to filter by
+     * pendingSessionMessages.keys alone, which only ever gets populated by
+     * sendWithForwardSecrecy()'s queued-text-message path. A video circle /
+     * image / file send with no key cached also calls requestPrekeyBundle()
+     * but never touches pendingSessionMessages — so its batch response was
+     * silently discarded as if it were a decoy entry, and publicKeys/
+     * publicKeysPq for that contact never got set, leaving
+     * flushPendingVideoCircles() with nothing to flush. It "worked" in one
+     * test only because a text message happened to be queued for the same
+     * contact at the same time. */
+    private val pendingBundleRequests = mutableSetOf<String>()
     private val pendingReactions = mutableListOf<Triple<String, String, String>>()
 
     // Queued by sendAnonOrDirect() when a contact's anon-token pool is empty —
@@ -1875,20 +1889,25 @@ class MessengerService : Service() {
 
             "prekey_bundle_response" -> {
                 val from = json.getString("from")
+                pendingBundleRequests.remove(from)
                 val bundleJsonRaw = if (json.isNull("bundle")) null else json.getJSONObject("bundle")
                 handleFetchedPrekeyBundle(from, bundleJsonRaw)
             }
 
             // ── Anonymous batched prekey-bundle fetch response ─────────────────
-            // Only entries matching a fingerprint we're actually waiting on
-            // (pendingSessionMessages) are processed — decoy entries (present
+            // Only entries matching a fingerprint we actually requested
+            // (pendingBundleRequests) are processed — decoy entries (present
             // in the batch purely as cover) are discarded outright, since we
-            // never asked for a session with them.
+            // never asked for a session with them. Not filtered by
+            // pendingSessionMessages alone anymore — see pendingBundleRequests'
+            // doc comment for the live incident (video circles never reached
+            // this handler at all).
             "prekey_bundles_batch_response" -> {
                 val bundlesObj = json.optJSONObject("bundles")
                 if (bundlesObj != null) {
-                    for (target in pendingSessionMessages.keys.toList()) {
+                    for (target in pendingBundleRequests.toList()) {
                         if (!bundlesObj.has(target)) continue
+                        pendingBundleRequests.remove(target)
                         val bundleJsonRaw = if (bundlesObj.isNull(target)) null else bundlesObj.getJSONObject(target)
                         handleFetchedPrekeyBundle(target, bundleJsonRaw)
                     }
@@ -3342,6 +3361,8 @@ class MessengerService : Service() {
             return
         }
 
+        Log.d(TAG, "DEBUG-BOOTSTRAP sendVideoCircle: to=$to hasKey=${publicKeys[to] != null} hasPqKey=${publicKeysPq[to] != null} encFilePath=${encFilePath.isNotEmpty()}")
+
         val cachedKey = publicKeys[to]
             ?: ChatStorage.getContactPublicKey(this@MessengerService, to)?.also {
                 publicKeys[to] = it
@@ -3462,6 +3483,7 @@ class MessengerService : Service() {
                 all
             }
         }
+        Log.d(TAG, "DEBUG-BOOTSTRAP flushPendingVideoCircles: forContact=$forContact toFlush=${toFlush.size}")
         if (toFlush.isEmpty()) return
         Log.d(TAG, "flushPendingVideoCircles: отправляем ${toFlush.size} видеокружков (contact=$forContact)")
         scope.launch(Dispatchers.IO) {
@@ -3651,6 +3673,7 @@ class MessengerService : Service() {
             }
         }
 
+        Log.d(TAG, "DEBUG-BOOTSTRAP handleFetchedPrekeyBundle: flushing pending sends for $from")
         flushPendingVideoCircles(from)
         flushPendingImages(from)
         flushPendingFileSends(from)
@@ -3664,6 +3687,7 @@ class MessengerService : Service() {
      *  direct, non-anonymous fetch instead of pretending otherwise. */
     private fun requestPrekeyBundle(contactId: String) {
         val decoys = ChatStorage.getContacts(this).filter { it != contactId }
+        pendingBundleRequests.add(contactId)
         scope.launch(Dispatchers.IO) {
             if (decoys.isNotEmpty()) {
                 val batch = (decoys.shuffled().take(MAX_BATCH_BUNDLE_TARGETS - 1) + contactId).shuffled()
