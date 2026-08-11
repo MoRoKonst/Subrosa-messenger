@@ -426,6 +426,7 @@ fun ChatsScreen(
                                 // FORMAT_VERSION codes now — the mailbox tag is always present,
                                 // there is no more direct/non-anonymous fallback path here.
                                 AnonTokenManager.setContactMailboxTag(context, fingerprint, inviteData.mailboxTag!!)
+                                Log.d("ChatsScreen", "DEBUG-BOOTSTRAP redeem: fingerprint=$fingerprint parsedTag=${inviteData.mailboxTag} savedTag=${AnonTokenManager.getContactMailboxTag(context, fingerprint)}")
                                 // Kick off the anonymous token exchange immediately, invisibly —
                                 // don't wait for the user to type a first message to trigger it.
                                 context.startService(

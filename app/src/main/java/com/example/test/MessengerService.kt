@@ -534,9 +534,11 @@ class MessengerService : Service() {
                 UserStorage.saveInviteCode(this, fresh)
                 fresh
             }
-            InviteCodeManager.parseInviteCode(code)?.mailboxTag?.let { tag ->
+            val embeddedTag = InviteCodeManager.parseInviteCode(code)?.mailboxTag
+            embeddedTag?.let { tag ->
                 AnonTokenManager.syncMyPersistentMailboxTag(this, tag)
             }
+            Log.d(TAG, "DEBUG-BOOTSTRAP ensureMyMailboxTagRegistered: reused=${existing != null && stillValid} embeddedTag=$embeddedTag myTags=${AnonTokenManager.getMyMailboxTags(this)}")
         } catch (e: Exception) {
             Log.e(TAG, "ensureMyMailboxTagRegistered: ${e.message}")
         }
