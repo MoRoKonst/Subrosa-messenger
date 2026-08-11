@@ -39,7 +39,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 
 sealed class ChatItem {
     data class Contact(val userId: String, val name: String, val lastMessage: String, val unreadCount: Int = 0, val lastTimestamp: Long = 0L) : ChatItem()
@@ -67,7 +67,7 @@ private fun OptionRow(
     labelColor: Color? = null,
     onClick: () -> Unit
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -97,7 +97,7 @@ fun ChatsScreen(
 ) {
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     val scope = rememberCoroutineScope()
 
@@ -120,7 +120,7 @@ fun ChatsScreen(
     val myAvatarBitmap = AvatarStore.avatars[myUserId]
     val myAvatarColor = remember(myDisplayName) {
         listOf(
-            Color(0xFF2481CC), Color(0xFFE74C3C), Color(0xFF27AE60),
+            Color(0xFFC77B4F), Color(0xFFE74C3C), Color(0xFF27AE60),
             Color(0xFFF39C12), Color(0xFF9B59B6), Color(0xFF1ABC9C)
         )[myDisplayName.hashCode().absoluteValue % 6]
     }
@@ -189,7 +189,7 @@ fun ChatsScreen(
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "B-CON",
+                            text = "SUBROSA",
                             color = Color.White,
                             fontFamily = JetBrainsMono,
                             fontWeight = FontWeight.Bold,
@@ -354,6 +354,19 @@ fun ChatsScreen(
                         val mediaPaths = msgs.flatMap { listOfNotNull(it.imagePath, it.voicePath, it.filePath) }
                         ChatStorage.deleteChat(context, userId, target.userId)
                         SessionKeyManager.deleteSession(target.userId)
+                        // Clears MessengerService's own in-memory key cache +
+                        // mailbox tag too — ChatStorage.deleteChat() only
+                        // owns on-disk state, and this screen has no bound
+                        // service reference to call forgetContact() directly.
+                        // Found live: without this, routine background
+                        // traffic from a peer unaware they were deleted
+                        // (health-check pings, token refills) still verified
+                        // against the surviving key and silently resurrected
+                        // the contact via ChatStorage.addContact() in the
+                        // message handlers.
+                        context.startService(Intent(context, MessengerService::class.java).apply {
+                            putExtra("forget_contact", target.userId)
+                        })
                         context.startService(Intent(context, MessengerService::class.java).apply {
                             putExtra("send_session_reset_to", target.userId)
                         })
@@ -409,23 +422,17 @@ fun ChatsScreen(
                                 ChatStorage.saveContactPublicKey(context, fingerprint, fixedKey)
                                 ChatStorage.saveContactName(context, fingerprint, decodedName)
 
-                                if (inviteData.mailboxTag != null) {
-                                    AnonTokenManager.setContactMailboxTag(context, fingerprint, inviteData.mailboxTag)
-                                    // Kick off the anonymous token exchange immediately, invisibly —
-                                    // don't wait for the user to type a first message to trigger it.
-                                    context.startService(
-                                        Intent(context, MessengerService::class.java).apply {
-                                            putExtra("bootstrap_channel_for", fingerprint)
-                                        }
-                                    )
-                                } else {
-
-                                    context.startService(
-                                        Intent(context, MessengerService::class.java).apply {
-                                            putExtra("request_key", fingerprint)
-                                        }
-                                    )
-                                }
+                                // parseInviteCode()/verifyInviteCode() only ever accept
+                                // FORMAT_VERSION codes now — the mailbox tag is always present,
+                                // there is no more direct/non-anonymous fallback path here.
+                                AnonTokenManager.setContactMailboxTag(context, fingerprint, inviteData.mailboxTag!!)
+                                // Kick off the anonymous token exchange immediately, invisibly —
+                                // don't wait for the user to type a first message to trigger it.
+                                context.startService(
+                                    Intent(context, MessengerService::class.java).apply {
+                                        putExtra("bootstrap_channel_for", fingerprint)
+                                    }
+                                )
                                 showAddDialog = false; inviteCode = ""
                                 loadChats()
                                 android.widget.Toast.makeText(
@@ -619,7 +626,7 @@ fun ChatsScreen(
 }
 
 private val avatarPalette = listOf(
-    Color(0xFF2481CC), Color(0xFFE74C3C), Color(0xFF27AE60),
+    Color(0xFFC77B4F), Color(0xFFE74C3C), Color(0xFF27AE60),
     Color(0xFFF39C12), Color(0xFF9B59B6), Color(0xFF1ABC9C)
 )
 
@@ -650,7 +657,7 @@ fun ContactCard(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val avatarBitmap = AvatarStore.avatars[userId]
     val avatarColor  = remember(name) { avatarPalette[name.hashCode().absoluteValue % avatarPalette.size] }
 
@@ -737,7 +744,7 @@ fun ChannelCard(
     lastPost: String,
     onClick: () -> Unit
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val s = LocalStrings.current
 
     Row(
@@ -811,7 +818,7 @@ fun GroupChatCard(
     lastTimestamp: Long = 0L,
     onClick: () -> Unit
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
 
     Row(
         modifier = Modifier

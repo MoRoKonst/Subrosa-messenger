@@ -218,10 +218,28 @@ object ChatStorage {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getString("draft_${chatKey(myUserId, recipientUserId)}", "") ?: ""
 
+    /** Found live: this used to remove only the message history and the
+     * contacts-list entry — the cached public key ("key_$contactId") was
+     * left in place, and so was MessengerService's own in-memory
+     * publicKeys/publicKeysPq cache and the Double Ratchet session
+     * (SessionKeyManager), and the mailbox tag (AnonTokenManager). Any
+     * routine background traffic still arriving from the other side (who
+     * has no idea they were deleted — health-check pings, token refills)
+     * still verified successfully against the surviving key and silently
+     * re-added the contact via ChatStorage.addContact() in the message
+     * handlers, but with the "channel" actually just stale leftover state,
+     * not anything freshly (re-)established. See
+     * MessengerService.forgetContact(), which now also clears the
+     * session/tokens/in-memory caches — this function only owns the
+     * on-disk parts ChatStorage is responsible for. */
     fun deleteChat(context: Context, username: String, recipient: String) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
 
-        prefs.edit().remove(chatKey(username, recipient)).apply()
+        prefs.edit()
+            .remove(chatKey(username, recipient))
+            .remove("key_$recipient")
+            .remove("avatar_$recipient")
+            .apply()
 
         val contacts = getContacts(context)
         contacts.remove(recipient)

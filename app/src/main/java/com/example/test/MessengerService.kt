@@ -651,6 +651,17 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
+        // Same intent-extra pattern as send_session_reset_to above — used by
+        // ChatsScreen's delete-contact flow, which has no bound service
+        // reference of its own. See forgetContact() for what this clears
+        // and why (in-memory key caches + mailbox tag that a plain
+        // ChatStorage.deleteChat() can't reach, since those live in this
+        // running service instance / a different storage namespace).
+        intent?.getStringExtra("forget_contact")?.let { contactId ->
+            forgetContact(contactId)
+            return START_STICKY
+        }
+
         intent?.getStringExtra("channel_post_id")?.let { channelId ->
             val text = intent.getStringExtra("channel_post_text") ?: return@let
             val msgId = intent.getStringExtra("channel_post_msg_id") ?: UUID.randomUUID().toString()
@@ -2893,6 +2904,21 @@ class MessengerService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "sendEncrypted error: ${e.message}")
         }
+    }
+
+    /** Full teardown for a deleted contact — see the comment on
+     *  ChatStorage.deleteChat() for what was missing before this existed.
+     *  Clears everything that would otherwise let a stale channel keep
+     *  half-working after deletion: the in-memory key caches this running
+     *  service instance holds (surviving a plain ChatStorage wipe, since
+     *  that's on-disk only), the Double Ratchet session, and the mailbox
+     *  tag (so a future mailbox deposit from this fingerprint is rejected
+     *  by the existing mutual-add gate, same as any never-added sender). */
+    fun forgetContact(contactId: String) {
+        publicKeys.remove(contactId)
+        publicKeysPq.remove(contactId)
+        SessionKeyManager.deleteSession(contactId)
+        AnonTokenManager.clearContactMailboxTag(this, contactId)
     }
 
     fun sendVoice(to: String, voiceBase64: String, voiceId: String, duration: Int) {
