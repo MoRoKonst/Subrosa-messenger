@@ -138,7 +138,7 @@ object ServerManager {
     }
 
     private fun getDefaultServers() = listOf(
-        Server("api.subrosamessenger.com", 443, "Основной сервер", true, "ws"), // Cloudflare WS-проксирование починили 2026-08-11 — вернули с временного обхода :8443 на штатный 443, как и планировал этот же комментарий.
+        Server("api.subrosamessenger.com", 8443, "Основной сервер", true, "ws"), // 8443, не 443 — это тот порт, под который реально настроен nginx (sites-available/api) и который Cloudflare поддерживает для проксируемого HTTPS-трафика; более раннее переключение на 443 было по старому комментарию, не по факту инфраструктуры.
         Server("ws://amqvpheooju3fg7tafxkmf73c3vg4xg7nycelepiie6jdjzbsqrvrcqd.onion", 80, "Onion (Tor)", true, "")
     )
 
