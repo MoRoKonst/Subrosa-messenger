@@ -1773,49 +1773,51 @@ class MessengerService : Service() {
             "video_chunk" -> {
                 try {
                     val from = json.getString("from")
-                    val videoId = json.getString("video_id")
-                    val chunkIndex = json.getInt("chunk_index")
-                    val totalChunks = json.getInt("total_chunks")
-                    val chunkData = json.getString("data")
-                    val duration = json.optInt("duration", 0)
-                    val isEncrypted = json.optBoolean("encrypted", true)
-                    val signature = json.optString("signature", null)
-
-                    val senderKey = publicKeys[from]
-                        ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also {
-                            publicKeys[from] = it
-                        }
-
-                    if (signature == null || senderKey == null ||
-                        !CryptoManager.verifyChunk(chunkData, signature, senderKey, videoId, chunkIndex)) {
-                        Log.e(TAG, "⚠️ video_chunk неверная подпись от $from")
-                        return
-                    }
-
-                    val transferKey = "$from:$videoId"
-                    val chunks = imageChunks.getOrPut(transferKey) { mutableMapOf() }
-                    chunks[chunkIndex] = chunkData
-                    imageTotals[transferKey] = totalChunks
-
-                    if (chunks.size == totalChunks) {
-                        Log.d(TAG, "Все video чанки получены ($totalChunks), расшифровываем...")
-                        val packed = (0 until totalChunks).map { chunks[it]!! }.joinToString("")
-                        imageChunks.remove(transferKey)
-                        imageTotals.remove(transferKey)
-
-                        if (isEncrypted) {
-                            val encryptedFileData = CryptoManager.unpackEncryptedFile(packed)
-                            val decryptedBytes = CryptoManager.decryptFile(encryptedFileData)
-                            val file = SecureFileStorage.blobFile(filesDir, videoId)
-                            SecureFileStorage.write(this@MessengerService, file, decryptedBytes)
-                            Log.i(TAG, "ПОЛУЧЕНО video_circle $videoId ← $from @ ${System.currentTimeMillis()}")
-                            withContext(Dispatchers.Main) {
-                                onVideoReceived?.invoke(videoId, file, duration)
-                            }
-                        }
-                    }
+                    processVideoChunk(
+                        from = from,
+                        videoId = json.getString("video_id"),
+                        chunkIndex = json.getInt("chunk_index"),
+                        totalChunks = json.getInt("total_chunks"),
+                        chunkData = json.getString("data"),
+                        duration = json.optInt("duration", 0),
+                        isEncrypted = json.optBoolean("encrypted", true),
+                        signature = json.optString("signature", null)
+                    )
                 } catch (e: Exception) {
                     Log.e(TAG, "video_chunk error: ${e.message}", e)
+                }
+            }
+
+            // Bundles multiple video_chunk payloads into one anon_message —
+            // see sendVideoCircle()'s CHUNK_BATCH_SIZE. Tokens are deliberately
+            // single-use server-side (see server.py's anon_message handler),
+            // so a 60s video's 100+ chunks used to burn through the entire
+            // shared token pool before a single chunk got past text messages
+            // in the same queue. Batching keeps one-token-per-message but
+            // puts far more payload behind each token.
+            "video_chunk_batch" -> {
+                try {
+                    val from = json.getString("from")
+                    val videoId = json.getString("video_id")
+                    val totalChunks = json.getInt("total_chunks")
+                    val duration = json.optInt("duration", 0)
+                    val isEncrypted = json.optBoolean("encrypted", true)
+                    val chunksArr = json.getJSONArray("chunks")
+                    for (i in 0 until chunksArr.length()) {
+                        val c = chunksArr.getJSONObject(i)
+                        processVideoChunk(
+                            from = from,
+                            videoId = videoId,
+                            chunkIndex = c.getInt("chunk_index"),
+                            totalChunks = totalChunks,
+                            chunkData = c.getString("data"),
+                            duration = duration,
+                            isEncrypted = isEncrypted,
+                            signature = c.optString("signature", null)
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "video_chunk_batch error: ${e.message}", e)
                 }
             }
 
@@ -3287,6 +3289,45 @@ class MessengerService : Service() {
         }
     }
 
+    private suspend fun processVideoChunk(
+        from: String, videoId: String, chunkIndex: Int, totalChunks: Int,
+        chunkData: String, duration: Int, isEncrypted: Boolean, signature: String?
+    ) {
+        val senderKey = publicKeys[from]
+            ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also {
+                publicKeys[from] = it
+            }
+
+        if (signature == null || senderKey == null ||
+            !CryptoManager.verifyChunk(chunkData, signature, senderKey, videoId, chunkIndex)) {
+            Log.e(TAG, "⚠️ video_chunk неверная подпись от $from")
+            return
+        }
+
+        val transferKey = "$from:$videoId"
+        val chunks = imageChunks.getOrPut(transferKey) { mutableMapOf() }
+        chunks[chunkIndex] = chunkData
+        imageTotals[transferKey] = totalChunks
+
+        if (chunks.size == totalChunks) {
+            Log.d(TAG, "Все video чанки получены ($totalChunks), расшифровываем...")
+            val packed = (0 until totalChunks).map { chunks[it]!! }.joinToString("")
+            imageChunks.remove(transferKey)
+            imageTotals.remove(transferKey)
+
+            if (isEncrypted) {
+                val encryptedFileData = CryptoManager.unpackEncryptedFile(packed)
+                val decryptedBytes = CryptoManager.decryptFile(encryptedFileData)
+                val file = SecureFileStorage.blobFile(filesDir, videoId)
+                SecureFileStorage.write(this@MessengerService, file, decryptedBytes)
+                Log.i(TAG, "ПОЛУЧЕНО video_circle $videoId ← $from @ ${System.currentTimeMillis()}")
+                withContext(Dispatchers.Main) {
+                    onVideoReceived?.invoke(videoId, file, duration)
+                }
+            }
+        }
+    }
+
     fun sendVideoCircle(to: String, videoId: String, videoBytes: ByteArray, duration: Int, encFilePath: String = "") {
         Log.i(TAG, "ОТПРАВЛЕНО video_circle $videoId → $to @ ${System.currentTimeMillis()}")
         if (!isConnected) {
@@ -3331,9 +3372,22 @@ class MessengerService : Service() {
 
                 Log.d(TAG, "Видеокружок зашифрован: ${encryptedChunks.size} чанков")
 
-                val batchSize = 5
+                // Chunks are bundled CHUNK_BATCH_SIZE-at-a-time into a single
+                // anon_message (see processVideoChunk's "video_chunk_batch"
+                // handler) instead of one anon_message per chunk. Found live:
+                // anon tokens are deliberately single-use server-side (the
+                // whole point — a reusable token would let the server
+                // correlate repeated deliveries to the same sender/recipient
+                // pair), so a 117-chunk video used to burn 117 tokens from
+                // the same small shared-with-this-contact pool (20 per
+                // exchange) that ordinary text messages also draw from —
+                // text sat queued behind the video for as long as it took
+                // several slow mailbox-refill cycles to trickle in enough
+                // tokens. 15 chunks × ~120KB ≈ 1.8MB per batch, comfortably
+                // under the server's 6MB MAX_PACKET_SIZE_BYTES.
+                val CHUNK_BATCH_SIZE = 15
                 var interrupted = false
-                encryptedChunks.chunked(batchSize).forEachIndexed { batchIdx, batch ->
+                encryptedChunks.chunked(CHUNK_BATCH_SIZE).forEachIndexed { batchIdx, batch ->
                     if (cancelledTransfers.contains(videoId)) return@forEachIndexed
                     // Found live: this loop used to keep firing chunks at its
                     // fixed pace even after the WebSocket dropped mid-send —
@@ -3350,22 +3404,26 @@ class MessengerService : Service() {
                         interrupted = true
                         return@forEachIndexed
                     }
+                    val chunksJson = org.json.JSONArray()
                     batch.forEachIndexed { relIdx, chunk ->
-                        val index = batchIdx * batchSize + relIdx
+                        val index = batchIdx * CHUNK_BATCH_SIZE + relIdx
                         val signature = CryptoManager.signChunk(chunk, videoId, index)
-                        sendAnonOrDirect(to, JSONObject().apply {
-                            put("type", "video_chunk")
-                            put("from", username)
-                            put("to", to)
-                            put("video_id", videoId)
+                        chunksJson.put(JSONObject().apply {
                             put("chunk_index", index)
-                            put("total_chunks", encryptedChunks.size)
                             put("data", chunk)
                             put("signature", signature)
-                            put("duration", duration)
-                            put("encrypted", true)
                         })
                     }
+                    sendAnonOrDirect(to, JSONObject().apply {
+                        put("type", "video_chunk_batch")
+                        put("from", username)
+                        put("to", to)
+                        put("video_id", videoId)
+                        put("total_chunks", encryptedChunks.size)
+                        put("duration", duration)
+                        put("encrypted", true)
+                        put("chunks", chunksJson)
+                    })
                     delay(30)
                 }
 
