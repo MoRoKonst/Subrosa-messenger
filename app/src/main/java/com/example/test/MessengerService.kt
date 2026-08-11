@@ -535,7 +535,7 @@ class MessengerService : Service() {
                 fresh
             }
             InviteCodeManager.parseInviteCode(code)?.mailboxTag?.let { tag ->
-                AnonTokenManager.addMyMailboxTag(this, tag)
+                AnonTokenManager.syncMyPersistentMailboxTag(this, tag)
             }
         } catch (e: Exception) {
             Log.e(TAG, "ensureMyMailboxTagRegistered: ${e.message}")

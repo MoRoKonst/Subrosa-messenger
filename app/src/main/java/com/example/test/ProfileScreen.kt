@@ -249,7 +249,7 @@ fun ProfileScreen(
             // reused code's tag could silently never make it into the poll list at
             // all, leaving pollMailbox() with nothing to check for indefinitely.
             InviteCodeManager.parseInviteCode(code)?.mailboxTag?.let { tag ->
-                AnonTokenManager.addMyMailboxTag(context, tag)
+                AnonTokenManager.syncMyPersistentMailboxTag(context, tag)
             }
             code
         } catch (e: Exception) {
