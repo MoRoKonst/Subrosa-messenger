@@ -3005,9 +3005,11 @@ class MessengerService : Service() {
             }
             sendWs(addPadding(anonPacket).toString())
         } else {
-            synchronized(pendingAnonPackets) {
+            val queueSize = synchronized(pendingAnonPackets) {
                 pendingAnonPackets.getOrPut(to) { mutableListOf() }.add(packet)
+                pendingAnonPackets[to]?.size ?: 0
             }
+            Log.d(TAG, "DEBUG-BOOTSTRAP sendAnonOrDirect: нет токена для $to, поставлено в очередь (в очереди: $queueSize) type=${packet.optString("type")}")
             val shouldBootstrap = synchronized(lastTokenBootstrapAttempt) {
                 val now = System.currentTimeMillis()
                 val last = lastTokenBootstrapAttempt[to] ?: 0L
@@ -3790,7 +3792,7 @@ class MessengerService : Service() {
                 Log.d(TAG, "sendAnonTokensTo: нет anon-токена для $contact — бутстрап токенов через mailbox")
                 depositTokensViaMailbox(contact, mailboxTag, recipientKey)
             } else {
-                Log.d(TAG, "sendAnonTokensTo: нет токенов для $contact, ждём mailbox-обмена")
+                Log.d(TAG, "DEBUG-BOOTSTRAP sendAnonTokensTo: нет токенов для $contact, ждём mailbox-обмена — mailboxTag=${mailboxTag != null} recipientKey=${recipientKey != null} hasSession=${SessionKeyManager.hasSession(contact)}")
             }
             return
         }
