@@ -3267,8 +3267,24 @@ class MessengerService : Service() {
                 Log.d(TAG, "Видеокружок зашифрован: ${encryptedChunks.size} чанков")
 
                 val batchSize = 5
+                var interrupted = false
                 encryptedChunks.chunked(batchSize).forEachIndexed { batchIdx, batch ->
                     if (cancelledTransfers.contains(videoId)) return@forEachIndexed
+                    // Found live: this loop used to keep firing chunks at its
+                    // fixed pace even after the WebSocket dropped mid-send —
+                    // each one silently lost (sendWs has nowhere to put it),
+                    // so the receiver was stuck waiting on total_chunks that
+                    // would never all arrive, AND a reconnect elsewhere in
+                    // the app could trigger a full independent resend,
+                    // doubling up traffic against the anon_message rate
+                    // limit. Stop cleanly instead: bail out of this attempt
+                    // and let the whole video re-queue for one clean resend
+                    // once actually reconnected, rather than continuing to
+                    // feed a dead connection.
+                    if (!isConnected) {
+                        interrupted = true
+                        return@forEachIndexed
+                    }
                     batch.forEachIndexed { relIdx, chunk ->
                         val index = batchIdx * batchSize + relIdx
                         val signature = CryptoManager.signChunk(chunk, videoId, index)
@@ -3288,7 +3304,18 @@ class MessengerService : Service() {
                     delay(30)
                 }
 
-                Log.d(TAG, "✅ Видеокружок $videoId отправлен: ${encryptedChunks.size} чанков")
+                if (interrupted) {
+                    if (encFilePath.isNotEmpty()) {
+                        synchronized(pendingVideoCircles) {
+                            pendingVideoCircles.add(PendingVideoCircle(to, videoId, encFilePath, duration))
+                        }
+                        Log.w(TAG, "sendVideoCircle: соединение упало посреди отправки — $videoId поставлен в очередь на повтор")
+                    } else {
+                        Log.w(TAG, "sendVideoCircle: соединение упало посреди отправки, нет encFilePath — $videoId потерян")
+                    }
+                } else {
+                    Log.d(TAG, "✅ Видеокружок $videoId отправлен: ${encryptedChunks.size} чанков")
+                }
 
             } catch (e: Exception) {
                 Log.e(TAG, "sendVideoCircle error: ${e.message}", e)

@@ -73,7 +73,7 @@ import android.content.ServiceConnection
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.IBinder
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -145,6 +145,89 @@ fun fileToChunks(bytes: ByteArray): List<String> {
     return base64.chunked(50000)
 }
 
+/** GPS coordinates, device make/model, and capture timestamps a camera embeds
+ *  in a JPEG/PNG/HEIF/WebP file. Only relevant on the "attach as file" path —
+ *  the dedicated photo picker already goes through a Bitmap decode/re-encode
+ *  (`compressImageForSend`), which carries no EXIF forward since Bitmap is
+ *  pixel data only, not a container format. A raw file attachment skips that
+ *  and would otherwise ship the original bytes, metadata and all. */
+private val EXIF_TAGS_TO_STRIP = arrayOf(
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_LATITUDE,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_LATITUDE_REF,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_LONGITUDE,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_LONGITUDE_REF,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_ALTITUDE,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_ALTITUDE_REF,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_TIMESTAMP,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_DATESTAMP,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_PROCESSING_METHOD,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_VERSION_ID,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_MAP_DATUM,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_DEST_LATITUDE,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_DEST_LATITUDE_REF,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_DEST_LONGITUDE,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_DEST_LONGITUDE_REF,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_DEST_BEARING,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_DEST_BEARING_REF,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_DEST_DISTANCE,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_DEST_DISTANCE_REF,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_SPEED,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_SPEED_REF,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_TRACK,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_TRACK_REF,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_IMG_DIRECTION,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_IMG_DIRECTION_REF,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_SATELLITES,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_STATUS,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_MEASURE_MODE,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_DOP,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_AREA_INFORMATION,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_DIFFERENTIAL,
+    androidx.exifinterface.media.ExifInterface.TAG_GPS_H_POSITIONING_ERROR,
+    androidx.exifinterface.media.ExifInterface.TAG_MAKE,
+    androidx.exifinterface.media.ExifInterface.TAG_MODEL,
+    androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE,
+    androidx.exifinterface.media.ExifInterface.TAG_ARTIST,
+    androidx.exifinterface.media.ExifInterface.TAG_COPYRIGHT,
+    androidx.exifinterface.media.ExifInterface.TAG_USER_COMMENT,
+    androidx.exifinterface.media.ExifInterface.TAG_IMAGE_DESCRIPTION,
+    androidx.exifinterface.media.ExifInterface.TAG_DATETIME,
+    androidx.exifinterface.media.ExifInterface.TAG_DATETIME_ORIGINAL,
+    androidx.exifinterface.media.ExifInterface.TAG_DATETIME_DIGITIZED,
+    androidx.exifinterface.media.ExifInterface.TAG_SUBSEC_TIME,
+    androidx.exifinterface.media.ExifInterface.TAG_SUBSEC_TIME_ORIGINAL,
+    androidx.exifinterface.media.ExifInterface.TAG_SUBSEC_TIME_DIGITIZED,
+    androidx.exifinterface.media.ExifInterface.TAG_CAMERA_OWNER_NAME,
+    androidx.exifinterface.media.ExifInterface.TAG_BODY_SERIAL_NUMBER,
+    androidx.exifinterface.media.ExifInterface.TAG_LENS_SERIAL_NUMBER,
+    androidx.exifinterface.media.ExifInterface.TAG_LENS_MAKE,
+    androidx.exifinterface.media.ExifInterface.TAG_LENS_MODEL
+)
+
+/** Strips GPS/device/timestamp EXIF tags in place, keeping orientation so the
+ *  image doesn't display sideways. Falls back to the original bytes on any
+ *  failure (e.g. a format ExifInterface doesn't support) — never blocks a send. */
+fun stripExif(context: Context, bytes: ByteArray): ByteArray {
+    val temp = File(context.cacheDir, "exif_strip_${UUID.randomUUID()}.tmp")
+    return try {
+        temp.writeBytes(bytes)
+        val exif = androidx.exifinterface.media.ExifInterface(temp.absolutePath)
+        var changed = false
+        for (tag in EXIF_TAGS_TO_STRIP) {
+            if (exif.getAttribute(tag) != null) {
+                exif.setAttribute(tag, null)
+                changed = true
+            }
+        }
+        if (changed) exif.saveAttributes()
+        temp.readBytes()
+    } catch (e: Exception) {
+        bytes
+    } finally {
+        temp.delete()
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
@@ -172,7 +255,7 @@ fun ChatScreen(
         )
     }
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     val userId = UserStorage.getUserId(context)
 
@@ -501,7 +584,7 @@ fun ChatScreen(
                 service.onImageReceived = { imageId, bitmap ->
                     try {
                         SoundManager.playMessageReceived()
-                        val imageFile = File(context.filesDir, "image_$imageId.jpg.enc")
+                        val imageFile = SecureFileStorage.blobFile(context.filesDir, imageId)
                         val stream = java.io.ByteArrayOutputStream()
                         stream.write(compressImageForSend(bitmap))
                         SecureFileStorage.write(context, imageFile, stream.toByteArray())
@@ -621,7 +704,7 @@ fun ChatScreen(
                     return@collect
                 }
                 messengerService?.sendImage(recipient, chunks)
-                val imageFile = File(context.filesDir, "image_${UUID.randomUUID()}.jpg.enc")
+                val imageFile = SecureFileStorage.blobFile(context.filesDir, UUID.randomUUID().toString())
                 SecureFileStorage.write(context, imageFile, compressImageForSend(bitmap))
                 val msgId = UUID.randomUUID().toString()
                 messages.add(Message(id = msgId, text = s.chatAttachPhoto, isOwn = true, imageBitmap = bitmap))
@@ -649,7 +732,10 @@ fun ChatScreen(
 
                 val mimeType = context.contentResolver.getType(uri) ?: "*/*"
 
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                val bytes = if (rawBytes != null && mimeType.startsWith("image/")) {
+                    stripExif(context, rawBytes)
+                } else rawBytes
 
                 if (bytes != null && bytes.isNotEmpty()) {
                     if (bytes.size > 20 * 1024 * 1024) {
@@ -684,7 +770,7 @@ fun ChatScreen(
                     val fileId = UUID.randomUUID().toString()
                     messengerService?.sendFile(recipient, fileName, chunks, fileId)
 
-                    val file = File(context.cacheDir, "files/$fileId/$fileName").apply {
+                    val file = File(context.cacheDir, "blobs/$fileId.dat").apply {
                         parentFile?.mkdirs()
                         writeBytes(bytes)
                     }
@@ -1059,7 +1145,7 @@ fun ChatScreen(
                                             put(MediaStore.Images.Media.DISPLAY_NAME, "beacon_${System.currentTimeMillis()}.jpg")
                                             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
                                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/B-CON")
+                                                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Subrosa")
                                             }
                                         }
                                         val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
@@ -1414,11 +1500,17 @@ fun ChatScreen(
                         onClick = {
                             recordingFile?.let { file ->
                                 AudioHelper.stopRecording()
-                                val duration = (file.length() / 1000).toInt()
+                                // Found live: this used to be (file.length() / 1000).toInt() --
+                                // assumed 1000 bytes/sec, but the actual recording bitrate is
+                                // roughly double that, so a real 30s recording reported as ~59s.
+                                // recordingSeconds already tracks real elapsed time (it drives
+                                // the live "0:30" counter shown above during recording) -- just
+                                // wasn't being used here at all.
+                                val duration = recordingSeconds
                                 val voiceId = UUID.randomUUID().toString()
                                 val base64 = AudioHelper.encodeToBase64(file)
                                 messengerService?.sendVoice(recipient, base64, voiceId, duration)
-                                val encFile = File(context.filesDir, "voice_$voiceId.3gp.enc")
+                                val encFile = SecureFileStorage.blobFile(context.filesDir, voiceId)
                                 SecureFileStorage.write(context, encFile, file.readBytes())
                                 file.delete()
                                 messages.add(Message(id = voiceId, text = "🎤 Голосовое сообщение", isOwn = true, voiceFile = encFile, voiceDuration = duration))
@@ -1636,9 +1728,7 @@ fun ChatScreen(
                         try {
                             val plainBytes = videoFile.readBytes()
                             videoFile.delete()
-                            val encFile = File(context.filesDir, "videos/$videoId.mp4.enc").apply {
-                                parentFile?.mkdirs()
-                            }
+                            val encFile = SecureFileStorage.blobFile(context.filesDir, videoId)
                             SecureFileStorage.write(context, encFile, plainBytes)
 
                             withContext(Dispatchers.Main) {
@@ -1763,7 +1853,7 @@ fun MessageBubble(
 ) {
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     var showMapDialog by remember { mutableStateOf(false) }
 
     val isGeoLocation = msg.text == s.chatGeo || msg.text == "📍 Геопозиция"
