@@ -22,14 +22,14 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 
 private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
 
 @Composable
 fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -202,7 +202,8 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                                     val publicKey = CryptoManager.getPublicKey()
                                     val privateKey = CryptoManager.getPrivateKeyPublic()
                                     val inviteCode = InviteCodeManager.generateInviteCode(
-                                        publicKey, privateKey, username.trim()
+                                        publicKey, privateKey, username.trim(),
+                                        AnonTokenManager.getOrCreateMyPersistentMailboxTag(context)
                                     )
                                     UserStorage.saveInviteCode(context, inviteCode)
                                     withContext(Dispatchers.Main) {

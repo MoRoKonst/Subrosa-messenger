@@ -14,7 +14,6 @@ object InviteCodeManager {
 
     private const val INVITE_TTL_SECONDS = 7L * 24 * 3600
     private const val FORMAT_VERSION: Byte = 0x03
-    private const val FORMAT_VERSION_LEGACY: Byte = 0x02
     private const val PREFIX = "bc:"
 
     private val EC_P256_X509_HEADER: ByteArray =
@@ -23,7 +22,22 @@ object InviteCodeManager {
             .map { it.toInt(16).toByte() }
             .toByteArray()
 
-    fun generateInviteCode(publicKey: PublicKey, privateKey: PrivateKey, displayName: String): String {
+    /** [mailboxTagHex] must be the caller's single persistent mailbox tag —
+     *  AnonTokenManager.getOrCreateMyPersistentMailboxTag() — not a fresh
+     *  random one. Found live: this used to generate its own random 16-byte
+     *  tag on every call, completely disconnected from the "persistent tag"
+     *  concept everywhere else in the codebase (piggybacked on token
+     *  exchanges to refresh an existing contact's record of it). Every
+     *  invite-code regeneration (7-day TTL, or any bug that made the "still
+     *  valid" check in MessengerService.ensureMyMailboxTagRegistered() miss
+     *  a live code) minted a brand new tag nobody was listening for except
+     *  whoever redeemed that exact code — a repeat regeneration (e.g. from
+     *  the service restarting several times in a row) could produce a code
+     *  embedding a tag that was never the one actually registered for
+     *  polling by the time it got redeemed. One canonical tag, reused
+     *  everywhere, removes the whole category of "which tag is live right
+     *  now" mismatch. */
+    fun generateInviteCode(publicKey: PublicKey, privateKey: PrivateKey, displayName: String, mailboxTagHex: String): String {
         val x509Bytes = publicKey.encoded
 
         val ecPoint = x509Bytes.copyOfRange(x509Bytes.size - 65, x509Bytes.size)
@@ -34,7 +48,7 @@ object InviteCodeManager {
 
         val nonce = ByteArray(8).also { rng.nextBytes(it) }
 
-        val mailboxTagBytes = ByteArray(16).also { rng.nextBytes(it) }
+        val mailboxTagBytes = mailboxTagHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 
         val ts = (System.currentTimeMillis() / 1000).toInt()
 
@@ -76,15 +90,17 @@ object InviteCodeManager {
             val buf = ByteBuffer.wrap(payload)
 
             val version = buf.get()
-            if (version != FORMAT_VERSION && version != FORMAT_VERSION_LEGACY) return null
+            // Pre-mailbox-tag (0x02) codes are rejected outright rather than
+            // falling back to a direct, server-visible get_key lookup — that
+            // fallback silently dropped the anonymity guarantee with no
+            // warning to the user. See SCENARIOS.md, "First contact" step 3b.
+            if (version != FORMAT_VERSION) return null
 
             val ts = buf.int.toLong() and 0xFFFFFFFFL
             val nonce = ByteArray(8).also { buf.get(it) }
 
-            val mailboxTagHex: String? = if (version == FORMAT_VERSION) {
-                val tagBytes = ByteArray(16).also { buf.get(it) }
-                tagBytes.joinToString("") { "%02x".format(it) }
-            } else null
+            val tagBytes = ByteArray(16).also { buf.get(it) }
+            val mailboxTagHex = tagBytes.joinToString("") { "%02x".format(it) }
             val fpBytes = ByteArray(8).also { buf.get(it) }
             val ecPoint = ByteArray(65).also { buf.get(it) }
             val nameLen = buf.get().toInt() and 0xFF
@@ -128,14 +144,16 @@ object InviteCodeManager {
             val nameBytes = inviteData.displayName.toByteArray(Charsets.UTF_8)
             val ecPoint = x509Bytes.copyOfRange(x509Bytes.size - 65, x509Bytes.size)
 
+            // parseInviteCode() only ever produces FORMAT_VERSION InviteData
+            // (pre-mailbox-tag codes are rejected at parse time), so the tag
+            // is always present here.
             val mailboxTagBytes = inviteData.mailboxTag?.chunked(2)
-                ?.map { it.toInt(16).toByte() }?.toByteArray()
-            val version = if (mailboxTagBytes != null) FORMAT_VERSION else FORMAT_VERSION_LEGACY
-            val preSign = ByteBuffer.allocate(1 + 4 + 8 + (mailboxTagBytes?.size ?: 0) + 8 + 65 + 1 + nameBytes.size).apply {
-                put(version)
+                ?.map { it.toInt(16).toByte() }?.toByteArray() ?: return false
+            val preSign = ByteBuffer.allocate(1 + 4 + 8 + mailboxTagBytes.size + 8 + 65 + 1 + nameBytes.size).apply {
+                put(FORMAT_VERSION)
                 putInt(timestamp.toInt())
                 put(nonceBytes)
-                if (mailboxTagBytes != null) put(mailboxTagBytes)
+                put(mailboxTagBytes)
                 put(fpBytes)
                 put(ecPoint)
                 put(nameBytes.size.toByte())

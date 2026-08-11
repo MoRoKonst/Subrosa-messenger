@@ -233,7 +233,8 @@ fun ProfileScreen(
                 val fresh = InviteCodeManager.generateInviteCode(
                     CryptoManager.getPublicKey(),
                     CryptoManager.getPrivateKeyPublic(),
-                    displayName.ifBlank { userId }
+                    displayName.ifBlank { userId },
+                    AnonTokenManager.getOrCreateMyPersistentMailboxTag(context)
                 )
                 UserStorage.saveInviteCode(context, fresh)
                 fresh
