@@ -2794,7 +2794,24 @@ class MessengerService : Service() {
                             sendWs(addPadding(packet).toString())
                         }
                     } else {
-                        sendWs(addPadding(packet).toString())
+                        // Found live: an ordinary (non-first) message with no
+                        // anon token available for this contact used to fall
+                        // straight through to a direct, fingerprint-addressed
+                        // sendWs() — the exact "cut the direct fallback"
+                        // pattern already fixed everywhere else (see
+                        // sendAnonOrDirect() and the isFirst branch above),
+                        // just never applied here. Confirmed via a live
+                        // server log showing "[MSG] message delivered" (the
+                        // top-level, non-anonymous "message" handler) during
+                        // a period the same log showed this account's tokens
+                        // repeatedly queued as offline — token pool was
+                        // empty, so this branch leaked the real from/to
+                        // fingerprint pair to the server for that message.
+                        // Queue and retry via the token refill path instead,
+                        // same as sendAnonOrDirect does for everything else —
+                        // just route through it directly rather than
+                        // duplicating its (synchronized) queuing logic here.
+                        sendAnonOrDirect(to, packet)
                     }
                 } catch (e: SessionKeyManager.SessionRotationRequired) {
                     SessionKeyManager.deleteSession(to)
