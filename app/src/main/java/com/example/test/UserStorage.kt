@@ -396,6 +396,19 @@ object UserStorage {
             .edit().putString("app_language", langCode).apply()
     }
 
+    /** Off by default — starting Orbot when it isn't already running costs
+     * ~10-12s (TorManager.TOR_TIMEOUT_MS) on every app launch, which used to
+     * happen unconditionally with no way to opt out. */
+    fun isTorEnabled(context: Context): Boolean {
+        return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .getBoolean("tor_enabled", false)
+    }
+
+    fun setTorEnabled(context: Context, enabled: Boolean) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putBoolean("tor_enabled", enabled).apply()
+    }
+
     fun getTheme(context: Context): com.subrosa.messenger.ui.theme.SubrosaTheme {
         val name = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             .getString("app_theme", com.subrosa.messenger.ui.theme.SubrosaTheme.NAVY.name)
