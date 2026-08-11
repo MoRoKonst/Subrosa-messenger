@@ -138,7 +138,7 @@ object ServerManager {
     }
 
     private fun getDefaultServers() = listOf(
-        Server("api.subrosamessenger.com", 8443, "Основной сервер", true, "ws"), // TEMP: :8443 напрямую в обход Cloudflare, пока не починим проксирование WS. Вернуть на 443, когда почините.
+        Server("api.subrosamessenger.com", 443, "Основной сервер", true, "ws"), // Cloudflare WS-проксирование починили 2026-08-11 — вернули с временного обхода :8443 на штатный 443, как и планировал этот же комментарий.
         Server("ws://amqvpheooju3fg7tafxkmf73c3vg4xg7nycelepiie6jdjzbsqrvrcqd.onion", 80, "Onion (Tor)", true, "")
     )
 
