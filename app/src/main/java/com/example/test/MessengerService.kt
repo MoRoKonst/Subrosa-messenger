@@ -161,6 +161,18 @@ class MessengerService : Service() {
     // AnonTokenManager.addContactTokens).
     private val pendingAnonPackets = mutableMapOf<String, MutableList<JSONObject>>()
 
+    // Found live: a burst of packets to a contact with no anon token yet
+    // (e.g. every chunk of an 84-chunk video circle) each independently
+    // triggered their own sendAnonTokensTo(to) -> depositTokensViaMailbox()
+    // -> mailbox_put, with no de-duplication at all — 84 chunks meant 84
+    // near-simultaneous mailbox_put calls, blowing through the server's
+    // mailbox_put rate limit (20/60s) in seconds and getting the connection
+    // kicked mid-transfer. This tracks the last bootstrap attempt per
+    // contact so a burst collapses into one attempt instead of one per
+    // packet.
+    private val lastTokenBootstrapAttempt = mutableMapOf<String, Long>()
+    private val TOKEN_BOOTSTRAP_COOLDOWN_MS = 3_000L
+
     private data class PendingVideoCircle(val to: String, val videoId: String, val encFilePath: String, val duration: Int)
     private val pendingVideoCircles = mutableListOf<PendingVideoCircle>()
 
@@ -2967,7 +2979,19 @@ class MessengerService : Service() {
             synchronized(pendingAnonPackets) {
                 pendingAnonPackets.getOrPut(to) { mutableListOf() }.add(packet)
             }
-            scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
+            val shouldBootstrap = synchronized(lastTokenBootstrapAttempt) {
+                val now = System.currentTimeMillis()
+                val last = lastTokenBootstrapAttempt[to] ?: 0L
+                if (now - last >= TOKEN_BOOTSTRAP_COOLDOWN_MS) {
+                    lastTokenBootstrapAttempt[to] = now
+                    true
+                } else {
+                    false
+                }
+            }
+            if (shouldBootstrap) {
+                scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
+            }
         }
     }
 
