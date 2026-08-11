@@ -4103,6 +4103,19 @@ class MessengerService : Service() {
         }
     }
 
+    /** Drops a mailbox tag from the poll list once it's served its purpose —
+     * but never the account's own persistent tag (getOrCreateMyPersistentMailboxTag).
+     * Found live: this used to run unconditionally, so the very first
+     * successful deposit into a fresh contact's persistent tag removed that
+     * tag from their own poll list — any later bootstrap attempt (e.g. after
+     * a delete+re-add, or a dropped channel retrying) silently vanished into
+     * a tag nobody was listening for anymore. The persistent tag is meant to
+     * be reused indefinitely; only one-off/legacy tags should be pruned. */
+    private fun removeMailboxTagIfEphemeral(tag: String) {
+        if (tag == AnonTokenManager.getOrCreateMyPersistentMailboxTag(this)) return
+        AnonTokenManager.removeMyMailboxTag(this, tag)
+    }
+
     private suspend fun handleMailboxResult(json: org.json.JSONObject) {
         val blobsMap = json.optJSONObject("blobs") ?: return
         Log.d(TAG, "DEBUG-BOOTSTRAP handleMailboxResult: tags=${blobsMap.keys().asSequence().toList()}")
@@ -4132,7 +4145,7 @@ class MessengerService : Service() {
 
                     val sessionInitPacket = innerJson.optJSONObject("session_init_packet")
                     if (sessionInitPacket != null) {
-                        AnonTokenManager.removeMyMailboxTag(this@MessengerService, tag)
+                        removeMailboxTagIfEphemeral(tag)
                         processSessionInit(sessionInitPacket)
                         continue
                     }
@@ -4156,7 +4169,7 @@ class MessengerService : Service() {
                         }
                     }
 
-                    AnonTokenManager.removeMyMailboxTag(this@MessengerService, tag)
+                    removeMailboxTagIfEphemeral(tag)
 
                     ChatStorage.addContact(this@MessengerService, from)
                     // A mailbox deposit auto-creates the contact (mutual add: if
