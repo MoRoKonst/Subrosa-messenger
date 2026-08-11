@@ -793,7 +793,8 @@ fun AppNavigation() {
     var lockPasswordError by remember { mutableStateOf("") }
     val lockScope = rememberCoroutineScope()
 
-    val lockVisible = isLocked == true && screen != "login" && screen != "register" && screen != "calculator"
+    val lockVisible = isLocked == true && screen != "login" && screen != "register" && screen != "calculator" &&
+        screen != "totp_setup_required" && screen != "servers_from_totp_setup"
 
     val shouldResetCalc by MainActivity.shouldResetToCalculator.collectAsState()
     LaunchedEffect(shouldResetCalc) {
@@ -999,8 +1000,14 @@ fun AppNavigation() {
         "totp_setup_required" -> TotpSettingsScreen(
             onBack = {},
             mandatory = true,
-            onCompleted = { screen = "chats" }
+            onCompleted = { screen = "chats" },
+            onOpenServers = { screen = "servers_from_totp_setup" }
         )
+
+        // Separate route (not the ordinary "servers") so its own back
+        // button returns to the mandatory TOTP step, not "profile" —
+        // "profile" isn't reachable yet at this point in onboarding.
+        "servers_from_totp_setup" -> ServersScreen(onBack = { screen = "totp_setup_required" })
 
         "login" -> LoginScreen(
             onLoggedIn = {
@@ -1091,7 +1098,7 @@ fun AppNavigation() {
 
     }
 
-    if (screen !in listOf("register", "login", "totp_setup_required", "calculator")) {
+    if (screen !in listOf("register", "login", "totp_setup_required", "servers_from_totp_setup", "calculator")) {
         RecoveryCodeGate()
     }
 

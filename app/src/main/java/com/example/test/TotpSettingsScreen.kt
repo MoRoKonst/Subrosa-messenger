@@ -32,7 +32,13 @@ fun TotpSettingsScreen(
     // no skipping until setup completes and recovery codes are confirmed
     // saved. See MainActivity.kt, "totp_setup_required".
     mandatory: Boolean = false,
-    onCompleted: () -> Unit = {}
+    onCompleted: () -> Unit = {},
+    // Mandatory mode has no back button and no other way to reach
+    // ServersScreen — found live: a broken/misconfigured server left the
+    // user stuck on this screen unable to switch servers or diagnose
+    // anything. Only shown when mandatory (non-mandatory already reaches
+    // Servers via Profile).
+    onOpenServers: (() -> Unit)? = null
 ) {
     if (!mandatory) androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
@@ -125,6 +131,13 @@ fun TotpSettingsScreen(
                     if (!mandatory) {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.back)
+                        }
+                    }
+                },
+                actions = {
+                    if (mandatory && onOpenServers != null) {
+                        TextButton(onClick = onOpenServers) {
+                            Text(s.profileServers, color = c.accent, fontSize = 13.sp)
                         }
                     }
                 },
