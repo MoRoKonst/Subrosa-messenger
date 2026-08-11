@@ -526,7 +526,8 @@ class MessengerService : Service() {
                 val fresh = InviteCodeManager.generateInviteCode(
                     CryptoManager.getPublicKey(),
                     CryptoManager.getPrivateKeyPublic(),
-                    UserStorage.getUsername(this).ifBlank { UserStorage.getUserId(this) }
+                    UserStorage.getUsername(this).ifBlank { UserStorage.getUserId(this) },
+                    AnonTokenManager.getOrCreateMyPersistentMailboxTag(this)
                 )
                 UserStorage.saveInviteCode(this, fresh)
                 fresh
