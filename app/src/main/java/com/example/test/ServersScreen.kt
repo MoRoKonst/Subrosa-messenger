@@ -427,27 +427,38 @@ fun ServersScreen(onBack: () -> Unit) {
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = {
-                            addDialogError = ""
-                            val granted = ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.CAMERA
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (granted) {
-                                scanServerQrLauncher.launch(ScanOptions().apply {
-                                    setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                                    setPrompt(s.serversScanQrPrompt)
-                                    setBeepEnabled(false)
-                                })
-                            } else {
-                                cameraPermLauncherForServer.launch(Manifest.permission.CAMERA)
-                            }
-                        }) { Text(s.serversScanQrButton, color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
+                    // Stacked full-width instead of side-by-side — found live:
+                    // two OutlinedButtons sharing one Row split the dialog's
+                    // width in half regardless of content, so "Загрузить
+                    // QR-файл" wrapped one letter per line in its half. Same
+                    // fix as the emergency-wipe dialog's button row.
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                addDialogError = ""
+                                val granted = ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.CAMERA
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (granted) {
+                                    scanServerQrLauncher.launch(ScanOptions().apply {
+                                        setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                        setPrompt(s.serversScanQrPrompt)
+                                        setBeepEnabled(false)
+                                    })
+                                } else {
+                                    cameraPermLauncherForServer.launch(Manifest.permission.CAMERA)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(s.serversScanQrButton, color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
 
-                        OutlinedButton(onClick = {
-                            addDialogError = ""
-                            pickQrImageLauncher.launch("image/*")
-                        }) { Text(s.serversUploadQrButton, color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
+                        OutlinedButton(
+                            onClick = {
+                                addDialogError = ""
+                                pickQrImageLauncher.launch("image/*")
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(s.serversUploadQrButton, color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
                     }
 
                     if (addDialogError.isNotEmpty()) {
