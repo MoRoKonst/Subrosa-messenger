@@ -1085,45 +1085,57 @@ fun ProfileScreen(
             containerColor = c.dialog,
             title = { Text(s.emergencyInfoTitle, color = Color.White, fontFamily = AppFont) },
             text = {
+                // Action buttons live here, full-width and stacked, instead of
+                // crammed into AlertDialog's confirmButton row — found live:
+                // "Шаг 1: Настройки приложения" + "Шаг 2: Спец. возможности" +
+                // "Отмена" all fighting for one narrow horizontal row wrapped
+                // character-by-character, unreadable.
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(s.emergencyInfoWarning, color = c.textPrimary, fontFamily = AppFont, fontSize = 13.sp, lineHeight = 18.sp)
 
                     if (isAndroid13Plus) {
                         EmergencyStepRow(s.emergencyInfoStepLabel(1), s.emergencyInfoStep1Desc, done = step1Visited)
+                        Button(
+                            onClick = {
+                                step1Visited = true
+                                context.startActivity(
+                                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                        data = android.net.Uri.fromParts("package", context.packageName, null)
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = c.cardAlt)
+                        ) { Text(s.emergencyInfoOpenAppSettings, color = c.accent, fontFamily = AppFont, fontSize = 13.sp) }
+
                         EmergencyStepRow(s.emergencyInfoStepLabel(2), s.emergencyInfoStep2Desc, done = false, emphasize = step1Visited)
+                        Button(
+                            onClick = {
+                                context.startActivity(
+                                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = if (step1Visited) c.accent else c.cardAlt)
+                        ) { Text(s.emergencyInfoOpenSettings, color = if (step1Visited) Color.White else c.accent, fontFamily = AppFont, fontSize = 13.sp) }
                     } else {
                         Text(s.emergencyInfoLegacyDesc, color = c.textPrimary, fontFamily = AppFont, fontSize = 13.sp)
+                        Button(
+                            onClick = {
+                                context.startActivity(
+                                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = c.accent)
+                        ) { Text(s.emergencyInfoOpenSettings, color = Color.White, fontFamily = AppFont, fontSize = 13.sp) }
                     }
                 }
             },
-            confirmButton = {
-                if (isAndroid13Plus) {
-                    Row {
-                        TextButton(onClick = {
-                            step1Visited = true
-                            context.startActivity(
-                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                    data = android.net.Uri.fromParts("package", context.packageName, null)
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                            )
-                        }) { Text("${s.emergencyInfoStepLabel(1)}: ${s.emergencyInfoOpenAppSettings}", color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
-                        TextButton(onClick = {
-                            context.startActivity(
-                                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            )
-                        }) { Text("${s.emergencyInfoStepLabel(2)}: ${s.emergencyInfoOpenSettings}", color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
-                    }
-                } else {
-                    TextButton(onClick = {
-                        context.startActivity(
-                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        )
-                    }) { Text(s.emergencyInfoOpenSettings, color = c.accent, fontFamily = AppFont) }
-                }
-            },
+            confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { showEmergencyInfoDialog = false }) {
                     Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
