@@ -2660,6 +2660,8 @@ class MessengerService : Service() {
                 }
             }
 
+            // Single-candidate type — kept for any candidate still in flight
+            // from an older build mid-rollout. See "call_ice_batch" below.
             "call_ice", "call_group_ice" -> {
                 try {
                     val from     = json.getString("from")
@@ -2669,6 +2671,28 @@ class MessengerService : Service() {
                     CallManager.handleIceCandidate(from, sdpMid, sdpIdx, candidate)
                 } catch (e: Exception) {
                     Log.e(TAG, "call_ice error: ${e.message}")
+                }
+            }
+
+            // Batches multiple ICE candidates into one anon_message — see
+            // CallManager.queueIceCandidate()/ICE_BATCH_DEBOUNCE_MS. A call's
+            // ICE gathering burst (10-30+ candidates) used to consume its own
+            // anon token per candidate from the same small per-contact pool
+            // ordinary messages draw from, exhausting it well before the
+            // token-reserve/refill logic (built for the video-circle case)
+            // ever got a chance to help.
+            "call_ice_batch", "call_group_ice_batch" -> {
+                try {
+                    val from = json.getString("from")
+                    val candidates = json.getJSONArray("candidates")
+                    for (i in 0 until candidates.length()) {
+                        val c = candidates.getJSONObject(i)
+                        CallManager.handleIceCandidate(
+                            from, c.getString("sdp_mid"), c.getInt("sdp_m_line_index"), c.getString("candidate")
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "call_ice_batch error: ${e.message}")
                 }
             }
 
