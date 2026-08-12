@@ -78,4 +78,19 @@ object ContactHealthManager {
 
     fun stateElapsedMs(ctx: Context, contactId: String): Long =
         System.currentTimeMillis() - getLong(ctx, "state_at_$contactId")
+
+    /** Wipes all silence-tracking state for [contactId] — call on contact
+     * deletion. Without this, re-adding the same fingerprint (fresh invite
+     * exchange) inherits old last_in/last_out/last_delivered timestamps and
+     * ping state, so the health-check cycle doesn't behave like a genuinely
+     * new relationship until enough real traffic overwrites them. */
+    fun clearContact(ctx: Context, contactId: String) {
+        prefs(ctx).edit()
+            .remove("last_in_$contactId")
+            .remove("last_delivered_$contactId")
+            .remove("last_out_$contactId")
+            .remove("state_$contactId")
+            .remove("state_at_$contactId")
+            .apply()
+    }
 }

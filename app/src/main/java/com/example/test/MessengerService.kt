@@ -2972,6 +2972,20 @@ class MessengerService : Service() {
         publicKeysPq.remove(contactId)
         SessionKeyManager.deleteSession(contactId)
         AnonTokenManager.clearContactMailboxTag(this, contactId)
+        // Found live while investigating "delete + fresh invite exchange
+        // should behave exactly like first contact" — it didn't, because
+        // this function stopped short of the token pool and bootstrap/health
+        // bookkeeping below. A re-added contact (same fingerprint — it's
+        // derived from their public key) would silently inherit leftover
+        // tokens, resupply cooldowns, and ping-state timestamps from the
+        // deleted relationship instead of starting clean.
+        AnonTokenManager.clearContactTokens(this, contactId)
+        ContactHealthManager.clearContact(this, contactId)
+        tokensSentThisSession.remove(contactId)
+        channelBootstrapStartedAt.remove(contactId)
+        channelStuckNotified.remove(contactId)
+        pendingChannelJobs.remove(contactId)?.cancel()
+        pendingBundleRequests.remove(contactId)
     }
 
     fun sendVoice(to: String, voiceBase64: String, voiceId: String, duration: Int) {
