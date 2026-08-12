@@ -3917,7 +3917,10 @@ class MessengerService : Service() {
             return
         }
 
-        val anonToken = AnonTokenManager.consumeNextContactToken(this@MessengerService, contact)
+        // allowReserve=true — this IS the resupply message the reserve exists
+        // to protect. Every other consumer (sendAnonOrDirect, the ordinary
+        // sendWithForwardSecrecy path) uses the default false.
+        val anonToken = AnonTokenManager.consumeNextContactToken(this@MessengerService, contact, allowReserve = true)
         if (anonToken == null) {
             // Bootstrapping tokens via anon_message is circular: sending my tokens
             // this way requires a token FROM this contact, which they can only ever
