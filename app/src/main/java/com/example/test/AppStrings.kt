@@ -51,6 +51,8 @@ interface IStr3 {
     val profileSendHint: String; val profileServers: String
     val profileBackup: String
     val profileSectionSecurity: String; val profileSectionGeneral: String
+    val profileSecurityGuide: String; val profileSecurityGuideSub: String
+    val profileInviteCodeOneTimeWarning: String
     val profileHideNotif: String; val profileHideNotifSub: String
     val profileAutoLock: String; val profileAutoLockAfter: (String) -> String
     val profileLockOff: String; val profileLock1min: String
@@ -271,6 +273,22 @@ interface IStr9 {
     val backupTotpSecretLabel: String; val backupTotpCodeLabel: String
 }
 
+/** Security guide screen — one title+description pair per protection
+ * feature, shown as expandable cards. See SecurityGuideScreen.kt. */
+interface IStr10 {
+    val guideTitle: String
+    val guideInviteTitle: String; val guideInviteDesc: String
+    val guideKeyVerifyTitle: String; val guideKeyVerifyDesc: String
+    val guideTotpTitle: String; val guideTotpDesc: String
+    val guidePanicTitle: String; val guidePanicDesc: String
+    val guideEmergencyTitle: String; val guideEmergencyDesc: String
+    val guideAutoLockTitle: String; val guideAutoLockDesc: String
+    val guideBackupTitle: String; val guideBackupDesc: String
+    val guideTorTitle: String; val guideTorDesc: String
+    val guideCoverTitle: String; val guideCoverDesc: String
+    val guideCompromisedTitle: String; val guideCompromisedDesc: String
+}
+
 data class AppStrings(
     val langCode: String,
     private val p1: IStr1,
@@ -282,8 +300,9 @@ data class AppStrings(
     private val p7: IStr7,
     private val p8: IStr8,
     private val p9: IStr9,
+    private val p10: IStr10,
 ) : IStr1 by p1, IStr2 by p2, IStr3 by p3, IStr4 by p4,
-    IStr5 by p5, IStr6 by p6, IStr7 by p7, IStr8 by p8, IStr9 by p9
+    IStr5 by p5, IStr6 by p6, IStr7 by p7, IStr8 by p8, IStr9 by p9, IStr10 by p10
 
 private val ru1 = object : IStr1 {
     override val cancel = "Отмена"
@@ -371,6 +390,9 @@ private val ru3 = object : IStr3 {
     override val profileBackup = "📦 Резервное копирование"
     override val profileSectionSecurity = "Безопасность"
     override val profileSectionGeneral  = "Основное"
+    override val profileSecurityGuide = "📖 Гид по защите"
+    override val profileSecurityGuideSub = "Что делает каждая функция безопасности"
+    override val profileInviteCodeOneTimeWarning = "⚠️ Код одноразовый — после первого использования перестаёт работать. Для каждого нового человека жмите «Копировать» или «Поделиться» заново, чтобы сгенерировать свежий."
     override val profileHideNotif = "🔔 Скрывать текст в уведомлениях"
     override val profileHideNotifSub = "Показывать только «Новое сообщение»"
     override val profileAutoLock = "🔒 Автоблокировка"
@@ -776,7 +798,31 @@ private val ru9 = object : IStr9 {
     override val backupTotpCodeLabel = "Текущий TOTP-код"
 }
 
-val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9)
+private val ru10 = object : IStr10 {
+    override val guideTitle = "📖 Гид по защите"
+    override val guideInviteTitle = "🔗 Инвайт-код"
+    override val guideInviteDesc = "Способ анонимно познакомиться с человеком, не раскрывая серверу пару отправитель-получатель. Код одноразовый: после того как кто-то его отсканирует, зашитый в нём тег «умирает» и перестаёт работать. Дал код одному человеку — сработает только для него. Нужно добавить нескольких — жмите «Копировать»/«Поделиться» заново для каждого, это сгенерирует свежий код."
+    override val guideKeyVerifyTitle = "🦊 Сверка ключей"
+    override val guideKeyVerifyDesc = "Последовательность из 5 эмодзи, полученная из хэша публичного ключа собеседника. Сверьте её с собеседником лично или по другому каналу — если совпадает, вы точно говорите с ним, а не с кем-то, кто подменил ключ (атака «человек посередине»)."
+    override val guideTotpTitle = "🔐 Двухфакторная защита (TOTP)"
+    override val guideTotpDesc = "Обязательный код из приложения-аутентификатора (как Google Authenticator), без которого этот аккаунт нельзя зарегистрировать на новом устройстве, даже если ключи и пароль украдены. Сохраните резервные коды, выданные при настройке, отдельно от телефона."
+    override val guidePanicTitle = "🔑 Панический пароль"
+    override val guidePanicDesc = "Второй пароль для входа, отличный от основного. Введённый вместо основного, он немедленно и безвозвратно удаляет все данные приложения — используйте, если вас заставляют разблокировать телефон."
+    override val guideEmergencyTitle = "🚨 Экстренное удаление"
+    override val guideEmergencyDesc = "5 нажатий кнопки громкости вниз за 3 секунды — мгновенное удаление ключей и переписки без единого подтверждения, работает даже с заблокированным экраном. Требует включения через Спец. возможности Android (см. инструкцию в Профиле)."
+    override val guideAutoLockTitle = "⏱️ Автоблокировка"
+    override val guideAutoLockDesc = "Приложение блокируется паролем/биометрией через заданное время бездействия. Чем короче интервал, тем меньше окно, в течение которого кто-то может взять разблокированный телефон и открыть переписку."
+    override val guideBackupTitle = "📦 Резервное копирование"
+    override val guideBackupDesc = "Зашифрованный файл со всеми ключами и историей сообщений. Защищён паролем, а восстановление на новом устройстве дополнительно требует TOTP-секрет — файла и пароля одних недостаточно. Храните файл, пароль и TOTP-секрет в разных местах."
+    override val guideTorTitle = "🧅 Tor"
+    override val guideTorDesc = "Маршрутизация соединения с сервером через сеть Tor (нужен установленный Orbot), скрывает ваш IP-адрес от самого сервера. Выключен по умолчанию — включение добавляет 10-15 секунд к запуску приложения."
+    override val guideCoverTitle = "📡 Постоянный трафик"
+    override val guideCoverDesc = "Приложение шлёт пакеты-пустышки через равные интервалы, даже когда вы ничего не отправляете, — так внешний наблюдатель не может по паттерну трафика понять, переписываетесь вы сейчас или нет. Расходует немного батареи и интернета."
+    override val guideCompromisedTitle = "🔄 Смена identity"
+    override val guideCompromisedDesc = "Если подозреваете, что ваш ключ украли — это полностью уничтожает текущие ключи, контакты и переписку и выдаёт новые. Контактам нужно будет заново обменяться с вами инвайт-кодом. Необратимо."
+}
+
+val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9, ru10)
 
 private val en1 = object : IStr1 {
     override val cancel = "Cancel"
@@ -864,6 +910,9 @@ private val en3 = object : IStr3 {
     override val profileBackup = "📦 Backup"
     override val profileSectionSecurity = "Security"
     override val profileSectionGeneral  = "General"
+    override val profileSecurityGuide = "📖 Security guide"
+    override val profileSecurityGuideSub = "What each security feature actually does"
+    override val profileInviteCodeOneTimeWarning = "⚠️ This code is single-use — it stops working after the first redemption. For each new person, tap Copy or Share again to generate a fresh one."
     override val profileHideNotif = "🔔 Hide text in notifications"
     override val profileHideNotifSub = "Show only \"New message\""
     override val profileAutoLock = "🔒 Auto-lock"
@@ -1269,6 +1318,30 @@ private val en9 = object : IStr9 {
     override val backupTotpCodeLabel = "Current TOTP code"
 }
 
-val enStrings = AppStrings("en", en1, en2, en3, en4, en5, en6, en7, en8, en9)
+private val en10 = object : IStr10 {
+    override val guideTitle = "📖 Security guide"
+    override val guideInviteTitle = "🔗 Invite code"
+    override val guideInviteDesc = "A way to anonymously meet someone without the server ever seeing the sender-recipient pair. The code is single-use: once someone scans it, the tag embedded inside it dies and stops working. Gave the code to one person — it only works for them. Need to add several people — tap Copy/Share again for each one, that generates a fresh code."
+    override val guideKeyVerifyTitle = "🦊 Key verification"
+    override val guideKeyVerifyDesc = "A sequence of 5 emoji derived from a hash of your contact's public key. Compare it with them in person or over another channel — if it matches, you're really talking to them, not someone who swapped in a different key (man-in-the-middle attack)."
+    override val guideTotpTitle = "🔐 Two-factor protection (TOTP)"
+    override val guideTotpDesc = "A mandatory code from an authenticator app (like Google Authenticator), without which this account can't be registered on a new device even if the keys and password are stolen. Save the recovery codes shown during setup somewhere separate from the phone."
+    override val guidePanicTitle = "🔑 Panic password"
+    override val guidePanicDesc = "A second login password, different from your real one. Entering it instead of the real password immediately and irreversibly wipes all app data — use it if you're being forced to unlock your phone."
+    override val guideEmergencyTitle = "🚨 Emergency deletion"
+    override val guideEmergencyDesc = "5 presses of Volume Down within 3 seconds — instantly deletes keys and messages with zero confirmation, works even on a locked screen. Requires enabling through Android's Accessibility settings (see the instructions in Profile)."
+    override val guideAutoLockTitle = "⏱️ Auto-lock"
+    override val guideAutoLockDesc = "The app locks with a password/biometric prompt after a set period of inactivity. The shorter the interval, the smaller the window during which someone could pick up an unlocked phone and read your messages."
+    override val guideBackupTitle = "📦 Backup"
+    override val guideBackupDesc = "An encrypted file with all your keys and message history. Password-protected, and restoring on a new device also requires the TOTP secret — the file and password alone aren't enough. Store the file, password, and TOTP secret in different places."
+    override val guideTorTitle = "🧅 Tor"
+    override val guideTorDesc = "Routes your connection to the server through the Tor network (requires Orbot installed), hiding your IP address even from the server itself. Off by default — enabling it adds 10-15 seconds to app startup."
+    override val guideCoverTitle = "📡 Cover traffic"
+    override val guideCoverDesc = "The app sends dummy packets at a steady interval even when you're not sending anything — so an outside observer can't tell from traffic patterns whether you're actively messaging or not. Uses a bit of battery and data."
+    override val guideCompromisedTitle = "🔄 Identity reset"
+    override val guideCompromisedDesc = "If you suspect your key was stolen — this permanently destroys your current keys, contacts, and messages and issues new ones. Contacts will need to exchange a new invite code with you. Irreversible."
+}
+
+val enStrings = AppStrings("en", en1, en2, en3, en4, en5, en6, en7, en8, en9, en10)
 
 val LocalStrings = compositionLocalOf<AppStrings> { ruStrings }
