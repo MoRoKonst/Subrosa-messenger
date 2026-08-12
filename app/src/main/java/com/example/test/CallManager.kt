@@ -70,6 +70,54 @@ object CallManager {
 
     private val pendingIceCandidates = ConcurrentHashMap<String, MutableList<IceCandidate>>()
 
+    // Outgoing ICE candidates are batched instead of one anon_message per
+    // candidate — found live: onIceCandidate() used to call sendSignal()
+    // immediately for every single candidate, and WebRTC's ICE gathering
+    // typically emits a burst of 10-30+ (host/srflx/relay, per media
+    // stream) within about a second of call setup. Each one consumed its
+    // own anon token from the same small per-contact pool ordinary messages
+    // also draw from — a call alone could exhaust it before the batched-
+    // video-circle fix's reserve/refill logic ever got a chance to help
+    // (the reserve protects the resupply signal itself, not general
+    // availability). Debounced: flushes ICE_BATCH_DEBOUNCE_MS after the
+    // last candidate, or immediately once ICE_BATCH_MAX_SIZE accumulates.
+    private val pendingOutgoingIce = HashMap<String, MutableList<JSONObject>>()
+    private val iceFlushRunnables = ConcurrentHashMap<String, Runnable>()
+    private const val ICE_BATCH_DEBOUNCE_MS = 250L
+    private const val ICE_BATCH_MAX_SIZE = 20
+
+    private fun queueIceCandidate(peerId: String, candidate: IceCandidate) {
+        val entry = JSONObject().apply {
+            put("sdp_mid", candidate.sdpMid)
+            put("sdp_m_line_index", candidate.sdpMLineIndex)
+            put("candidate", candidate.sdp)
+        }
+        val shouldFlushNow = synchronized(pendingOutgoingIce) {
+            val list = pendingOutgoingIce.getOrPut(peerId) { mutableListOf() }
+            list.add(entry)
+            list.size >= ICE_BATCH_MAX_SIZE
+        }
+        if (shouldFlushNow) {
+            flushIceCandidates(peerId)
+        } else {
+            iceFlushRunnables.remove(peerId)?.let { mainHandler.removeCallbacks(it) }
+            val runnable = Runnable { flushIceCandidates(peerId) }
+            iceFlushRunnables[peerId] = runnable
+            mainHandler.postDelayed(runnable, ICE_BATCH_DEBOUNCE_MS)
+        }
+    }
+
+    private fun flushIceCandidates(peerId: String) {
+        iceFlushRunnables.remove(peerId)?.let { mainHandler.removeCallbacks(it) }
+        val batch = synchronized(pendingOutgoingIce) { pendingOutgoingIce.remove(peerId) }
+        if (batch.isNullOrEmpty()) return
+        sendSignal(JSONObject().apply {
+            put("type", "call_ice_batch")
+            put("to", peerId)
+            put("candidates", org.json.JSONArray(batch))
+        })
+    }
+
     var onLocalVideoTrackReady: ((VideoTrack) -> Unit)? = null
 
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -225,14 +273,7 @@ object CallManager {
         }
         val pc = f.createPeerConnection(config, object : PeerConnection.Observer {
             override fun onIceCandidate(candidate: IceCandidate) {
-                sendSignal(JSONObject().apply {
-                    put("type", "call_ice")
-                    put("to", peerId)
-                    put("call_id", callId)
-                    put("sdp_mid", candidate.sdpMid)
-                    put("sdp_m_line_index", candidate.sdpMLineIndex)
-                    put("candidate", candidate.sdp)
-                })
+                queueIceCandidate(peerId, candidate)
             }
             override fun onTrack(transceiver: RtpTransceiver) {
                 val track = transceiver.receiver.track()
@@ -680,6 +721,9 @@ object CallManager {
         groupId = ""
         groupPeers.clear()
         pendingIceCandidates.clear()
+        synchronized(pendingOutgoingIce) { pendingOutgoingIce.clear() }
+        iceFlushRunnables.values.forEach { mainHandler.removeCallbacks(it) }
+        iceFlushRunnables.clear()
     }
 
     fun hangUp() {
@@ -1191,6 +1235,9 @@ object CallManager {
         peerConnections.clear()
         groupPeers.clear()
         pendingIceCandidates.clear()
+        synchronized(pendingOutgoingIce) { pendingOutgoingIce.clear() }
+        iceFlushRunnables.values.forEach { mainHandler.removeCallbacks(it) }
+        iceFlushRunnables.clear()
         pendingVideoTracks.clear()
 
         try { videoCapturer?.stopCapture() } catch (e: Exception) { Log.w(TAG, "stopCapture: ${e.message}") }
