@@ -53,6 +53,10 @@ fun SecurityGuideScreen(onBack: () -> Unit) {
             GuideItem(s.guideTorTitle, s.guideTorDesc),
             GuideItem(s.guideCoverTitle, s.guideCoverDesc),
             GuideItem(s.guideParanoidTitle, s.guideParanoidDesc),
+            GuideItem(s.guideDmsTitle, s.guideDmsDesc),
+            GuideItem(s.guideTimeoutWipeTitle, s.guideTimeoutWipeDesc),
+            GuideItem(s.guidePanicButtonTitle, s.guidePanicButtonDesc),
+            GuideItem(s.guideWipeLevelsTitle, s.guideWipeLevelsDesc),
             GuideItem(s.guideSelfHealTitle, s.guideSelfHealDesc),
             GuideItem(s.guideCompromisedTitle, s.guideCompromisedDesc)
         )
