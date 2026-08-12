@@ -288,6 +288,7 @@ interface IStr10 {
     val guideCoverTitle: String; val guideCoverDesc: String
     val guideCompromisedTitle: String; val guideCompromisedDesc: String
     val guideSelfHealTitle: String; val guideSelfHealDesc: String
+    val guideParanoidTitle: String; val guideParanoidDesc: String
 }
 
 data class AppStrings(
@@ -808,7 +809,7 @@ private val ru10 = object : IStr10 {
     override val guideTotpTitle = "🔐 Двухфакторная защита (TOTP)"
     override val guideTotpDesc = "Обязательный код из приложения-аутентификатора (как Google Authenticator), без которого этот аккаунт нельзя зарегистрировать на новом устройстве, даже если ключи и пароль украдены. Сохраните резервные коды, выданные при настройке, отдельно от телефона."
     override val guidePanicTitle = "🔑 Пароль под принуждением"
-    override val guidePanicDesc = "Второй пароль для входа, отличный от основного. Введённый вместо основного, он показывает правдоподобный фейковый мессенджер с выдуманными чатами, а настоящие ключи и переписка в это время безвозвратно удаляются в фоне — используйте, если вас заставляют разблокировать телефон."
+    override val guidePanicDesc = "Второй пароль для входа, отличный от основного. Введённый вместо основного, он показывает правдоподобный фейковый мессенджер с выдуманными чатами, а настоящие ключи и переписка в это время безвозвратно удаляются в фоне — используйте, если вас заставляют разблокировать Subrosa."
     override val guideEmergencyTitle = "🚨 Экстренное удаление"
     override val guideEmergencyDesc = "5 нажатий кнопки громкости вниз за 3 секунды — мгновенное удаление ключей и переписки без единого подтверждения, работает даже с заблокированным экраном. По умолчанию просто удаляет данные; есть отдельная настройка, чтобы вместо этого тоже показывать фейковый мессенджер, как у пароля под принуждением. Требует включения через Спец. возможности Android (см. инструкцию в Профиле)."
     override val guideAutoLockTitle = "⏱️ Автоблокировка"
@@ -823,6 +824,8 @@ private val ru10 = object : IStr10 {
     override val guideCompromisedDesc = "Если подозреваете, что ваш ключ украли — это полностью уничтожает текущие ключи, контакты и переписку на этом устройстве и выдаёт новые. Важно: серверу об этом ничего не сообщается — старая identity остаётся на нём просто неиспользуемой записью, никакого «отзыва» ключа не происходит. Контактам нужно будет заново обменяться с вами свежим инвайт-кодом, чтобы перейти на новую identity. Необратимо."
     override val guideSelfHealTitle = "🔁 Самовосстановление связи"
     override val guideSelfHealDesc = "Приложение специально не раскрывает серверу, кто с кем переписывается — это сильно повышает приватность, но иногда означает, что после сбоя (например, долгого отсутствия сети) переписка или звонок восстанавливаются не мгновенно, а через какое-то время. Это не значит, что что-то сломано: канал связи умеет чиниться сам. Если сообщение не идёт — обычно достаточно подождать. Мы продолжаем тестировать и сокращать эти задержки."
+    override val guideParanoidTitle = "🕵️ Параноидальный режим и тревожный URL"
+    override val guideParanoidDesc = "Включает постоянную проверку устройства на слежку (шпионские Accessibility-сервисы, подозрительные права администратора, оверлеи поверх экрана и вмешательство в honey-токен). При обнаружении угрозы: если задан «тревожный URL» (Диагностика безопасности → поле URL) — на него молча уходит POST-запрос с ID устройства и списком угроз, в обход обычного канала мессенджера (если вас раскрыли, ему нельзя доверять). Дальше — либо автоматическое удаление данных (если включён «вайп при взломе»), либо стелс-режим с фейковым экраном, как у пароля под принуждением."
 }
 
 val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9, ru10)
@@ -1179,7 +1182,7 @@ private val en7 = object : IStr7 {
     override val lockBiometricCancel = "Cancel"
     override val noCameraPermissionVoiceOnly = "Camera permission denied — voice call"
     override val torStatusStarting = "Starting..."
-    override val emergencyInfoTitle = "🚨 Emergency deletion"
+    override val emergencyInfoTitle = "🚨 Emergency button"
     override val emergencyInfoOpenSettings = "Accessibility"
     override val emergencyInfoOpenAppSettings = "App settings"
     override val emergencyInfoWarning = "Press VOLUME DOWN 5 times within 3 seconds — " +
@@ -1329,7 +1332,7 @@ private val en10 = object : IStr10 {
     override val guideKeyVerifyDesc = "A sequence of 5 emoji derived from a hash of your contact's public key. Compare it with them in person or over another channel — if it matches, you're really talking to them, not someone who swapped in a different key (man-in-the-middle attack)."
     override val guideTotpTitle = "🔐 Two-factor protection (TOTP)"
     override val guideTotpDesc = "A mandatory code from an authenticator app (like Google Authenticator), without which this account can't be registered on a new device even if the keys and password are stolen. Save the recovery codes shown during setup somewhere separate from the phone."
-    override val guidePanicTitle = "🔑 Duress password"
+    override val guidePanicTitle = "🔑 Panic password"
     override val guidePanicDesc = "A second login password, different from your real one. Entering it instead of the real password shows a convincing fake messenger full of made-up chats, while your real keys and messages are irreversibly wiped in the background — use it if you're being forced to unlock your phone."
     override val guideEmergencyTitle = "🚨 Emergency deletion"
     override val guideEmergencyDesc = "5 presses of Volume Down within 3 seconds — instantly deletes keys and messages with zero confirmation, works even on a locked screen. By default it just deletes; there's a separate setting to also show the fake messenger instead, same as the duress password. Requires enabling through Android's Accessibility settings (see the instructions in Profile)."
@@ -1345,6 +1348,8 @@ private val en10 = object : IStr10 {
     override val guideCompromisedDesc = "If you suspect your key was stolen — this permanently destroys your current keys, contacts, and messages on this device and issues new ones. Important: the server is never told about this — the old identity just sits there as an unused entry, there's no actual \"revocation\". Contacts will need to exchange a fresh invite code with you to move to the new identity. Irreversible."
     override val guideSelfHealTitle = "🔁 Self-healing connections"
     override val guideSelfHealDesc = "The app deliberately never tells the server who's talking to whom — great for privacy, but it means that after a disruption (like a long stretch offline), a chat or call can take a little while to reconnect instead of instantly. That's not a sign anything's broken — the channel is designed to repair itself. If a message isn't going through, usually just waiting a bit is enough. We keep testing to shrink these delays further."
+    override val guideParanoidTitle = "🕵️ Paranoid mode & alert URL"
+    override val guideParanoidDesc = "Turns on continuous scanning for surveillance on the device (spyware Accessibility services, suspicious device-admin grants, screen overlays, and honey-token tampering). On detection: if an \"alert URL\" is set (Security Diagnostics → URL field), a silent POST request with the device ID and threat list is sent there, bypassing the messenger's own channel entirely (if you've been exposed, that channel can't be trusted). After that — either automatic data wipe (if \"wipe on breach\" is on), or a stealth mode showing a fake screen, same idea as the duress password."
 }
 
 val enStrings = AppStrings("en", en1, en2, en3, en4, en5, en6, en7, en8, en9, en10)
