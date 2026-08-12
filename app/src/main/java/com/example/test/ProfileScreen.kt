@@ -206,7 +206,8 @@ fun ProfileScreen(
     onOpenBackup: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onOpenWipeSettings: () -> Unit = {},
-    onOpenTotpSettings: () -> Unit = {}
+    onOpenTotpSettings: () -> Unit = {},
+    onOpenSecurityGuide: () -> Unit = {}
 ) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
@@ -623,6 +624,23 @@ fun ProfileScreen(
                                 modifier = Modifier.padding(start = 20.dp, bottom = 8.dp)
                             )
                         }
+                        // Explicit, always-visible — not just in the security
+                        // guide — because the failure mode is silent: sharing
+                        // one code with a group means everyone after the first
+                        // redeemer gets a channel that looks fine locally but
+                        // never actually connects (the invite tag is pruned
+                        // after its first use, see AnonTokenManager's
+                        // PREF_MY_INVITE_TAG). Better to catch the wrong mental
+                        // model here, at the point of sharing, than have the
+                        // user debug a "why doesn't it work" days later.
+                        Text(
+                            text = s.profileInviteCodeOneTimeWarning,
+                            fontSize = 11.sp,
+                            color = Color(0xFFFFA726),
+                            fontFamily = AppFont,
+                            lineHeight = 15.sp,
+                            modifier = Modifier.padding(start = 20.dp, end = 16.dp, bottom = 8.dp)
+                        )
 
                         PDivider()
                         PRow(
@@ -770,6 +788,13 @@ fun ProfileScreen(
                     colors = CardDefaults.cardColors(containerColor = c.card)
                 ) {
                     Column {
+                        PRow(
+                            title = s.profileSecurityGuide,
+                            subtitle = s.profileSecurityGuideSub,
+                            onClick = onOpenSecurityGuide,
+                            trailing = { PChevron() }
+                        )
+                        PDivider()
                         PRow(
                             title = s.profileHideNotif,
                             subtitle = s.profileHideNotifSub,

@@ -894,7 +894,7 @@ fun AppNavigation() {
             "chat" to 2, "group_chat" to 2, "channel_feed" to 2,
             "profile" to 2, "create_group" to 2,
             "group_info" to 3, "verify_key" to 3, "backup" to 3,
-            "servers" to 3, "security_diagnostics" to 3,
+            "servers" to 3, "security_diagnostics" to 3, "security_guide" to 3,
             "incoming_call" to 3, "active_call" to 3,
         )
     }
@@ -933,6 +933,7 @@ fun AppNavigation() {
         "backup" -> BackupScreen(onBack = { screen = "profile" })
         "servers" -> ServersScreen(onBack = { screen = "profile" })
         "security_diagnostics" -> SecurityDiagnosticsScreen(onBack = { screen = "profile" })
+        "security_guide" -> SecurityGuideScreen(onBack = { screen = "profile" })
         "wipe_settings" -> WipeSettingsScreen(onBack = { screen = "profile" })
         "totp_settings" -> TotpSettingsScreen(onBack = { screen = "profile" })
 
@@ -1075,7 +1076,8 @@ fun AppNavigation() {
             onOpenBackup = { screen = "backup" },
             onOpenDiagnostics = { screen = "security_diagnostics" },
             onOpenWipeSettings = { screen = "wipe_settings" },
-            onOpenTotpSettings = { screen = "totp_settings" }
+            onOpenTotpSettings = { screen = "totp_settings" },
+            onOpenSecurityGuide = { screen = "security_guide" }
         )
 
         "verify_key" -> VerifyKeyScreen(
