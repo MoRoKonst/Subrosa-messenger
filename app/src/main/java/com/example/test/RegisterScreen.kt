@@ -194,6 +194,20 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                             scope.launch(Dispatchers.IO) {
                                 try {
                                     CryptoManager.generateKeyPair()
+                                    // A TOTP secret is bound to a specific identity — the server
+                                    // only checks it on register() for the account it was set up
+                                    // under. Any local flag/secret from before this point belongs
+                                    // to a different identity by definition (a brand-new keypair
+                                    // was just generated above), yet a device backup that survives
+                                    // a full uninstall+reinstall outside the app's control (found
+                                    // live: MIUI's own OS-level backup, independent of
+                                    // android:allowBackup="false") can leave it looking "already
+                                    // enabled". The mandatory TOTP screen that follows registration
+                                    // then renders its disable/manage flow instead of fresh setup —
+                                    // a genuine deadlock, since a code for the old secret means
+                                    // nothing to the new account server-side. Reset unconditionally
+                                    // so a fresh identity always gets a fresh setup prompt.
+                                    TotpManager.disable(context)
                                     UserStorage.register(context, username.trim(), password)
 
                                     if (!StorageKeyManager.isSetup(context)) {
