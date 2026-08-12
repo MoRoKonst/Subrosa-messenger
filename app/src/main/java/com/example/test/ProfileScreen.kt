@@ -237,6 +237,20 @@ fun ProfileScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 val active = isEmergencyServiceEnabled(context)
+                // Found live: the toast said "already enabled" (active==true)
+                // but the switch stayed off — emergencyEnabled requires BOTH
+                // active AND the separate isEmergencyWipeEnabled() preference
+                // (the user's own "I want this" intent flag, deliberately kept
+                // apart from the raw OS service state — see the Switch's
+                // onCheckedChange below), and this dialog flow never set that
+                // preference on success. Safe to set it here specifically
+                // because showEmergencyInfoDialog being true means the user
+                // got here by toggling the switch ON in the first place — the
+                // dialog only opens from that intent, so this isn't opting
+                // them into anything they didn't ask for.
+                if (active && showEmergencyInfoDialog) {
+                    UserStorage.setEmergencyWipeEnabled(context, true)
+                }
                 emergencyEnabled = active && UserStorage.isEmergencyWipeEnabled(context)
                 if (!active) UserStorage.setEmergencyWipeEnabled(context, false)
                 // Auto-close the step-by-step instructions once the service is
