@@ -17,6 +17,17 @@ object AnonTokenManager {
     // round trip before it completes.
     private const val REFILL_THRESHOLD = 16
     private const val BATCH_TO_SHARE = 20
+    // Tokens below this count are off-limits to ordinary traffic (text,
+    // typing, receipts, video/image/file chunks — everything routed through
+    // sendAnonOrDirect). Only the token-resupply message itself
+    // (sendAnonTokensTo's own consume call, allowReserve=true) may spend
+    // them. Found live: REFILL_THRESHOLD alone doesn't protect against a
+    // burst (e.g. a batched video circle) draining the pool to zero faster
+    // than the resupply round trip can land — at zero tokens, even the
+    // resupply signal itself would have nothing to send with and had to
+    // fall back to the much slower ~30s mailbox poll cycle. Reserving a
+    // handful exclusively for that one message keeps the fast path alive.
+    private const val RESERVE_TOKENS = 3
 
     private val rng = SecureRandom()
 
@@ -81,9 +92,17 @@ object AnonTokenManager {
         prefs(ctx).edit().remove("$PREF_CT_PREFIX$fingerprint").apply()
     }
 
-    fun consumeNextContactToken(ctx: Context, fingerprint: String): String? {
+    /** [allowReserve] false (the default, used by sendAnonOrDirect for all
+     * ordinary traffic) refuses to spend the last RESERVE_TOKENS — those are
+     * held back exclusively for sendAnonTokensTo's own resupply message
+     * (allowReserve=true), so the pool can never hit true zero for a contact
+     * we can still reach: at least one more resupply attempt over the fast
+     * anon_message path stays possible instead of always having to fall back
+     * to the slower mailbox poll cycle. */
+    fun consumeNextContactToken(ctx: Context, fingerprint: String, allowReserve: Boolean = false): String? {
         val tokens = getContactTokens(ctx, fingerprint).toMutableList()
         if (tokens.isEmpty()) return null
+        if (!allowReserve && tokens.size <= RESERVE_TOKENS) return null
         val token = tokens.removeAt(0)
         prefs(ctx).edit()
             .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(tokens).toString())
