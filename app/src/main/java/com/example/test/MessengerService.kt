@@ -2846,7 +2846,7 @@ class MessengerService : Service() {
                         }
                         sendWs(addPadding(anonPacket).toString())
 
-                        if (AnonTokenManager.needsRefill(this@MessengerService, to)) {
+                        if (AnonTokenManager.needsRefill(this@MessengerService, to) && shouldResupplyTokens(to)) {
                             scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
                         }
                     } else if (isFirst) {
@@ -3024,9 +3024,11 @@ class MessengerService : Service() {
      *  through the (finite, 50-slot) anon token pool almost instantly, since it
      *  routes through sendAnonOrDirect just like real messages. The receiving
      *  side already holds its "is typing" indicator for 3s regardless, so this
-     *  debounce is invisible to the recipient. Refill is checked here too (not
-     *  just after real sends) so a long typing burst between messages can't
-     *  quietly drain the pool with nothing ever noticing it needs topping up. */
+     *  debounce is invisible to the recipient. Proactive refill-on-low-pool is
+     *  handled centrally inside sendAnonOrDirect() itself now — see its
+     *  needsRefill()/shouldResupplyTokens() call, added after a burst send
+     *  (batched video circle chunks) drained a pool with no early warning
+     *  since this and other call sites each used to check it independently. */
     fun sendTyping(to: String) {
         if (!isConnected) return
         val now = System.currentTimeMillis()
@@ -3038,9 +3040,6 @@ class MessengerService : Service() {
             put("to", to)
         }
         sendAnonOrDirect(to, packet)
-        if (AnonTokenManager.needsRefill(this, to)) {
-            scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
-        }
     }
 
     fun sendRead(to: String, messageId: String) {
@@ -3068,6 +3067,21 @@ class MessengerService : Service() {
                 put("payload", packet)
             }
             sendWs(addPadding(anonPacket).toString())
+            // Proactive early-warning refill — previously only wired into
+            // sendWithForwardSecrecy() and sendTyping(), which don't cover
+            // this function at all. Found live: a batched video circle send
+            // (sendVideoCircle -> sendAnonOrDirect, ~10 tokens for a 60s
+            // video after chunk batching) burned through the pool with zero
+            // proactive signal, so the contact only found out once a send
+            // actually failed — by then the token supply was already at
+            // zero, not just low. REFILL_THRESHOLD (16 of ~20 per exchange)
+            // means this fires after just a few consumptions, giving the
+            // mutual-resupply round trip (sendAnonTokensTo -> their
+            // reciprocal shouldResupplyTokens()) time to land before the
+            // pool actually runs dry.
+            if (AnonTokenManager.needsRefill(this, to) && shouldResupplyTokens(to)) {
+                scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
+            }
         } else {
             val queueSize = synchronized(pendingAnonPackets) {
                 pendingAnonPackets.getOrPut(to) { mutableListOf() }.add(packet)
