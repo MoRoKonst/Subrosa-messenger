@@ -31,6 +31,21 @@ object AnonTokenManager {
 
     private val rng = SecureRandom()
 
+    // Every mutating function below does a plain read-modify-write against
+    // SharedPreferences with no atomicity of its own. Found live: MessengerService
+    // fires multiple sends concurrently on Dispatchers.IO's thread pool (a text
+    // message, a batched ICE signal, a contact_ping/pong can all land within
+    // milliseconds of each other for the same contact) — two concurrent calls to
+    // consumeNextContactToken() could both read the same token list before either
+    // wrote back, both pop index 0 (the SAME token string), and both believe they
+    // got a fresh one. The server accepts whichever arrives first (tokens are
+    // single-use by design) and rejects the second as "офлайн" — exactly the
+    // symptom from a live server log: known-good tokens repeatedly reported
+    // unrecognized despite the server never having restarted. Every function that
+    // reads-then-writes any of this object's prefs now holds this lock for the
+    // whole operation.
+    private val lock = Any()
+
     private fun prefs(ctx: Context) = EncryptedStorage.getEncryptedPrefs(ctx, PREFS_NAME)
 
     fun getMyTokens(ctx: Context): List<String> {
@@ -41,17 +56,17 @@ object AnonTokenManager {
         } catch (e: Exception) { emptyList() }
     }
 
-    fun ensureMyTokenPool(ctx: Context): List<String> {
+    fun ensureMyTokenPool(ctx: Context): List<String> = synchronized(lock) {
         val existing = getMyTokens(ctx)
-        if (existing.size >= POOL_SIZE / 2) return existing
+        if (existing.size >= POOL_SIZE / 2) return@synchronized existing
         val needed = POOL_SIZE - existing.size
         val newTokens = (1..needed).map { generateToken() }
         val combined = existing + newTokens
         prefs(ctx).edit().putString(PREF_MY_TOKENS, JSONArray(combined).toString()).apply()
-        return combined
+        combined
     }
 
-    fun consumeMyToken(ctx: Context, token: String) {
+    fun consumeMyToken(ctx: Context, token: String) = synchronized(lock) {
         val tokens = getMyTokens(ctx).toMutableList()
         if (tokens.remove(token)) {
             prefs(ctx).edit().putString(PREF_MY_TOKENS, JSONArray(tokens).toString()).apply()
@@ -69,7 +84,7 @@ object AnonTokenManager {
         } catch (e: Exception) { emptyList() }
     }
 
-    fun addContactTokens(ctx: Context, fingerprint: String, tokens: List<String>) {
+    fun addContactTokens(ctx: Context, fingerprint: String, tokens: List<String>) = synchronized(lock) {
         val existing = getContactTokens(ctx, fingerprint).toMutableList()
         existing.addAll(tokens.filter { it.isNotBlank() && it.length == 32 })
 
@@ -88,7 +103,7 @@ object AnonTokenManager {
      * fingerprint; without this, old tokens (issued under a prior mailbox
      * tag / bootstrap cycle, possibly no longer valid on their end either)
      * would still get consumed as if the relationship had never been reset. */
-    fun clearContactTokens(ctx: Context, fingerprint: String) {
+    fun clearContactTokens(ctx: Context, fingerprint: String) = synchronized(lock) {
         prefs(ctx).edit().remove("$PREF_CT_PREFIX$fingerprint").apply()
     }
 
@@ -99,22 +114,22 @@ object AnonTokenManager {
      * we can still reach: at least one more resupply attempt over the fast
      * anon_message path stays possible instead of always having to fall back
      * to the slower mailbox poll cycle. */
-    fun consumeNextContactToken(ctx: Context, fingerprint: String, allowReserve: Boolean = false): String? {
+    fun consumeNextContactToken(ctx: Context, fingerprint: String, allowReserve: Boolean = false): String? = synchronized(lock) {
         val tokens = getContactTokens(ctx, fingerprint).toMutableList()
-        if (tokens.isEmpty()) return null
-        if (!allowReserve && tokens.size <= RESERVE_TOKENS) return null
+        if (tokens.isEmpty()) return@synchronized null
+        if (!allowReserve && tokens.size <= RESERVE_TOKENS) return@synchronized null
         val token = tokens.removeAt(0)
         prefs(ctx).edit()
             .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(tokens).toString())
             .apply()
-        return token
+        token
     }
 
     private const val PREF_MY_MBOX_TAGS   = "mbox_my_tags"
     private const val PREF_CT_MBOX_PREFIX = "mbox_ct_"
     private const val MBOX_TOTAL = 20
 
-    fun addMyMailboxTag(ctx: Context, tag: String) {
+    fun addMyMailboxTag(ctx: Context, tag: String) = synchronized(lock) {
         val tags = getMyMailboxTags(ctx).toMutableList()
         if (tag !in tags) {
             tags.add(tag)
@@ -128,7 +143,7 @@ object AnonTokenManager {
         catch (e: Exception) { emptyList() }
     }
 
-    fun removeMyMailboxTag(ctx: Context, tag: String) {
+    fun removeMyMailboxTag(ctx: Context, tag: String) = synchronized(lock) {
         val tags = getMyMailboxTags(ctx).toMutableList()
         if (tags.remove(tag))
             prefs(ctx).edit().putString(PREF_MY_MBOX_TAGS, JSONArray(tags).toString()).apply()
@@ -153,20 +168,20 @@ object AnonTokenManager {
      * contact's copy of getContactMailboxTag(me) gets refreshed to this tag
      * instead of going stale — see docs/ISSUE_backup_identity_hijack.md,
      * health-check "tag freshness" (item 5). */
-    fun getOrCreateMyPersistentMailboxTag(ctx: Context): String {
+    fun getOrCreateMyPersistentMailboxTag(ctx: Context): String = synchronized(lock) {
         val existing = prefs(ctx).getString(PREF_MY_PERSISTENT_TAG, null)
-        if (existing != null) return existing
+        if (existing != null) return@synchronized existing
         val tag = generateToken()
         prefs(ctx).edit().putString(PREF_MY_PERSISTENT_TAG, tag).apply()
         addMyMailboxTag(ctx, tag)
-        return tag
+        tag
     }
 
     /** Forces PREF_MY_PERSISTENT_TAG to match [tag]. Superseded by
      * syncMyInviteMailboxTag() for invite codes specifically (see
      * PREF_MY_INVITE_TAG below) — kept for any other caller still relying on
      * the persistent tag itself being force-synced to a known value. */
-    fun syncMyPersistentMailboxTag(ctx: Context, tag: String) {
+    fun syncMyPersistentMailboxTag(ctx: Context, tag: String) = synchronized(lock) {
         prefs(ctx).edit().putString(PREF_MY_PERSISTENT_TAG, tag).apply()
         addMyMailboxTag(ctx, tag)
     }
@@ -188,10 +203,10 @@ object AnonTokenManager {
      * contact only ever learns it via the mailbox_tag field piggybacked on
      * an already-encrypted deposit/token exchange, after the invite tag did
      * its one job of getting the two sides talking. */
-    fun getOrCreateMyInviteMailboxTag(ctx: Context): String {
+    fun getOrCreateMyInviteMailboxTag(ctx: Context): String = synchronized(lock) {
         val existing = prefs(ctx).getString(PREF_MY_INVITE_TAG, null)
-        if (existing != null) return existing
-        return regenerateMyInviteMailboxTag(ctx)
+        if (existing != null) return@synchronized existing
+        regenerateMyInviteMailboxTag(ctx)
     }
 
     /** Mints a fresh invite tag and immediately stops polling the old one —
@@ -201,13 +216,13 @@ object AnonTokenManager {
      * just-invalidated code simply needs a fresh one; this is a deliberate
      * trade of a small "regenerated right as someone was redeeming" edge
      * case for closing the window fast. */
-    fun regenerateMyInviteMailboxTag(ctx: Context): String {
+    fun regenerateMyInviteMailboxTag(ctx: Context): String = synchronized(lock) {
         val old = prefs(ctx).getString(PREF_MY_INVITE_TAG, null)
         val tag = generateToken()
         prefs(ctx).edit().putString(PREF_MY_INVITE_TAG, tag).apply()
         if (old != null) removeMyMailboxTag(ctx, old)
         addMyMailboxTag(ctx, tag)
-        return tag
+        tag
     }
 
     /** Forces PREF_MY_INVITE_TAG to match [tag] — the tag actually embedded
@@ -218,7 +233,7 @@ object AnonTokenManager {
      * the first unrelated read of it would mint a value that doesn't match
      * what's actually embedded in the displayed code. Call this every time
      * the active invite code is resolved (cached or fresh). */
-    fun syncMyInviteMailboxTag(ctx: Context, tag: String) {
+    fun syncMyInviteMailboxTag(ctx: Context, tag: String) = synchronized(lock) {
         prefs(ctx).edit().putString(PREF_MY_INVITE_TAG, tag).apply()
         addMyMailboxTag(ctx, tag)
     }
@@ -227,7 +242,7 @@ object AnonTokenManager {
      * device's active identity with a different one from a backup, see
      * BackupManager.wipeCurrentIdentityData(). Tokens/tags are meaningless
      * once the identity they were bound to is gone. */
-    fun clearAll(ctx: Context) {
+    fun clearAll(ctx: Context) = synchronized(lock) {
         prefs(ctx).edit().clear().apply()
     }
 
