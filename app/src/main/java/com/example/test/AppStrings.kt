@@ -193,8 +193,12 @@ interface IStr7 {
     val lockBiometricTitle: String; val lockBiometricSubtitle: String
     val lockBiometricCancel: String
     val noCameraPermissionVoiceOnly: String; val torStatusStarting: String
-    val emergencyInfoTitle: String; val emergencyInfoMessage: String
+    val emergencyInfoTitle: String
     val emergencyInfoOpenSettings: String; val emergencyInfoOpenAppSettings: String
+    val emergencyInfoWarning: String
+    val emergencyInfoStepLabel: (Int) -> String
+    val emergencyInfoStep1Desc: String; val emergencyInfoStep2Desc: String
+    val emergencyInfoLegacyDesc: String; val emergencyInfoDone: String
     val spyAppsAccessibilitySection: String; val spyAppsAdminsSection: String
     val spyAppsOverlaySection: String
     val spyAppsTitle: String; val spyAppsMessage: (String) -> String
@@ -631,17 +635,15 @@ private val ru7 = object : IStr7 {
     override val noCameraPermissionVoiceOnly = "Разрешение камеры не дано — голосовой звонок"
     override val torStatusStarting = "Запуск..."
     override val emergencyInfoTitle = "🚨 Экстренное удаление"
-    override val emergencyInfoMessage = "Нажмите 5 раз УБАВИТЬ ГРОМКОСТЬ за 3 секунды — " +
-        "приложение немедленно удалит все ключи и переписки.\n\n" +
-        "⚠️ БЕЗ ПОДТВЕРЖДЕНИЯ!\n\n" +
-        "📲 Android 13+: требуется 2 шага:\n" +
-        "① Нажмите «Настройки приложения»\n" +
-        "② В правом верхнем углу ⋮ → «Доступ к огр. настройкам»\n" +
-        "③ Затем вернитесь: Настройки → Спец. возможности → Subrosa Emergency Wipe → Вкл\n\n" +
-        "📱 Android 12 и старше:\n" +
-        "Настройки → Спец. возможности → Subrosa Emergency Wipe → Вкл"
     override val emergencyInfoOpenSettings = "Спец. возможности"
     override val emergencyInfoOpenAppSettings = "Настройки приложения"
+    override val emergencyInfoWarning = "Нажмите 5 раз УБАВИТЬ ГРОМКОСТЬ за 3 секунды — " +
+        "приложение немедленно удалит все ключи и переписки.\n⚠️ Без подтверждения!"
+    override val emergencyInfoStepLabel: (Int) -> String = { n -> "Шаг $n" }
+    override val emergencyInfoStep1Desc = "Откройте настройки приложения, затем ⋮ (вверху справа) → «Доступ к огр. настройкам»"
+    override val emergencyInfoStep2Desc = "Спец. возможности → Subrosa Emergency Wipe → включить"
+    override val emergencyInfoLegacyDesc = "Спец. возможности → Subrosa Emergency Wipe → включить"
+    override val emergencyInfoDone = "✅ Служба уже включена"
     override val spyAppsAccessibilitySection = "🔍 Службы Accessibility:\n"
     override val spyAppsAdminsSection = "⚠️ Администраторы устройства:\n"
     override val spyAppsOverlaySection = "🪟 Право рисовать поверх экрана:\n"
@@ -1126,17 +1128,15 @@ private val en7 = object : IStr7 {
     override val noCameraPermissionVoiceOnly = "Camera permission denied — voice call"
     override val torStatusStarting = "Starting..."
     override val emergencyInfoTitle = "🚨 Emergency deletion"
-    override val emergencyInfoMessage = "Press VOLUME DOWN 5 times within 3 seconds — " +
-        "the app will immediately delete all keys and messages.\n\n" +
-        "⚠️ WITHOUT CONFIRMATION!\n\n" +
-        "📲 Android 13+: 2 steps required:\n" +
-        "① Tap 'App settings'\n" +
-        "② Top-right ⋮ → 'Allow restricted settings'\n" +
-        "③ Then: Settings → Accessibility → Subrosa Emergency Wipe → Enable\n\n" +
-        "📱 Android 12 and below:\n" +
-        "Settings → Accessibility → Subrosa Emergency Wipe → Enable"
     override val emergencyInfoOpenSettings = "Accessibility"
     override val emergencyInfoOpenAppSettings = "App settings"
+    override val emergencyInfoWarning = "Press VOLUME DOWN 5 times within 3 seconds — " +
+        "the app will immediately delete all keys and messages.\n⚠️ Without confirmation!"
+    override val emergencyInfoStepLabel: (Int) -> String = { n -> "Step $n" }
+    override val emergencyInfoStep1Desc = "Open app settings, then ⋮ (top right) → \"Allow restricted settings\""
+    override val emergencyInfoStep2Desc = "Accessibility → Subrosa Emergency Wipe → enable"
+    override val emergencyInfoLegacyDesc = "Accessibility → Subrosa Emergency Wipe → enable"
+    override val emergencyInfoDone = "✅ Service already enabled"
     override val spyAppsAccessibilitySection = "🔍 Accessibility services:\n"
     override val spyAppsAdminsSection = "⚠️ Device administrators:\n"
     override val spyAppsOverlaySection = "🪟 Draw over other apps:\n"
