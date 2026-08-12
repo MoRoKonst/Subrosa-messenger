@@ -162,19 +162,64 @@ object AnonTokenManager {
         return tag
     }
 
-    /** Forces PREF_MY_PERSISTENT_TAG to match [tag] — the tag actually embedded
-     * in the currently active/displayed invite code. Found live: a device with
-     * an invite code cached from before this "persistent tag" concept existed
-     * (still within its 7-day TTL, so ensureMyMailboxTagRegistered() just
-     * reused it as-is) never called getOrCreateMyPersistentMailboxTag() to
-     * seed the pref — so the first read of it (e.g. from
-     * removeMailboxTagIfEphemeral()'s "is this the tag I should never prune"
-     * check) minted an unrelated fresh value instead of matching the tag
-     * actually in use, and the real tag got pruned anyway on first use.
-     * Call this every time the active invite code is resolved (cached or
-     * fresh) so the two can never diverge again. */
+    /** Forces PREF_MY_PERSISTENT_TAG to match [tag]. Superseded by
+     * syncMyInviteMailboxTag() for invite codes specifically (see
+     * PREF_MY_INVITE_TAG below) — kept for any other caller still relying on
+     * the persistent tag itself being force-synced to a known value. */
     fun syncMyPersistentMailboxTag(ctx: Context, tag: String) {
         prefs(ctx).edit().putString(PREF_MY_PERSISTENT_TAG, tag).apply()
+        addMyMailboxTag(ctx, tag)
+    }
+
+    private const val PREF_MY_INVITE_TAG = "mbox_my_invite_tag"
+
+    /** The tag embedded in invite codes — deliberately NOT the same value as
+     * getOrCreateMyPersistentMailboxTag(). Anyone who merely sees an invite
+     * code (without ever becoming a real contact) learns only this
+     * throwaway tag, not the one actually used for ongoing communication:
+     * removeMailboxTagIfEphemeral() already prunes any tag that isn't the
+     * persistent one after its first use, so once someone redeems the code
+     * and completes the first mailbox deposit, this tag is spent and stops
+     * being polled — a leaked/observed invite code becomes useless the
+     * moment it's actually used once, or whenever the user manually
+     * regenerates it (see regenerateMyInviteMailboxTag(), wired to
+     * ProfileScreen's "Copy" button). The real ongoing tag
+     * (getOrCreateMyPersistentMailboxTag) is never published anywhere — a
+     * contact only ever learns it via the mailbox_tag field piggybacked on
+     * an already-encrypted deposit/token exchange, after the invite tag did
+     * its one job of getting the two sides talking. */
+    fun getOrCreateMyInviteMailboxTag(ctx: Context): String {
+        val existing = prefs(ctx).getString(PREF_MY_INVITE_TAG, null)
+        if (existing != null) return existing
+        return regenerateMyInviteMailboxTag(ctx)
+    }
+
+    /** Mints a fresh invite tag and immediately stops polling the old one —
+     * closing the exposure window is the whole point of regenerating (see
+     * ProfileScreen's "Copy" button), so an old value left lingering in
+     * getMyMailboxTags() would defeat that. A redeemer holding a
+     * just-invalidated code simply needs a fresh one; this is a deliberate
+     * trade of a small "regenerated right as someone was redeeming" edge
+     * case for closing the window fast. */
+    fun regenerateMyInviteMailboxTag(ctx: Context): String {
+        val old = prefs(ctx).getString(PREF_MY_INVITE_TAG, null)
+        val tag = generateToken()
+        prefs(ctx).edit().putString(PREF_MY_INVITE_TAG, tag).apply()
+        if (old != null) removeMyMailboxTag(ctx, old)
+        addMyMailboxTag(ctx, tag)
+        return tag
+    }
+
+    /** Forces PREF_MY_INVITE_TAG to match [tag] — the tag actually embedded
+     * in the currently active/displayed invite code. Mirrors the old
+     * syncMyPersistentMailboxTag() fix (see git history): a device with an
+     * invite code cached from before this pref existed (still within its
+     * TTL, reused as-is) would otherwise never seed PREF_MY_INVITE_TAG, so
+     * the first unrelated read of it would mint a value that doesn't match
+     * what's actually embedded in the displayed code. Call this every time
+     * the active invite code is resolved (cached or fresh). */
+    fun syncMyInviteMailboxTag(ctx: Context, tag: String) {
+        prefs(ctx).edit().putString(PREF_MY_INVITE_TAG, tag).apply()
         addMyMailboxTag(ctx, tag)
     }
 

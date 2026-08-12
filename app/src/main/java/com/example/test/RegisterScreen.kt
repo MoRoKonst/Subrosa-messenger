@@ -203,7 +203,7 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                                     val privateKey = CryptoManager.getPrivateKeyPublic()
                                     val inviteCode = InviteCodeManager.generateInviteCode(
                                         publicKey, privateKey, username.trim(),
-                                        AnonTokenManager.getOrCreateMyPersistentMailboxTag(context)
+                                        AnonTokenManager.getOrCreateMyInviteMailboxTag(context)
                                     )
                                     UserStorage.saveInviteCode(context, inviteCode)
                                     withContext(Dispatchers.Main) {

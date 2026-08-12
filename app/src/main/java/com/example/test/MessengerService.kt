@@ -551,6 +551,13 @@ class MessengerService : Service() {
      *  stay consistent and idempotent. */
     private fun ensureMyMailboxTagRegistered() {
         try {
+            // The persistent tag (used for ongoing contact, never published —
+            // see AnonTokenManager's PREF_MY_INVITE_TAG doc comment) needs no
+            // invite code at all to be registered for polling; ensure it
+            // exists independent of whatever's going on with the invite code
+            // below, so contacts can reach us even before we've sent anything.
+            AnonTokenManager.getOrCreateMyPersistentMailboxTag(this)
+
             val existing = UserStorage.getInviteCode(this)
             val existingTimestamp = existing?.let { InviteCodeManager.parseInviteCode(it) }?.timestamp
             val stillValid = existingTimestamp != null &&
@@ -562,14 +569,14 @@ class MessengerService : Service() {
                     CryptoManager.getPublicKey(),
                     CryptoManager.getPrivateKeyPublic(),
                     UserStorage.getUsername(this).ifBlank { UserStorage.getUserId(this) },
-                    AnonTokenManager.getOrCreateMyPersistentMailboxTag(this)
+                    AnonTokenManager.getOrCreateMyInviteMailboxTag(this)
                 )
                 UserStorage.saveInviteCode(this, fresh)
                 fresh
             }
             val embeddedTag = InviteCodeManager.parseInviteCode(code)?.mailboxTag
             embeddedTag?.let { tag ->
-                AnonTokenManager.syncMyPersistentMailboxTag(this, tag)
+                AnonTokenManager.syncMyInviteMailboxTag(this, tag)
             }
             Log.d(TAG, "DEBUG-BOOTSTRAP ensureMyMailboxTagRegistered: reused=${existing != null && stillValid} embeddedTag=$embeddedTag myTags=${AnonTokenManager.getMyMailboxTags(this)}")
         } catch (e: Exception) {
