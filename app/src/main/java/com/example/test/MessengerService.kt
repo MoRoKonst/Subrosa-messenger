@@ -2560,8 +2560,9 @@ class MessengerService : Service() {
                     val isVideo = json.optBoolean("is_video", false)
                     val isGroup = json.optBoolean("is_group", false)
                     val gId     = json.optString("group_id", "")
+                    val ts      = json.optLong("ts", 0L)
                     CallManager.init(this@MessengerService)
-                    val isFreshIncomingCall = CallManager.handleOffer(from, sdp, callId, isVideo, isGroup, gId)
+                    val isFreshIncomingCall = CallManager.handleOffer(from, sdp, callId, isVideo, isGroup, gId, ts)
 
                     // A call_offer for a request the user already accepted is handled
                     // entirely inside CallManager (auto-proceeds to answering) — showing

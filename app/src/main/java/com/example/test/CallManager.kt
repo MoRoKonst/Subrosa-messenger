@@ -481,6 +481,7 @@ object CallManager {
                             put("sdp", sdp.description)
                             put("is_video", isVideoCall)
                             put("is_group", false)
+                            put("ts", System.currentTimeMillis())
                         })
                     }
                     override fun onSetFailure(p0: String?) { Log.e(TAG, "setLocalDesc fail: $p0") }
@@ -801,7 +802,25 @@ object CallManager {
      *  user never touched *this* screen instance) would call declineCall() and kill
      *  the call that's already under way. Confirmed via live device testing: the
      *  release() stack trace pointed straight at IncomingCallScreen's onDispose. */
-    fun handleOffer(from: String, sdp: String, cId: String, isVideo: Boolean, isGroup: Boolean, gId: String): Boolean {
+    fun handleOffer(from: String, sdp: String, cId: String, isVideo: Boolean, isGroup: Boolean, gId: String, ts: Long = 0L): Boolean {
+
+        // Found live: a call_offer that got stuck in the anon-token send queue
+        // (see AnonTokenManager's token-consumption race fix) could arrive
+        // minutes late — long after the caller gave up — and the callee's UI
+        // would still ring as if it were a fresh call, since nothing checked
+        // how old the offer actually was. ts=0 (an older peer build that
+        // doesn't send it yet) skips this check rather than rejecting
+        // everything from unpatched builds.
+        if (ts != 0L && System.currentTimeMillis() - ts > RINGING_TIMEOUT_MS) {
+            Log.w(TAG, "call_offer от $from устарел (${(System.currentTimeMillis() - ts) / 1000}с) — игнорируем, не звоним")
+            sendSignal(JSONObject().apply {
+                put("type", "call_end")
+                put("to", from)
+                put("call_id", cId)
+                put("reason", "stale")
+            })
+            return false
+        }
 
         // If we already agreed to this callId via the request/response phase,
         // this real offer isn't a second incoming call — it's the expected
