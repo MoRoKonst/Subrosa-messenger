@@ -147,7 +147,26 @@ class MessengerService : Service() {
     // hybridize the legacy ephemeral-ECDH path (encrypt/decrypt, voice, group
     // key distribution) against harvest-now-decrypt-later, same as X3DH.
     private val publicKeysPq = mutableMapOf<String, ByteArray>()
-    private val tokensSentThisSession = mutableSetOf<String>()
+    // Was a mutableSetOf<String> ("sent once ever this process lifetime, never
+    // again") — found live: a burst of usage (a video call's signaling traffic,
+    // several video circles) can drain a contact's token allocation well
+    // within a single service lifetime, but the one-time gate meant the
+    // contact never got proactively resupplied, permanently stuck until an
+    // app/service restart happened to reset it. A cooldown lets it refill
+    // again once the previous grant has had time to actually be used up.
+    private val tokensSentThisSession = mutableMapOf<String, Long>()
+    private val TOKEN_RESUPPLY_COOLDOWN_MS = 3 * 60_000L
+
+    /** True (and records the attempt) at most once per TOKEN_RESUPPLY_COOLDOWN_MS
+     * per contact — replaces the old "once ever" Set.add() check at both call
+     * sites below. */
+    private fun shouldResupplyTokens(contact: String): Boolean {
+        val now = System.currentTimeMillis()
+        val last = tokensSentThisSession[contact] ?: 0L
+        if (now - last < TOKEN_RESUPPLY_COOLDOWN_MS) return false
+        tokensSentThisSession[contact] = now
+        return true
+    }
     private val pendingMessages = mutableMapOf<String, MutableList<Pair<String, String>>>()
 
     private val processedGroupMessageIds = mutableSetOf<String>()
@@ -3966,7 +3985,7 @@ class MessengerService : Service() {
                 }
                 ChatStorage.addContact(this@MessengerService, from)
                 Log.d(TAG, "Получены анонимные токены от $from: ${tokens.size} шт.")
-                if (tokensSentThisSession.add(from)) {
+                if (shouldResupplyTokens(from)) {
                     scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
                 }
             } catch (e: Exception) {
@@ -4262,7 +4281,7 @@ class MessengerService : Service() {
                             AnonTokenManager.setContactMailboxTag(this@MessengerService, from, freshTag)
                         }
                         withContext(Dispatchers.Main) { onChannelReady?.invoke(from) }
-                        if (tokensSentThisSession.add(from)) {
+                        if (shouldResupplyTokens(from)) {
                             scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
                         }
                     }
