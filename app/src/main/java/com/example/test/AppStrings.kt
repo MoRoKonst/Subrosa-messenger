@@ -289,6 +289,10 @@ interface IStr10 {
     val guideCompromisedTitle: String; val guideCompromisedDesc: String
     val guideSelfHealTitle: String; val guideSelfHealDesc: String
     val guideParanoidTitle: String; val guideParanoidDesc: String
+    val guideDmsTitle: String; val guideDmsDesc: String
+    val guideTimeoutWipeTitle: String; val guideTimeoutWipeDesc: String
+    val guidePanicButtonTitle: String; val guidePanicButtonDesc: String
+    val guideWipeLevelsTitle: String; val guideWipeLevelsDesc: String
 }
 
 data class AppStrings(
@@ -826,6 +830,14 @@ private val ru10 = object : IStr10 {
     override val guideSelfHealDesc = "Приложение специально не раскрывает серверу, кто с кем переписывается — это сильно повышает приватность, но иногда означает, что после сбоя (например, долгого отсутствия сети) переписка или звонок восстанавливаются не мгновенно, а через какое-то время. Это не значит, что что-то сломано: канал связи умеет чиниться сам. Если сообщение не идёт — обычно достаточно подождать. Мы продолжаем тестировать и сокращать эти задержки."
     override val guideParanoidTitle = "🕵️ Параноидальный режим и тревожный URL"
     override val guideParanoidDesc = "Включает постоянную проверку устройства на слежку (шпионские Accessibility-сервисы, подозрительные права администратора, оверлеи поверх экрана и вмешательство в honey-токен). При обнаружении угрозы: если задан «тревожный URL» (Диагностика безопасности → поле URL) — на него молча уходит POST-запрос с ID устройства и списком угроз, в обход обычного канала мессенджера (если вас раскрыли, ему нельзя доверять). Дальше — либо автоматическое удаление данных (если включён «вайп при взломе»), либо стелс-режим с фейковым экраном, как у пароля под принуждением."
+    override val guideDmsTitle = "⏳ Мёртвая рука (Dead Man's Switch)"
+    override val guideDmsDesc = "Таймер самопроверки: от 15 минут до 3 суток. Если вы не нажали «Я на связи» до истечения интервала — приложение считает, что с вами что-то случилось, и уничтожает данные максимально жёстким уровнем (Nuclear), без дополнительных подтверждений. Полезно, если вас могут задержать/лишить доступа к телефону надолго и вы не сможете сами инициировать удаление."
+    override val guideTimeoutWipeTitle = "📴 Удаление по неактивности"
+    override val guideTimeoutWipeDesc = "Похоже на «мёртвую руку», но проще: если приложение просто не открывали 24/48/72 часа (неважно, по какой причине) — данные удаляются автоматически. Хорошо подходит как фоновая защита на случай, если телефон украли и не пытаются его разблокировать сразу."
+    override val guidePanicButtonTitle = "🔔 Кнопка паники в уведомлении"
+    override val guidePanicButtonDesc = "Третий, отдельный способ экстренного удаления (помимо пароля под принуждением и кнопок громкости) — постоянное уведомление с кнопкой «Удалить всё» в один тап. Быстрее, чем набирать пароль, но требует доступа к шторке уведомлений. Можно включить тот же фейковый экран вместо мгновенного закрытия приложения — настраивается отдельно."
+    override val guideWipeLevelsTitle = "💣 Уровни уничтожения (Hard / Nuclear)"
+    override val guideWipeLevelsDesc = "Hard — удаляет все ключи, файлы и данные приложения. Nuclear — то же самое плюс полный сброс приложения на системном уровне. Разные функции экстренного удаления используют разные уровни по умолчанию (например, «мёртвая рука» всегда бьёт максимально жёстко — Nuclear)."
 }
 
 val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9, ru10)
@@ -1350,6 +1362,14 @@ private val en10 = object : IStr10 {
     override val guideSelfHealDesc = "The app deliberately never tells the server who's talking to whom — great for privacy, but it means that after a disruption (like a long stretch offline), a chat or call can take a little while to reconnect instead of instantly. That's not a sign anything's broken — the channel is designed to repair itself. If a message isn't going through, usually just waiting a bit is enough. We keep testing to shrink these delays further."
     override val guideParanoidTitle = "🕵️ Paranoid mode & alert URL"
     override val guideParanoidDesc = "Turns on continuous scanning for surveillance on the device (spyware Accessibility services, suspicious device-admin grants, screen overlays, and honey-token tampering). On detection: if an \"alert URL\" is set (Security Diagnostics → URL field), a silent POST request with the device ID and threat list is sent there, bypassing the messenger's own channel entirely (if you've been exposed, that channel can't be trusted). After that — either automatic data wipe (if \"wipe on breach\" is on), or a stealth mode showing a fake screen, same idea as the duress password."
+    override val guideDmsTitle = "⏳ Dead Man's Switch"
+    override val guideDmsDesc = "A check-in timer from 15 minutes to 3 days. If you don't tap \"I'm okay\" before it runs out, the app assumes something happened to you and wipes everything at the harshest level (Nuclear), no further confirmation. Useful if you might be detained or lose access to your phone for a while and can't trigger a wipe yourself."
+    override val guideTimeoutWipeTitle = "📴 Inactivity wipe"
+    override val guideTimeoutWipeDesc = "Similar to the dead man's switch but simpler: if the app just hasn't been opened for 24/48/72 hours, for whatever reason, the data gets wiped automatically. Good as a background safeguard in case a stolen phone isn't unlocked right away."
+    override val guidePanicButtonTitle = "🔔 Panic button notification"
+    override val guidePanicButtonDesc = "A third, separate emergency-deletion method (besides the duress password and the volume buttons) — a persistent notification with a one-tap \"Delete everything\" action. Faster than typing a password, but needs access to the notification shade. Can be set to show the same fake screen instead of just closing the app — configured separately."
+    override val guideWipeLevelsTitle = "💣 Destruction levels (Hard / Nuclear)"
+    override val guideWipeLevelsDesc = "Hard deletes all keys, files, and app data. Nuclear does the same plus a full system-level app reset. Different emergency-deletion features default to different levels (the dead man's switch, for example, always goes straight to Nuclear)."
 }
 
 val enStrings = AppStrings("en", en1, en2, en3, en4, en5, en6, en7, en8, en9, en10)
