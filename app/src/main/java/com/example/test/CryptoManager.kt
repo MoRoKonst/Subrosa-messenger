@@ -774,9 +774,16 @@ object CryptoManager {
 
         emit(tr("📋 ТЕСТ 1: Проверка существования ключей", "📋 TEST 1: Key existence check"))
         val hasKeysInitial = hasKeys()
-        emit(tr("  Ключи существуют: $hasKeysInitial", "  Keys exist: $hasKeysInitial"))
 
-        if (!hasKeysInitial) {
+        // Found live: this line used to have no ✅/❌/⚠ marker, so
+        // SecurityDiagnosticsScreen's shouldShow() filter — which only shows
+        // lines with one of those markers (or a few specific headers) —
+        // silently swallowed it. Test 1's result never appeared in the UI at
+        // all when keys already existed (the normal case), unlike tests 2
+        // and 3 which both already used explicit ✅/❌ lines.
+        if (hasKeysInitial) {
+            emit(tr("  ✅ Ключи существуют", "  ✅ Keys exist"))
+        } else {
             emit(tr("  ⚠️ Ключи не найдены, генерируем...", "  ⚠️ Keys not found, generating..."))
             generateKeyPair()
             emit(tr("  ✅ Ключи сгенерированы", "  ✅ Keys generated"))

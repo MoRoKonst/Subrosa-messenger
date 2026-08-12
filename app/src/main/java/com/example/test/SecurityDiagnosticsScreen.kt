@@ -23,8 +23,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import com.subrosa.messenger.ui.theme.subrosaColors
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.SubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,7 +32,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val scope = rememberCoroutineScope()
 
     val testLines = remember { mutableStateListOf<String>() }
@@ -261,26 +261,23 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                     }
                 }
 
+                // Merged from three separate buttons (basic/stress/advanced) into
+                // one — they always ran the same crypto layer end-to-end anyway,
+                // just at different depths; splitting them only made the user
+                // press three buttons in a row for one full check. Runs all three
+                // suites in sequence into the same output.
                 Button(
-                    onClick = { runSuite { cb -> CryptoManager.runSecurityDiagnostics(context, cb) } },
+                    onClick = {
+                        runSuite { cb ->
+                            CryptoManager.runSecurityDiagnostics(context, cb)
+                            CryptoManager.runStressTests(context, cb)
+                            CryptoManager.runAdvancedTests(context, cb)
+                        }
+                    },
                     enabled = !isRunning,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = c.primaryBlue, contentColor = Color.White)
                 ) { Text(if (isRunning) s.diagRunning else s.diagBasic, fontSize = 14.sp) }
-
-                Button(
-                    onClick = { runSuite { cb -> CryptoManager.runStressTests(context, cb) } },
-                    enabled = !isRunning,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFCC3333), contentColor = Color.White)
-                ) { Text(if (isRunning) s.diagRunning else s.diagStress, fontSize = 14.sp) }
-
-                Button(
-                    onClick = { runSuite { cb -> CryptoManager.runAdvancedTests(context, cb) } },
-                    enabled = !isRunning,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20), contentColor = Color.White)
-                ) { Text(if (isRunning) s.diagRunning else s.diagAdvanced, fontSize = 14.sp) }
             }
 
             Surface(
@@ -318,7 +315,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                                     modifier = Modifier.padding(start = 12.dp, top = 2.dp),
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 13.sp,
-                                    color = Color(0xFF00E5FF).copy(alpha = cursorAlpha)
+                                    color = Color(0xFFD9A566).copy(alpha = cursorAlpha)
                                 )
                             }
                         }
@@ -330,7 +327,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun TestLine(line: String, c: subrosaColors) {
+private fun TestLine(line: String, c: SubrosaColors) {
     val t = line.trimEnd()
 
     if (t.isEmpty()) {
@@ -352,7 +349,7 @@ private fun TestLine(line: String, c: subrosaColors) {
         isFail -> Color(0xFFEF5350)
         isWarn -> Color(0xFFFFA726)
         isInfo -> Color(0xFF64B5F6)
-        isTestHeader -> Color(0xFF00E5FF)
+        isTestHeader -> Color(0xFFD9A566)
         isTitle      -> Color(0xFFE0E6FF)
         isSep        -> Color(0xFF1E2A4A)
         else         -> Color(0xFF8899BB)
