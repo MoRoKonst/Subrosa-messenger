@@ -304,6 +304,10 @@ fun ChatScreen(
     // existing/established chats never flash a "connecting" state; flipped to
     // false below once the service confirms this is a genuinely pending contact.
     var channelReady by remember { mutableStateOf(true) }
+    // Found live: tapping "📍 Геопозиция" in the attach menu sent immediately,
+    // no confirmation — an accidental tap (buttons stacked close together in
+    // that menu) shared the user's real location with no way to back out.
+    var showGeoConfirm by remember { mutableStateOf(false) }
 
     val sendGeo: () -> Unit = {
         scope.launch {
@@ -1396,14 +1400,32 @@ fun ChatScreen(
 
                         TextButton(onClick = {
                             showAttachMenu = false
-                            val permGranted = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
-                                android.content.pm.PackageManager.PERMISSION_GRANTED
-                            if (permGranted) sendGeo()
-                            else geoPermLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                            showGeoConfirm = true
                         }) { Text(s.chatGeo, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono) }
                     }
                 },
                 confirmButton = {},
+                containerColor = c.dialog
+            )
+        }
+
+        if (showGeoConfirm) {
+            AlertDialog(
+                onDismissRequest = { showGeoConfirm = false },
+                title = { Text(s.chatGeoConfirmTitle, color = c.textPrimary, fontFamily = JetBrainsMono) },
+                text = { Text(s.chatGeoConfirmText, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 14.sp) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showGeoConfirm = false
+                        val permGranted = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+                            android.content.pm.PackageManager.PERMISSION_GRANTED
+                        if (permGranted) sendGeo()
+                        else geoPermLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                    }) { Text(s.chatGeo, color = c.accent, fontFamily = JetBrainsMono) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showGeoConfirm = false }) { Text(s.cancel, color = c.textPrimary, fontFamily = JetBrainsMono) }
+                },
                 containerColor = c.dialog
             )
         }

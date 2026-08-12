@@ -160,6 +160,7 @@ interface IStr6 {
     val chatAttachPhoto: String; val chatAttachMedia: String; val chatAttachFile: String
     val chatGeo: String; val chatGeoPermission: String
     val chatGeoFail: String; val chatGeoTap: String; val chatGeoDisabled: String
+    val chatGeoConfirmTitle: String; val chatGeoConfirmText: String
     val chatEditHint: String; val chatInputHint: String; val chatEstablishingChannel: String
     val chatPhotoTooBig: String; val chatFileTooBig: String
     val chatMediaOffline: String
@@ -570,6 +571,8 @@ private val ru6 = object : IStr6 {
     override val chatGeoFail = "Не удалось определить позицию"
     override val chatGeoTap = "📍 Геопозиция (нажми для просмотра)"
     override val chatGeoDisabled = "Включи геолокацию в настройках телефона"
+    override val chatGeoConfirmTitle = "Отправить геопозицию?"
+    override val chatGeoConfirmText = "Собеседник увидит ваше текущее местоположение на карте."
     override val chatEditHint = "Изменить..."
     override val chatInputHint = "Сообщение..."
     override val chatEstablishingChannel = "Устанавливаем защищённый канал..."
@@ -1063,6 +1066,8 @@ private val en6 = object : IStr6 {
     override val chatGeoFail = "Could not determine location"
     override val chatGeoTap = "📍 Location (tap to view)"
     override val chatGeoDisabled = "Enable location in phone settings"
+    override val chatGeoConfirmTitle = "Send your location?"
+    override val chatGeoConfirmText = "The other person will see your current location on the map."
     override val chatEditHint = "Edit message..."
     override val chatInputHint = "Message..."
     override val chatEstablishingChannel = "Establishing secure channel..."
