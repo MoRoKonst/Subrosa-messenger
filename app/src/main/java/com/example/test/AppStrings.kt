@@ -287,6 +287,7 @@ interface IStr10 {
     val guideTorTitle: String; val guideTorDesc: String
     val guideCoverTitle: String; val guideCoverDesc: String
     val guideCompromisedTitle: String; val guideCompromisedDesc: String
+    val guideSelfHealTitle: String; val guideSelfHealDesc: String
 }
 
 data class AppStrings(
@@ -434,7 +435,7 @@ private val ru3 = object : IStr3 {
     override val backupTitle = "Резервное копирование"
     override val backupSubtitle = "Создайте резервную копию серверов, контактов и истории сообщений"
     override val backupSecurityTitle = "⚠️ Безопасность бэкапа"
-    override val backupSecurityText = "Бэкап содержит все ключи и переписку. Защищён паролем, а импорт дополнительно требует TOTP-секрет и текущий код — файла и пароля одних недостаточно, чтобы восстановить identity. Но если у злоумышленника окажутся файл, пароль и TOTP-секрет вместе, аккаунт будет скомпрометирован — относитесь к бэкапу серьёзно."
+    override val backupSecurityText = "Бэкап содержит все ключи и переписку. Защищён паролем, а импорт дополнительно требует TOTP-секрет и текущий код — одного файла и пароля к нему недостаточно, чтобы восстановить identity. Но если у злоумышленника окажутся файл, пароль и TOTP-секрет вместе, аккаунт будет скомпрометирован — относитесь к бэкапу серьёзно."
     override val backupSecurityTips = "• Используйте надёжный пароль (12+ символов)\n• Не храните файл, пароль и TOTP-секрет в одном месте\n• Храните на зашифрованном диске или в password manager"
     override val backupPassword = "Пароль"
     override val backupRepeatPassword = "Повторите пароль"
@@ -806,20 +807,22 @@ private val ru10 = object : IStr10 {
     override val guideKeyVerifyDesc = "Последовательность из 5 эмодзи, полученная из хэша публичного ключа собеседника. Сверьте её с собеседником лично или по другому каналу — если совпадает, вы точно говорите с ним, а не с кем-то, кто подменил ключ (атака «человек посередине»)."
     override val guideTotpTitle = "🔐 Двухфакторная защита (TOTP)"
     override val guideTotpDesc = "Обязательный код из приложения-аутентификатора (как Google Authenticator), без которого этот аккаунт нельзя зарегистрировать на новом устройстве, даже если ключи и пароль украдены. Сохраните резервные коды, выданные при настройке, отдельно от телефона."
-    override val guidePanicTitle = "🔑 Панический пароль"
-    override val guidePanicDesc = "Второй пароль для входа, отличный от основного. Введённый вместо основного, он немедленно и безвозвратно удаляет все данные приложения — используйте, если вас заставляют разблокировать телефон."
+    override val guidePanicTitle = "🔑 Пароль под принуждением"
+    override val guidePanicDesc = "Второй пароль для входа, отличный от основного. Введённый вместо основного, он показывает правдоподобный фейковый мессенджер с выдуманными чатами, а настоящие ключи и переписка в это время безвозвратно удаляются в фоне — используйте, если вас заставляют разблокировать телефон."
     override val guideEmergencyTitle = "🚨 Экстренное удаление"
-    override val guideEmergencyDesc = "5 нажатий кнопки громкости вниз за 3 секунды — мгновенное удаление ключей и переписки без единого подтверждения, работает даже с заблокированным экраном. Требует включения через Спец. возможности Android (см. инструкцию в Профиле)."
+    override val guideEmergencyDesc = "5 нажатий кнопки громкости вниз за 3 секунды — мгновенное удаление ключей и переписки без единого подтверждения, работает даже с заблокированным экраном. По умолчанию просто удаляет данные; есть отдельная настройка, чтобы вместо этого тоже показывать фейковый мессенджер, как у пароля под принуждением. Требует включения через Спец. возможности Android (см. инструкцию в Профиле)."
     override val guideAutoLockTitle = "⏱️ Автоблокировка"
     override val guideAutoLockDesc = "Приложение блокируется паролем/биометрией через заданное время бездействия. Чем короче интервал, тем меньше окно, в течение которого кто-то может взять разблокированный телефон и открыть переписку."
     override val guideBackupTitle = "📦 Резервное копирование"
-    override val guideBackupDesc = "Зашифрованный файл со всеми ключами и историей сообщений. Защищён паролем, а восстановление на новом устройстве дополнительно требует TOTP-секрет — файла и пароля одних недостаточно. Храните файл, пароль и TOTP-секрет в разных местах."
+    override val guideBackupDesc = "Зашифрованный файл со всеми ключами и историей сообщений. Защищён паролем, а восстановление на новом устройстве дополнительно требует TOTP-секрет — одного файла и пароля к нему недостаточно. Храните файл, пароль и TOTP-секрет в разных местах."
     override val guideTorTitle = "🧅 Tor"
     override val guideTorDesc = "Маршрутизация соединения с сервером через сеть Tor (нужен установленный Orbot), скрывает ваш IP-адрес от самого сервера. Выключен по умолчанию — включение добавляет 10-15 секунд к запуску приложения."
     override val guideCoverTitle = "📡 Постоянный трафик"
     override val guideCoverDesc = "Приложение шлёт пакеты-пустышки через равные интервалы, даже когда вы ничего не отправляете, — так внешний наблюдатель не может по паттерну трафика понять, переписываетесь вы сейчас или нет. Расходует немного батареи и интернета."
     override val guideCompromisedTitle = "🔄 Смена identity"
-    override val guideCompromisedDesc = "Если подозреваете, что ваш ключ украли — это полностью уничтожает текущие ключи, контакты и переписку и выдаёт новые. Контактам нужно будет заново обменяться с вами инвайт-кодом. Необратимо."
+    override val guideCompromisedDesc = "Если подозреваете, что ваш ключ украли — это полностью уничтожает текущие ключи, контакты и переписку на этом устройстве и выдаёт новые. Важно: серверу об этом ничего не сообщается — старая identity остаётся на нём просто неиспользуемой записью, никакого «отзыва» ключа не происходит. Контактам нужно будет заново обменяться с вами свежим инвайт-кодом, чтобы перейти на новую identity. Необратимо."
+    override val guideSelfHealTitle = "🔁 Самовосстановление связи"
+    override val guideSelfHealDesc = "Приложение специально не раскрывает серверу, кто с кем переписывается — это сильно повышает приватность, но иногда означает, что после сбоя (например, долгого отсутствия сети) переписка или звонок восстанавливаются не мгновенно, а через какое-то время. Это не значит, что что-то сломано: канал связи умеет чиниться сам. Если сообщение не идёт — обычно достаточно подождать. Мы продолжаем тестировать и сокращать эти задержки."
 }
 
 val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9, ru10)
@@ -1326,10 +1329,10 @@ private val en10 = object : IStr10 {
     override val guideKeyVerifyDesc = "A sequence of 5 emoji derived from a hash of your contact's public key. Compare it with them in person or over another channel — if it matches, you're really talking to them, not someone who swapped in a different key (man-in-the-middle attack)."
     override val guideTotpTitle = "🔐 Two-factor protection (TOTP)"
     override val guideTotpDesc = "A mandatory code from an authenticator app (like Google Authenticator), without which this account can't be registered on a new device even if the keys and password are stolen. Save the recovery codes shown during setup somewhere separate from the phone."
-    override val guidePanicTitle = "🔑 Panic password"
-    override val guidePanicDesc = "A second login password, different from your real one. Entering it instead of the real password immediately and irreversibly wipes all app data — use it if you're being forced to unlock your phone."
+    override val guidePanicTitle = "🔑 Duress password"
+    override val guidePanicDesc = "A second login password, different from your real one. Entering it instead of the real password shows a convincing fake messenger full of made-up chats, while your real keys and messages are irreversibly wiped in the background — use it if you're being forced to unlock your phone."
     override val guideEmergencyTitle = "🚨 Emergency deletion"
-    override val guideEmergencyDesc = "5 presses of Volume Down within 3 seconds — instantly deletes keys and messages with zero confirmation, works even on a locked screen. Requires enabling through Android's Accessibility settings (see the instructions in Profile)."
+    override val guideEmergencyDesc = "5 presses of Volume Down within 3 seconds — instantly deletes keys and messages with zero confirmation, works even on a locked screen. By default it just deletes; there's a separate setting to also show the fake messenger instead, same as the duress password. Requires enabling through Android's Accessibility settings (see the instructions in Profile)."
     override val guideAutoLockTitle = "⏱️ Auto-lock"
     override val guideAutoLockDesc = "The app locks with a password/biometric prompt after a set period of inactivity. The shorter the interval, the smaller the window during which someone could pick up an unlocked phone and read your messages."
     override val guideBackupTitle = "📦 Backup"
@@ -1339,7 +1342,9 @@ private val en10 = object : IStr10 {
     override val guideCoverTitle = "📡 Cover traffic"
     override val guideCoverDesc = "The app sends dummy packets at a steady interval even when you're not sending anything — so an outside observer can't tell from traffic patterns whether you're actively messaging or not. Uses a bit of battery and data."
     override val guideCompromisedTitle = "🔄 Identity reset"
-    override val guideCompromisedDesc = "If you suspect your key was stolen — this permanently destroys your current keys, contacts, and messages and issues new ones. Contacts will need to exchange a new invite code with you. Irreversible."
+    override val guideCompromisedDesc = "If you suspect your key was stolen — this permanently destroys your current keys, contacts, and messages on this device and issues new ones. Important: the server is never told about this — the old identity just sits there as an unused entry, there's no actual \"revocation\". Contacts will need to exchange a fresh invite code with you to move to the new identity. Irreversible."
+    override val guideSelfHealTitle = "🔁 Self-healing connections"
+    override val guideSelfHealDesc = "The app deliberately never tells the server who's talking to whom — great for privacy, but it means that after a disruption (like a long stretch offline), a chat or call can take a little while to reconnect instead of instantly. That's not a sign anything's broken — the channel is designed to repair itself. If a message isn't going through, usually just waiting a bit is enough. We keep testing to shrink these delays further."
 }
 
 val enStrings = AppStrings("en", en1, en2, en3, en4, en5, en6, en7, en8, en9, en10)
