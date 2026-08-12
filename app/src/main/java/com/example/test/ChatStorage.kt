@@ -239,6 +239,7 @@ object ChatStorage {
             .remove(chatKey(username, recipient))
             .remove("key_$recipient")
             .remove("avatar_$recipient")
+            .remove("name_$recipient")
             .apply()
 
         val contacts = getContacts(context)

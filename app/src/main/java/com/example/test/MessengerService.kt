@@ -3988,8 +3988,34 @@ class MessengerService : Service() {
         Log.d(TAG, "Отправлены анонимные токены → $contact через anon_message")
     }
 
+    /** True once WE'VE explicitly added this fingerprint (redeemed their
+     * invite code — ChatsScreen's redeem flow calls ChatStorage.addContact()
+     * synchronously before anything else, so by the time any message could
+     * legitimately arrive they're already on the list) and haven't since
+     * deleted them (deleteChat() removes them). Deliberately checking list
+     * membership rather than AnonTokenManager.getContactMailboxTag(from) —
+     * that tag can legitimately go null for an active, still-added contact
+     * for unrelated reasons (an old-shape token exchange with no tag field
+     * clears it, see handleIncomingDecryptedMessage's __beacon_tokens__
+     * branch) and gating regular messages on it would silently break an
+     * ongoing conversation, not just block resurrection.
+     *
+     * Found live: after deleting a contact on both sides, a message that was
+     * already mid-flight (queued server-side, or a session that hadn't
+     * finished tearing down — a race between the UI's delete action and
+     * forgetContact() actually completing) could still decrypt successfully
+     * and silently resurrect the contact via ChatStorage.addContact() below,
+     * using whatever stale name it carried — "the old contact reappeared"
+     * right after a clean delete. */
+    private fun isMutuallyAdded(from: String): Boolean =
+        ChatStorage.getContacts(this).contains(from)
+
     private suspend fun handleIncomingDecryptedMessage(from: String, decryptedText: String, messageId: String?, json: JSONObject) {
         ContactHealthManager.recordIncoming(this@MessengerService, from)
+        if (!isMutuallyAdded(from)) {
+            Log.d(TAG, "message от $from проигнорировано — контакт не добавлен взаимно")
+            return
+        }
         if (decryptedText.startsWith("__beacon_tokens__:")) {
             try {
                 val raw = decryptedText.removePrefix("__beacon_tokens__:")
