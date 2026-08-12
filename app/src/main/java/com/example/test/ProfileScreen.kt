@@ -143,6 +143,48 @@ private fun PChevron() {
     )
 }
 
+/** One numbered step in the emergency-wipe setup instructions — replaces the
+ *  old wall-of-text with circled-digit unicode glyphs (①②③) crammed into one
+ *  paragraph, which the user found hard to follow. [done] greys the row out
+ *  once its button has been tapped; [emphasize] highlights step 2 once step 1
+ *  has been visited, giving a "now do this one" cue without literally being
+ *  able to verify what happened in system Settings in between. */
+@Composable
+private fun EmergencyStepRow(label: String, desc: String, done: Boolean, emphasize: Boolean = false) {
+    val c = LocalSubrosaColors.current
+    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Surface(
+            shape = androidx.compose.foundation.shape.CircleShape,
+            color = if (done) c.textPrimary.copy(alpha = 0.15f) else if (emphasize) c.accent else c.textPrimary.copy(alpha = 0.25f),
+            modifier = Modifier.size(22.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                if (done) {
+                    Text("✓", color = c.textPrimary.copy(alpha = 0.5f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                } else {
+                    Text(label.filter { it.isDigit() }, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        Column {
+            Text(
+                label,
+                color = if (done) c.textPrimary.copy(alpha = 0.4f) else c.textPrimary,
+                fontFamily = AppFont,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                desc,
+                color = if (done) c.textPrimary.copy(alpha = 0.4f) else c.textPrimary.copy(alpha = 0.85f),
+                fontFamily = AppFont,
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+        }
+    }
+}
+
 /** Whether the volume-button panic-wipe AccessibilityService is actually
  *  enabled in system settings — not just the (default-true)
  *  UserStorage.isEmergencyWipeEnabled() preference, which only tracks
@@ -197,6 +239,14 @@ fun ProfileScreen(
                 val active = isEmergencyServiceEnabled(context)
                 emergencyEnabled = active && UserStorage.isEmergencyWipeEnabled(context)
                 if (!active) UserStorage.setEmergencyWipeEnabled(context, false)
+                // Auto-close the step-by-step instructions once the service is
+                // genuinely on — verified via isEmergencyServiceEnabled(), not
+                // just "the user came back from Settings" (which proves
+                // nothing about what they actually did there).
+                if (active && showEmergencyInfoDialog) {
+                    showEmergencyInfoDialog = false
+                    Toast.makeText(context, s.emergencyInfoDone, Toast.LENGTH_SHORT).show()
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -1020,35 +1070,53 @@ fun ProfileScreen(
     }
 
     if (showEmergencyInfoDialog) {
+        val isAndroid13Plus = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
+        // Whether step 1 was ever tapped this dialog session — the app has no
+        // way to verify "restricted settings" got unlocked (Android exposes no
+        // API for that to other apps), so this is deliberately just "did they
+        // go there at least once", used only to de-emphasize step 1 visually
+        // once they've been. Real completion is checked via
+        // isEmergencyServiceEnabled() in the ON_RESUME observer above, which
+        // auto-closes this dialog once the service is actually on.
+        var step1Visited by remember { mutableStateOf(false) }
+
         AlertDialog(
             onDismissRequest = { showEmergencyInfoDialog = false },
             containerColor = c.dialog,
             title = { Text(s.emergencyInfoTitle, color = Color.White, fontFamily = AppFont) },
-            text = { Text(s.emergencyInfoMessage, color = c.textPrimary, fontFamily = AppFont, fontSize = 13.sp) },
-            confirmButton = {
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(s.emergencyInfoWarning, color = c.textPrimary, fontFamily = AppFont, fontSize = 13.sp, lineHeight = 18.sp)
 
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    if (isAndroid13Plus) {
+                        EmergencyStepRow(s.emergencyInfoStepLabel(1), s.emergencyInfoStep1Desc, done = step1Visited)
+                        EmergencyStepRow(s.emergencyInfoStepLabel(2), s.emergencyInfoStep2Desc, done = false, emphasize = step1Visited)
+                    } else {
+                        Text(s.emergencyInfoLegacyDesc, color = c.textPrimary, fontFamily = AppFont, fontSize = 13.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                if (isAndroid13Plus) {
                     Row {
                         TextButton(onClick = {
-                            showEmergencyInfoDialog = false
+                            step1Visited = true
                             context.startActivity(
                                 Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                                     data = android.net.Uri.fromParts("package", context.packageName, null)
                                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                 }
                             )
-                        }) { Text(s.emergencyInfoOpenAppSettings, color = c.accent, fontFamily = AppFont) }
+                        }) { Text("${s.emergencyInfoStepLabel(1)}: ${s.emergencyInfoOpenAppSettings}", color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
                         TextButton(onClick = {
-                            showEmergencyInfoDialog = false
                             context.startActivity(
                                 Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             )
-                        }) { Text(s.emergencyInfoOpenSettings, color = c.accent, fontFamily = AppFont) }
+                        }) { Text("${s.emergencyInfoStepLabel(2)}: ${s.emergencyInfoOpenSettings}", color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
                     }
                 } else {
                     TextButton(onClick = {
-                        showEmergencyInfoDialog = false
                         context.startActivity(
                             Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
