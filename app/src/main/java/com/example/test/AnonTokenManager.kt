@@ -71,6 +71,16 @@ object AnonTokenManager {
     fun needsRefill(ctx: Context, fingerprint: String): Boolean =
         getContactTokens(ctx, fingerprint).size < REFILL_THRESHOLD
 
+    /** Wipes any leftover token pool received from [fingerprint] — call on
+     * contact deletion. The fingerprint is derived from their public key, so
+     * re-adding the same person via a fresh invite reuses the same
+     * fingerprint; without this, old tokens (issued under a prior mailbox
+     * tag / bootstrap cycle, possibly no longer valid on their end either)
+     * would still get consumed as if the relationship had never been reset. */
+    fun clearContactTokens(ctx: Context, fingerprint: String) {
+        prefs(ctx).edit().remove("$PREF_CT_PREFIX$fingerprint").apply()
+    }
+
     fun consumeNextContactToken(ctx: Context, fingerprint: String): String? {
         val tokens = getContactTokens(ctx, fingerprint).toMutableList()
         if (tokens.isEmpty()) return null
