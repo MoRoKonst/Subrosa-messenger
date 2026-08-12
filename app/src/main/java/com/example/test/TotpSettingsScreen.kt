@@ -160,6 +160,7 @@ fun TotpSettingsScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .verticalScroll(rememberScrollState())
+                    .imePadding()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -290,21 +291,32 @@ fun TotpSettingsScreen(
                             }
                         } else {
                             val secret = pendingSecret!!
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                SelectionContainer(modifier = Modifier.weight(1f)) {
-                                    Text(secret, fontSize = 16.sp, color = c.textPrimary, fontWeight = FontWeight.Bold)
-                                }
-                                Spacer(Modifier.width(8.dp))
-                                // Manual text selection (long-press) is unreliable on
-                                // emulators/some devices with mouse-simulated touch —
-                                // found live while testing the mandatory setup flow. An
-                                // explicit copy button doesn't depend on that at all.
-                                TextButton(onClick = {
+                            // Secret text and the copy button are on separate lines —
+                            // found live: crammed into one Row with Modifier.weight(1f),
+                            // the button got squeezed off-screen on a narrower phone
+                            // while rendering fine on a wider emulator window. A full-width
+                            // text line followed by its own button row can't be squeezed.
+                            SelectionContainer {
+                                Text(
+                                    secret,
+                                    fontSize = 16.sp,
+                                    color = c.textPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            // Manual text selection (long-press) is unreliable on
+                            // emulators/some devices with mouse-simulated touch —
+                            // found live while testing the mandatory setup flow. An
+                            // explicit copy button doesn't depend on that at all.
+                            TextButton(
+                                onClick = {
                                     clipboard.setText(AnnotatedString(secret))
                                     secretCopied = true
-                                }) {
-                                    Text(if (secretCopied) s.profileCodeCopied else s.totpCopySecret, color = c.accent, fontSize = 12.sp)
-                                }
+                                },
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Text(if (secretCopied) s.profileCodeCopied else s.totpCopySecret, color = c.accent, fontSize = 12.sp)
                             }
                             SelectionContainer {
                                 Text(
