@@ -645,7 +645,17 @@ fun ProfileScreen(
                         PDivider()
                         PRow(
                             title = if (showQr) s.profileHideQr else s.profileShowQr,
-                            onClick = { showQr = !showQr },
+                            onClick = {
+                                // Rotate on show, same as Copy/Share — found live:
+                                // this used to just toggle visibility of the
+                                // cached QR without regenerating it, so anyone
+                                // who scans the QR without the user ever having
+                                // pressed Copy/Share gets a code that never
+                                // rotates, defeating the whole point of the
+                                // one-time invite tag.
+                                if (!showQr) regenerateInviteCode()
+                                showQr = !showQr
+                            },
                             trailing = {
                                 Text(
                                     if (showQr) "▲" else "▼",
