@@ -1063,8 +1063,31 @@ class MessengerService : Service() {
                 val wsUrl = server.toWssUrl()
 
                 if (wsUrl.contains(".onion") && !TorManager.isConnected) {
+                    // Found live: this used to just delay+continue forever without
+                    // ever touching failuresOnCurrentServer — since Tor is opt-in
+                    // now (off by default), an onion server in the rotation could
+                    // never connect, but the failure counter that drives
+                    // switchToNext() below never saw it as a failure. The reconnect
+                    // loop got stuck retrying the same dead onion entry every 5s
+                    // indefinitely instead of cycling to the next server (which
+                    // does correctly wrap back to index 0 — the bug was never
+                    // reaching that call at all).
+                    if (!UserStorage.isTorEnabled(this@MessengerService)) {
+                        Log.w(TAG, "Onion-сервер выбран, но Tor выключен пользователем — переключаемся")
+                        ServerManager.switchToNext(this@MessengerService)
+                        failuresOnCurrentServer = 0
+                        reconnectAttempts = 0
+                        delay(500)
+                        continue
+                    }
                     Log.w(TAG, "Onion-сервер выбран, но Tor недоступен — ждём Orbot")
                     delay(5000)
+                    failuresOnCurrentServer++
+                    if (failuresOnCurrentServer >= MAX_FAILURES_BEFORE_SWITCH) {
+                        ServerManager.switchToNext(this@MessengerService)
+                        failuresOnCurrentServer = 0
+                        reconnectAttempts = 0
+                    }
                     continue
                 }
 

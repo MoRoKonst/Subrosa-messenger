@@ -158,7 +158,7 @@ fun ServersScreen(onBack: () -> Unit) {
                             fontSize = 15.sp
                         )
                         Text(
-                            if (fixedMode) "Только первый сервер в списке" else "Автопереключение между пирами",
+                            if (fixedMode) "Закреплено — нажми на сервер в списке, чтобы выбрать" else "Автопереключение между пирами",
                             color = c.textPrimary.copy(alpha = 0.6f),
                             fontFamily = AppFont,
                             fontSize = 12.sp
@@ -273,14 +273,21 @@ fun ServersScreen(onBack: () -> Unit) {
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
                                 .clickable {
-
-                                    val prefs = EncryptedStorage.getEncryptedPrefs(context, "server_prefs")
+                                    // Tapping a server both selects AND pins it — previously this
+                                    // only wrote current_server without enabling fixed mode, so
+                                    // auto-switch would freely wander away from the user's explicit
+                                    // choice after MAX_FAILURES_BEFORE_SWITCH failures. Found live:
+                                    // "клик по серверу" was expected to mean "stay on this one",
+                                    // not "try this one until it hiccups, same as always".
                                     val enabledServers = servers.filter { it.enabled }
                                     val targetIndex = enabledServers.indexOfFirst {
                                         it.host == server.host && it.port == server.port
                                     }
                                     if (targetIndex != -1) {
+                                        ServerManager.setFixedMode(context, true)
+                                        val prefs = EncryptedStorage.getEncryptedPrefs(context, "server_prefs")
                                         prefs.edit().putInt("current_server", targetIndex).apply()
+                                        fixedMode = true
 
                                         context.stopService(android.content.Intent(context, MessengerService::class.java))
                                         context.startForegroundService(android.content.Intent(context, MessengerService::class.java))
