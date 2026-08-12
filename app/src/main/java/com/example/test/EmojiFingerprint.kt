@@ -1,24 +1,28 @@
 package com.subrosa.messenger
 
-// Curated to avoid visually near-duplicate pairs a user could mistake for
-// each other during a manual key-verification glance — e.g. the original
-// set had both 🐪 (dromedary) and 🐫 (bactrian), differing only by hump
-// count, plus 🐳/🐋 (whale, differ only by spout), 🐅/🐯 (tiger body vs
-// tiger face — both just read as "tiger"), and 🐟/🐠 (fish, differ mainly
-// by stripe color). Each of those pairs undermines the whole point of an
-// emoji fingerprint: an attacker's substituted key could differ only in a
-// symbol the user isn't reliably going to notice swapped. Replaced one of
-// each pair with something silhouette-distinct from everything else in the
-// set (🦔🦭🦌🦥) — found live, reported by the user while reading the source.
+// Curated to avoid symbols a user could mistake for each other during a
+// manual key-verification glance — the whole point of an emoji fingerprint
+// is that a substituted key (MITM) should be reliably noticeable, and two
+// kinds of problems both defeat that: visually near-identical pairs (🐪
+// dromedary vs 🐫 bactrian — differ only by hump count; 🐳/🐋 whale — differ
+// only by spout; 🐅/🐯 tiger body vs tiger face — both just read as "tiger";
+//🐟/🐠 fish — differ mainly by stripe color; 🦖/🦕 — both just "dinosaur";
+// 🐭/🐹 — both just "small rodent"; 🦛/🦏 — both just "big grey animal"), and
+// symbols that are individually hard to identify at typical render size
+// regardless of pairing (🦗 cricket, 🦂 scorpion, 🐙 octopus, 🦧 orangutan —
+// all flagged live by the user reading this file: "я даже понять не могу
+// что это вообще такое"). Replaced with silhouette- and color-distinct
+// alternatives, keeping the list at exactly 64 entries (the modulo indexing
+// depends on that).
 val EMOJI_SET = listOf(
-    "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼",
+    "🐶","🐱","🐭","🐿️","🐰","🦊","🐻","🐼",
     "🐨","🐯","🦁","🐮","🐷","🐸","🐵","🐔",
     "🐧","🐦","🦆","🦅","🦉","🦇","🐺","🐗",
     "🐴","🦄","🐝","🐛","🦋","🐌","🐞","🐜",
-    "🦟","🦗","🦂","🐢","🐍","🦎","🦖","🦕",
-    "🐙","🦑","🦐","🦀","🐡","🦥","🐟","🐬",
+    "🦟","🦩","🦚","🐢","🐍","🦎","🦖","🦤",
+    "🦜","🦑","🦐","🦀","🐡","🦥","🐟","🐬",
     "🐳","🦭","🦈","🐊","🦌","🐆","🦓","🦍",
-    "🦧","🐘","🦛","🦏","🐪","🦔","🦒","🦘"
+    "🦨","🐘","🦛","🦫","🐪","🦔","🦒","🦘"
 )
 
 fun fingerprintToEmoji(fingerprint: String): String {
