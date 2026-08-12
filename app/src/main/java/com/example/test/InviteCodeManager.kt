@@ -22,21 +22,17 @@ object InviteCodeManager {
             .map { it.toInt(16).toByte() }
             .toByteArray()
 
-    /** [mailboxTagHex] must be the caller's single persistent mailbox tag —
-     *  AnonTokenManager.getOrCreateMyPersistentMailboxTag() — not a fresh
-     *  random one. Found live: this used to generate its own random 16-byte
-     *  tag on every call, completely disconnected from the "persistent tag"
-     *  concept everywhere else in the codebase (piggybacked on token
-     *  exchanges to refresh an existing contact's record of it). Every
-     *  invite-code regeneration (7-day TTL, or any bug that made the "still
-     *  valid" check in MessengerService.ensureMyMailboxTagRegistered() miss
-     *  a live code) minted a brand new tag nobody was listening for except
-     *  whoever redeemed that exact code — a repeat regeneration (e.g. from
-     *  the service restarting several times in a row) could produce a code
-     *  embedding a tag that was never the one actually registered for
-     *  polling by the time it got redeemed. One canonical tag, reused
-     *  everywhere, removes the whole category of "which tag is live right
-     *  now" mismatch. */
+    /** [mailboxTagHex] should be AnonTokenManager.getOrCreateMyInviteMailboxTag()
+     *  — the disposable invite tag, NOT getOrCreateMyPersistentMailboxTag()
+     *  (the real one used for ongoing contact, exchanged privately after the
+     *  invite tag does its one job and never itself published in a shareable
+     *  code — see that function's doc comment for why). Historically this
+     *  generated its own random 16-byte tag on every call, completely
+     *  disconnected from any tracked tag at all — every regeneration (7-day
+     *  TTL, or a bug that made a "still valid" cache-reuse check miss a live
+     *  code) minted a tag nobody was listening for. Callers must pass a
+     *  caller-tracked tag (whichever kind), not mint one locally here, so
+     *  "which tag is live right now" always has exactly one answer. */
     fun generateInviteCode(publicKey: PublicKey, privateKey: PrivateKey, displayName: String, mailboxTagHex: String): String {
         val x509Bytes = publicKey.encoded
 

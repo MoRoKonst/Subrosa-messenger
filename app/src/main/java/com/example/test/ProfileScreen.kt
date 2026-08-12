@@ -211,8 +211,8 @@ fun ProfileScreen(
         1800 to s.profileLock30min
     )
 
-    val inviteCode = remember {
-        try {
+    fun resolveInviteCode(): String {
+        return try {
             // Reuse the persisted invite code if one already exists AND hasn't
             // expired — minting a fresh one on every Profile visit was the actual
             // bug: a contact who already has your OLD invite code keeps
@@ -220,10 +220,18 @@ fun ProfileScreen(
             // regenerating here would swap "my tag to poll for" out from under
             // them, silently orphaning that exchange (confirmed via live
             // server-side logs: deposits piling up under a tag neither side was
-            // fetching for anymore). The invite code — and the mailbox tag
+            // fetching for anymore). The invite code — and the invite tag
             // embedded in it — needs to stay stable once shared, not rotate on
             // every screen visit. Still respects the 7-day TTL: an actually-
             // expired code gets replaced, same as before.
+            //
+            // The tag embedded here is the disposable "invite tag"
+            // (AnonTokenManager.getOrCreateMyInviteMailboxTag), NOT the
+            // persistent one used for ongoing contact — see that function's
+            // doc comment. Regenerating this code (regenerateInviteCode(),
+            // wired to the Copy/Share buttons below) mints a fresh invite tag
+            // too, so a leaked/observed old code stops working the moment the
+            // user asks for a new one, without touching the real ongoing tag.
             val existing = UserStorage.getInviteCode(context)
             val existingTimestamp = existing?.let { InviteCodeManager.parseInviteCode(it) }?.timestamp
             val stillValid = existingTimestamp != null &&
@@ -235,7 +243,7 @@ fun ProfileScreen(
                     CryptoManager.getPublicKey(),
                     CryptoManager.getPrivateKeyPublic(),
                     displayName.ifBlank { userId },
-                    AnonTokenManager.getOrCreateMyPersistentMailboxTag(context)
+                    AnonTokenManager.getOrCreateMyInviteMailboxTag(context)
                 )
                 UserStorage.saveInviteCode(context, fresh)
                 fresh
@@ -249,16 +257,37 @@ fun ProfileScreen(
             // reused code's tag could silently never make it into the poll list at
             // all, leaving pollMailbox() with nothing to check for indefinitely.
             InviteCodeManager.parseInviteCode(code)?.mailboxTag?.let { tag ->
-                AnonTokenManager.syncMyPersistentMailboxTag(context, tag)
+                AnonTokenManager.syncMyInviteMailboxTag(context, tag)
             }
             code
         } catch (e: Exception) {
             UserStorage.getInviteCode(context) ?: userId
         }
     }
+
+    var inviteCode by remember { mutableStateOf(resolveInviteCode()) }
+    var qrBitmap by remember { mutableStateOf(generateQRCode(inviteCode, 512)) }
+
+    // Explicit, user-triggered rotation — see resolveInviteCode()'s doc
+    // comment. Only the invite tag changes; the persistent tag (and every
+    // already-established contact relying on it) is untouched.
+    fun regenerateInviteCode() {
+        try {
+            val freshTag = AnonTokenManager.regenerateMyInviteMailboxTag(context)
+            val fresh = InviteCodeManager.generateInviteCode(
+                CryptoManager.getPublicKey(),
+                CryptoManager.getPrivateKeyPublic(),
+                displayName.ifBlank { userId },
+                freshTag
+            )
+            UserStorage.saveInviteCode(context, fresh)
+            inviteCode = fresh
+            qrBitmap = generateQRCode(fresh, 512)
+        } catch (e: Exception) {}
+    }
+
     val fingerprint      = remember { userId.takeIf { it.isNotBlank() } }
     val emojiFingerprint = remember { fingerprint?.let { fingerprintToEmoji(it) } }
-    val qrBitmap         = remember { generateQRCode(inviteCode, 512) }
 
     var myAvatarBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(Unit) {
@@ -507,10 +536,12 @@ fun ProfileScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(onClick = {
+                                regenerateInviteCode()
                                 clipboardManager.setText(AnnotatedString(inviteCode))
                                 showCopied = true
                             }) { Text("📋", fontSize = 18.sp) }
                             IconButton(onClick = {
+                                regenerateInviteCode()
                                 val i = Intent(Intent.ACTION_SEND).apply {
                                     type = "text/plain"
                                     putExtra(Intent.EXTRA_TEXT, inviteCode)
