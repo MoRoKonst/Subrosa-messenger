@@ -241,7 +241,7 @@ class MainActivity : FragmentActivity() {
                                     )
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Text(
-                                        s.rootDangerReasons(result.reasons.joinToString("\n") { "• $it" }),
+                                        s.rootDangerReasons(result.reasons.joinToString("\n") { "• ${s.rootReasonText(it)}" }),
                                         color = Color(0xFFFF8888),
                                         fontFamily = appFont,
                                         fontSize = 13.sp
@@ -280,7 +280,7 @@ class MainActivity : FragmentActivity() {
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        "• ${result.reasons.first()}",
+                                        "• ${s.rootReasonText(result.reasons.first())}",
                                         color = Color(0xFFFFCC88),
                                         fontFamily = appFont,
                                         fontSize = 13.sp
