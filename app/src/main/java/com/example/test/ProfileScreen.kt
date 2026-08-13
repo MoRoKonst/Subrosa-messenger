@@ -242,6 +242,7 @@ fun ProfileScreen(
     var showEmergencyInfoDialog by remember { mutableStateOf(false) }
     var torEnabled              by remember { mutableStateOf(UserStorage.isTorEnabled(context)) }
     var batteryUnrestricted     by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+    var serviceNotifVisible     by remember { mutableStateOf(UserStorage.isServiceNotificationVisible(context)) }
 
     val displayName      = UserStorage.getUserDisplayName(context)
     val userId           = UserStorage.getUserId(context)
@@ -965,6 +966,32 @@ fun ProfileScreen(
                                                 )
                                             }
                                         } catch (_: Exception) {}
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = c.accent,
+                                        checkedTrackColor = c.accent.copy(alpha = 0.35f)
+                                    )
+                                )
+                            }
+                        )
+                        PDivider()
+                        PRow(
+                            title = s.profileServiceNotifVisible,
+                            subtitle = s.profileServiceNotifVisibleSub,
+                            trailing = {
+                                Switch(
+                                    checked = serviceNotifVisible,
+                                    onCheckedChange = {
+                                        serviceNotifVisible = it
+                                        UserStorage.setServiceNotificationVisible(context, it)
+                                        // Re-post the running service's notification on
+                                        // the new channel immediately, not just on next
+                                        // restart.
+                                        context.startService(
+                                            Intent(context, MessengerService::class.java).apply {
+                                                putExtra("refresh_notification", true)
+                                            }
+                                        )
                                     },
                                     colors = SwitchDefaults.colors(
                                         checkedThumbColor = c.accent,

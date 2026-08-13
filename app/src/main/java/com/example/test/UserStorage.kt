@@ -409,6 +409,21 @@ object UserStorage {
             .edit().putBoolean("tor_enabled", enabled).apply()
     }
 
+    // Discretion (no visible sign Subrosa is running) vs. reliability (OEM
+    // battery managers are less likely to kill a notification that isn't
+    // IMPORTANCE_MIN) — user's own call, see docs/ISSUE_backup_identity_hijack.md.
+    // Default false preserves the original hidden behavior for everyone
+    // upgrading, not just new installs.
+    fun isServiceNotificationVisible(context: Context): Boolean {
+        return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .getBoolean("service_notification_visible", false)
+    }
+
+    fun setServiceNotificationVisible(context: Context, visible: Boolean) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putBoolean("service_notification_visible", visible).apply()
+    }
+
     fun getTheme(context: Context): com.subrosa.messenger.ui.theme.SubrosaTheme {
         val name = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             .getString("app_theme", com.subrosa.messenger.ui.theme.SubrosaTheme.NAVY.name)
