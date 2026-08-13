@@ -92,6 +92,13 @@ fun TotpSettingsScreen(
                 message = s.totpEnabledSuccess
                 isError = false
                 recoveryCodes = codes
+                // Also saved locally (hashed) so a future backup export can
+                // embed them — see TotpManager's doc comment and
+                // docs/ISSUE_backup_identity_hijack.md, "Восстановление при
+                // утере TOTP-секрета".
+                if (codes != null) {
+                    TotpManager.saveRecoveryCodeHashes(context, codes.map { TotpManager.hashRecoveryCode(it) })
+                }
             } else {
                 // Keep client and server in sync — a secret the server refused
                 // to register (e.g. it already had one from an earlier attempt)

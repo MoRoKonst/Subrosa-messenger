@@ -49,6 +49,7 @@ fun BackupScreen(onBack: () -> Unit) {
     var pendingBackupContent by remember { mutableStateOf<String?>(null) }
     var totpSecretInput by remember { mutableStateOf("") }
     var totpCodeInput by remember { mutableStateOf("") }
+    var totpRecoveryCodeInput by remember { mutableStateOf("") }
     var showImportWipeWarning by remember { mutableStateOf(false) }
 
     val saveFileLauncher = rememberLauncherForActivityResult(
@@ -85,7 +86,7 @@ fun BackupScreen(onBack: () -> Unit) {
                         ?.bufferedReader()?.readText() ?: ""
                 }
                 val result = withContext(Dispatchers.IO) {
-                    BackupManager.importBackup(context, content, pwd, totpSecretInput, totpCodeInput)
+                    BackupManager.importBackup(context, content, pwd, totpSecretInput, totpCodeInput, totpRecoveryCodeInput)
                 }
                 if (result.isSuccess) {
                     message = "✓ ${result.getOrNull()}"
@@ -94,6 +95,7 @@ fun BackupScreen(onBack: () -> Unit) {
                     confirmPassword = ""
                     totpSecretInput = ""
                     totpCodeInput = ""
+                    totpRecoveryCodeInput = ""
 
                     // Import changes identity/keys on disk synchronously, but a
                     // MessengerService that's already running keeps its old
@@ -310,6 +312,26 @@ fun BackupScreen(onBack: () -> Unit) {
                     value = totpCodeInput,
                     onValueChange = { totpCodeInput = it },
                     label = { Text(s.backupTotpCodeLabel, fontFamily = AppFont) },
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
+                    colors = fieldColors
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    s.backupTotpRecoveryOr,
+                    fontSize = 12.sp,
+                    color = c.textPrimary.copy(alpha = 0.5f),
+                    fontFamily = AppFont
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                OutlinedTextField(
+                    value = totpRecoveryCodeInput,
+                    onValueChange = { totpRecoveryCodeInput = it },
+                    label = { Text(s.backupTotpRecoveryLabel, fontFamily = AppFont) },
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
                     colors = fieldColors

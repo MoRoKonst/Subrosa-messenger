@@ -56,6 +56,24 @@ class MessengerService : Service() {
         @Volatile var connected: Boolean = false
 
         val connectionState = MutableStateFlow(false)
+
+        /** Shared by every "burn this identity" path — currently
+         *  ProfileScreen.kt's "Меня скомпрометировали" and WipeReceiver.kt's
+         *  Dead Man's Switch NUCLEAR wipe. Fires the best-effort
+         *  `revoke_identity` WS message through the (still old-identity-
+         *  authenticated) running service, then waits briefly for the frame
+         *  to actually flush before the caller destroys the local key —
+         *  no ack wait by design, matches the "deliberately cheap" spirit
+         *  of the rest of the reset flow. See
+         *  docs/ISSUE_backup_identity_hijack.md, Тир 5. */
+        suspend fun requestIdentityRevocation(context: Context) {
+            context.startService(
+                Intent(context, MessengerService::class.java).apply {
+                    putExtra("revoke_identity", true)
+                }
+            )
+            kotlinx.coroutines.delay(400)
+        }
     }
 
     inner class LocalBinder : Binder() {

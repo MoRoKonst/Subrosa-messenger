@@ -275,6 +275,7 @@ interface IStr9 {
     val totpRecoveryPrompt: String; val totpRecoveryFieldLabel: String
     val totpRecoverySubmit: String; val totpRecoveryErr: String
     val backupTotpSecretLabel: String; val backupTotpCodeLabel: String
+    val backupTotpRecoveryOr: String; val backupTotpRecoveryLabel: String
 }
 
 /** Security guide screen — one title+description pair per protection
@@ -828,6 +829,8 @@ private val ru9 = object : IStr9 {
     override val totpRecoveryErr = "Код не принят — проверьте и попробуйте снова"
     override val backupTotpSecretLabel = "TOTP-секрет (если был включён на исходном устройстве)"
     override val backupTotpCodeLabel = "Текущий TOTP-код"
+    override val backupTotpRecoveryOr = "— или, если секрет утерян —"
+    override val backupTotpRecoveryLabel = "Резервный код (из тех, что показывались при включении TOTP)"
 }
 
 private val ru10 = object : IStr10 {
@@ -1382,6 +1385,8 @@ private val en9 = object : IStr9 {
     override val totpRecoveryErr = "Code not accepted — check it and try again"
     override val backupTotpSecretLabel = "TOTP secret (if it was enabled on the source device)"
     override val backupTotpCodeLabel = "Current TOTP code"
+    override val backupTotpRecoveryOr = "— or, if the secret is lost —"
+    override val backupTotpRecoveryLabel = "Recovery code (one of the ones shown when TOTP was enabled)"
 }
 
 private val en10 = object : IStr10 {

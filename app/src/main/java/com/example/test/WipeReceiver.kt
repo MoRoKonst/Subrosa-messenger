@@ -23,7 +23,17 @@ class WipeReceiver : BroadcastReceiver() {
             DeadMansSwitchManager.ACTION_DMS_WIPE -> {
 
                 DeadMansSwitchManager.dismissWarningNotification(context)
-                WipeManager.wipe(context, WipeManager.Level.NUCLEAR)
+                // Same server-side identity revocation as ProfileScreen.kt's
+                // "Меня скомпрометировали" (see docs/ISSUE_backup_identity_
+                // hijack.md, Тир 5) — DMS specifically can fire while the
+                // device is online but its owner unreachable (confiscated,
+                // not unlocked), so there's a real chance this reaches the
+                // server before the wipe below destroys the key it needs to
+                // be sent under.
+                CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                    MessengerService.requestIdentityRevocation(context)
+                    WipeManager.wipe(context, WipeManager.Level.NUCLEAR)
+                }
             }
 
             DeadMansSwitchManager.ACTION_DMS_CHECKIN -> {
