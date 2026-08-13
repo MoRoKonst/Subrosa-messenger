@@ -346,8 +346,20 @@ updated to reflect the removal.
 Everything else lower in this file that's marked "done" is done but not
 yet live-tested. These are the ones actually unresolved:
 
-- **The original backup-hijack problem itself** (this file's title) — no
-  fix started, see "Candidate fixes" below.
+- **The original backup-hijack problem itself** (this file's title) —
+  substantially mitigated by now, though never framed as "fully solved"
+  since there's no way to truly revoke a private key someone else holds a
+  copy of, only to replace the identity built on it (see "Why this
+  doesn't actually solve the problem" below, still accurate). What's
+  landed since this was last true: TOTP 2FA closes the "file+password
+  alone is sufficient" gap (Tier 4 item 15, with recovery codes for a
+  lost TOTP secret added 2026-08-13); `session_conflict` is now pushed
+  via FCM with a timestamp (Candidate fixes #1-2); the explicit "I think
+  I've been compromised" flow exists (#3) and, as of 2026-08-13, also
+  revokes the fingerprint server-side — see the Тир 5 section further
+  down — closing the specific hole where a stolen key still worked after
+  a "reset". Remaining known gap: prekey-bundle "revoked" flagging (same
+  Тир 5 section).
 - ~~**SMK double-encryption gap**~~ — **fixed** (Android only). SPK, OPK
   pool, PQ KEM private keys, and Double Ratchet session state (whole JSON
   blob per contact) now wrap under SMK the same way the EC identity key
@@ -395,9 +407,17 @@ yet live-tested. These are the ones actually unresolved:
   survives in `MessengerService`/session managers; next cold start lands on
   `RegisterScreen` since `UserStorage.isRegistered()` is now false, same
   code path as a fresh install. Compiles clean, not yet live-tested on a
-  device.
-- Tier 5 items (Cloudflare bypass, palette unification, access-list) —
-  explicitly deferred, see that section.
+  device. **Update, 2026-08-13**: this local-only reset used to be the
+  whole story — a stolen key still worked after the "reset" since the
+  server had no concept of revocation. Now also revokes the fingerprint
+  server-side before the local wipe (and the Dead Man's Switch NUCLEAR
+  wipe does the same) — see the Тир 5 section further down for the full
+  writeup.
+- ~~Tier 5 items (Cloudflare bypass, palette unification, access-list)~~ —
+  **all done now**, this line was stale. Cloudflare turned out to not be
+  a Cloudflare problem at all (see that section); palette unification and
+  the access-list/one-time-code system are both marked done in their own
+  Tier 5 entries.
 - **16 KB page-size native-library compatibility** — Android showed
   "App Compatibility" dialog: 4 bundled `.so` libs aren't 16 KB aligned,
   app runs in compat mode (not broken, just non-compliant for future Play
@@ -810,20 +830,18 @@ not the victim's.
 
 ## Server-side cleanup still pending (from the rebrand/domain session)
 
-- `ForEXP/server.py` still has active `[DEBUG-MAILBOX]` `print()` statements
-  (mailbox put/fetch handlers) that log the caller's fingerprint in plaintext
-  to server logs on disk. Leftover from call-flow debugging earlier this
-  project; promised removal once live testing was confirmed done — still
-  not removed.
-- Cloudflare WebSocket-proxying is still broken for `subrosamessenger.com`
-  (every real WS upgrade gets rejected with a generic Cloudflare-branded 400
-  before reaching origin — root cause not found, see the troubleshooting
-  section added to `docs/DEPLOY.md`). Currently bypassed with `api.` on
-  DNS-only/grey-cloud + relaxed nginx `allow` list — this **exposes the real
-  origin IP directly and drops Cloudflare's WAF/DDoS layer for that
-  endpoint**. `ServerManager.kt` also has a temporary `:8443` direct-port
-  override (task #52) that needs reverting once Cloudflare proxying works
-  again.
+- `ForEXP/server.py`'s `[DEBUG-MAILBOX]` `print()` statements were removed
+  from the repo (Tier 1 item 1, above) — **not yet confirmed redeployed**
+  to the live server, since this repo has no way to check that from here.
+- ~~Cloudflare WebSocket-proxying is still broken~~ — **fixed** (commit
+  `922c41a`). Root cause was never Cloudflare — a dead, pre-rebrand nginx
+  block silently broke every reload, including for the correct
+  `api.subrosamessenger.com:8443` vhost. `ServerManager.kt` now correctly
+  points at `:8443` (Cloudflare-proxied), no override left to revert. See
+  the updated troubleshooting note in `docs/DEPLOY.md` for the full
+  explanation. Worth a one-time check that the DNS-only/grey-cloud bypass
+  and relaxed nginx `allow` list from the old workaround were actually
+  reverted on the live server — not verifiable from this repo.
 
 ## Docs vs. code have diverged on call-signaling anonymization
 
@@ -2273,6 +2291,20 @@ resetCompromisedIdentity()` (вызывается из ProfileScreen.kt по к�
   попытке зарегистрироваться отозванным ключом (Toast с понятным текстом
   вместо тихого зависания).
 
+~~**Dead Man's Switch mirror**~~ — **done, 2026-08-13, same session**. The
+send+wait logic was extracted into a shared
+`MessengerService.requestIdentityRevocation(context)` (companion object
+function) so it isn't duplicated between callers — `ProfileScreen.kt` now
+calls it too instead of building the intent inline. `WipeReceiver.kt`'s
+`ACTION_DMS_WIPE` branch calls it before `WipeManager.wipe(context,
+WipeManager.Level.NUCLEAR)`, wrapped in `CoroutineScope(Dispatchers.IO +
+SupervisorJob()).launch { ... }` since `BroadcastReceiver.onReceive()`
+isn't itself a coroutine scope (same pattern already used a few lines down
+for the panic-button decoy delay). DMS specifically can fire while the
+device is online but its owner unreachable (confiscated, not unlocked,
+timer ticking on its own) — a real chance this reaches the server before
+the wipe destroys the key.
+
 **Не реализовано, осталось на потом**:
 - **Пометка prekey bundle как "revoked"** (п.3 списка последствий выше) —
   сейчас отозванный fingerprint просто не может зайти register()'ом
@@ -2285,25 +2317,11 @@ resetCompromisedIdentity()` (вызывается из ProfileScreen.kt по к�
   Desktop-клиенты автоматически защищены на серверной стороне (register
   проверяет revoked-список независимо от платформы), просто у них нет
   своей кнопки, чтобы инициировать отзыв.
-- **Dead Man's Switch mirror** — см. следующий абзац, отдельная, ещё не
-  сделанная часть.
 
-Затронуло: Android (`MessengerService.kt`/`ProfileScreen.kt`), `server.py`
-на ВПС (новый тип сообщения + персистентная таблица). Compiles clean
-(`compileDebugKotlin`, `py_compile`). Не задеплоено на боевой сервер, не
-протестировано вживую (два реальных устройства — одно отзывает, второе
-пытается зайти старым ключом).
-
-**Доп. пожелание (2026-08-13, записано на потом):** та же ревокация должна
-срабатывать и при уничтожении данных через **Dead Man's Switch**
-(`WipeReceiver.kt`, `DeadMansSwitchManager.ACTION_DMS_WIPE` →
-`WipeManager.wipe(context, WipeManager.Level.NUCLEAR)`), не только через
-кнопку "Я скомпрометирован". Логика та же: пока приватный ключ ещё жив на
-устройстве (то есть непосредственно перед самим `wipe()`), успеть подписать
-и отправить отзыв на сервер — если есть соединение. Нюанс: DMS по смыслу
-может сработать именно тогда, когда владелец недоступен (изъяли телефон,
-но НЕ разблокировали, таймер тикает сам) — в этот момент устройство обычно
-всё ещё online, так что отправка отзыва в момент срабатывания технически
-осуществима, просто нужно убедиться, что `WipeReceiver`/`DeadMansSwitchManager`
-успевают сделать сетевой вызов ДО того, как `wipe()` уничтожит ключ, которым
-нужно подписывать запрос (порядок операций важен).
+Затронуло: Android (`MessengerService.kt`/`ProfileScreen.kt`/
+`WipeReceiver.kt`), `server.py` на ВПС (новый тип сообщения + персистентная
+таблица). Compiles clean (`compileDebugKotlin`, `py_compile`). Не
+задеплоено на боевой сервер, не протестировано вживую (два реальных
+устройства — одно отзывает, второе пытается зайти старым ключом; и
+отдельно — реальное срабатывание DMS с последующей проверкой, что отзыв
+успел уйти до вайпа).
