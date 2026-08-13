@@ -148,6 +148,8 @@ interface IStr6 {
     val chatSearchPlaceholder: String; val chatOnline: String; val chatOffline: String
     val chatKeyWarningTitle: String; val chatKeyWarningText: String
     val chatKeyWarningConfirm: String; val chatKeyWarningLeave: String
+    val chatRevokedWarningTitle: String; val chatRevokedWarningText: String
+    val chatRevokedWarningConfirm: String
     val chatTyping: String; val chatMenu: String
     val chatAudioCall: String; val chatVideoCall: String
     val chatVerifyAction: String; val chatDirectConnection: String
@@ -577,6 +579,9 @@ private val ru6 = object : IStr6 {
     override val chatKeyWarningText = "Ключ шифрования собеседника изменился!\n\nЭто может означать:\n• Переустановку приложения\n• Новое устройство\n• MITM атаку\n\nСвяжитесь с собеседником другим способом!"
     override val chatKeyWarningConfirm = "Я проверил(а), всё ОК"
     override val chatKeyWarningLeave = "Выйти из чата"
+    override val chatRevokedWarningTitle = "ВНИМАНИЕ!"
+    override val chatRevokedWarningText = "Identity этого собеседника была отозвана владельцем (через «Меня скомпрометировали» или Dead Man's Switch) — это может означать, что его ключ был скомпрометирован.\n\nСвяжитесь с ним другим способом и попросите новый код приглашения."
+    override val chatRevokedWarningConfirm = "Понятно"
     override val chatTyping = "печатает..."
     override val chatMenu = "Меню"
     override val chatAudioCall = "Аудиозвонок"
@@ -1133,6 +1138,9 @@ private val en6 = object : IStr6 {
     override val chatKeyWarningText = "The contact's encryption key has changed!\n\nThis may indicate:\n• App reinstallation\n• New device\n• MITM attack\n\nContact this person through another channel!"
     override val chatKeyWarningConfirm = "I verified, it's OK"
     override val chatKeyWarningLeave = "Leave chat"
+    override val chatRevokedWarningTitle = "WARNING!"
+    override val chatRevokedWarningText = "This contact's identity was revoked by its owner (via \"I've been compromised\" or Dead Man's Switch) — this may mean their key was compromised.\n\nContact them through another channel and ask for a new invite code."
+    override val chatRevokedWarningConfirm = "Got it"
     override val chatTyping = "typing..."
     override val chatMenu = "Menu"
     override val chatAudioCall = "Audio call"

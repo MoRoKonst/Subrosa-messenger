@@ -356,10 +356,13 @@ yet live-tested. These are the ones actually unresolved:
   lost TOTP secret added 2026-08-13); `session_conflict` is now pushed
   via FCM with a timestamp (Candidate fixes #1-2); the explicit "I think
   I've been compromised" flow exists (#3) and, as of 2026-08-13, also
-  revokes the fingerprint server-side — see the Тир 5 section further
-  down — closing the specific hole where a stolen key still worked after
-  a "reset". Remaining known gap: prekey-bundle "revoked" flagging (same
-  Тир 5 section).
+  revokes the fingerprint server-side, with the Dead Man's Switch NUCLEAR
+  wipe doing the same, plus a client-side warning when a contact fetches
+  a revoked identity's prekey bundle — see the Тир 5 section further down
+  for the full writeup. Closes the specific hole where a stolen key still
+  worked after a "reset", and where a contact starting a fresh session
+  had no way to find out. Remaining gap: only Android has any of this —
+  Desktop has neither the revocation button nor the warning UI.
 - ~~**SMK double-encryption gap**~~ — **fixed** (Android only). SPK, OPK
   pool, PQ KEM private keys, and Double Ratchet session state (whole JSON
   blob per contact) now wrap under SMK the same way the EC identity key
@@ -2305,23 +2308,44 @@ device is online but its owner unreachable (confiscated, not unlocked,
 timer ticking on its own) — a real chance this reaches the server before
 the wipe destroys the key.
 
+~~**Пометка prekey bundle как "revoked"**~~ — **done, 2026-08-13**. `server.py`'s
+`get_prekey_bundle` and `get_prekey_bundles_batch` now check
+`db_is_fingerprint_revoked(target)` (outside the `clients`/`prekey_bundles`
+lock — SQLite lookups shouldn't serialize behind it, same reasoning as the
+register-time check) and set `bundle["revoked"] = True` when true. For the
+batched/anonymous fetch, the check runs concurrently via `asyncio.gather`
+for every target that actually had a bundle — flagging a decoy target's
+bundle doesn't leak which one in the batch is real, since the server can't
+tell that either way. The always-unused legacy `request_prekey` handler
+was deliberately left untouched (no client, Android or Desktop, sends this
+message type — confirmed by grep — so there was nothing to protect there).
+
+Android: new `MessengerService.onContactRevoked: ((String) -> Unit)?`
+callback, fired from `handleFetchedPrekeyBundle()` when the fetched
+bundle's `revoked` field is set — mirrors the existing TOFU key-change
+callback (`onKeyChanged`) exactly: a warning, not a hard block on
+establishing the session (same "не критично, register теперь блокирован
+для будущих подключений" reasoning as before — the goal is making sure
+the *contact* finds out, not stopping delivery). `ChatScreen.kt` wires it
+to a new `showRevokedWarning` `AlertDialog`, styled and structured like
+the existing key-change warning dialog, dismiss-or-leave-chat. Desktop not
+touched — no `onKeyChanged`-equivalent warning UI exists there either, so
+this isn't a regression relative to what Desktop already had.
+
 **Не реализовано, осталось на потом**:
-- **Пометка prekey bundle как "revoked"** (п.3 списка последствий выше) —
-  сейчас отозванный fingerprint просто не может зайти register()'ом
-  заново, но если атакующий уже был залогинен в момент отзыва и успел
-  что-то сделать до дисконнекта — существующие X3DH-сессии контактов не
-  предупреждаются отдельно. Не критично (register теперь блокирован для
-  будущих подключений), но не полное покрытие п.3.
 - **Desktop** не тронут — там нет ни кнопки "Я скомпрометирован", ни
   `BackupManager`-аналога вообще (Android-only фича с самого начала).
   Desktop-клиенты автоматически защищены на серверной стороне (register
   проверяет revoked-список независимо от платформы), просто у них нет
-  своей кнопки, чтобы инициировать отзыв.
+  своей кнопки, чтобы инициировать отзыв, и никакого UI-предупреждения
+  при получении revoked-бандла.
 
 Затронуло: Android (`MessengerService.kt`/`ProfileScreen.kt`/
-`WipeReceiver.kt`), `server.py` на ВПС (новый тип сообщения + персистентная
-таблица). Compiles clean (`compileDebugKotlin`, `py_compile`). Не
-задеплоено на боевой сервер, не протестировано вживую (два реальных
+`WipeReceiver.kt`/`ChatScreen.kt`/`AppStrings.kt`), `server.py` на ВПС
+(новый тип сообщения + персистентная таблица + revoked-флаг в двух
+prekey-bundle хендлерах). Compiles clean (`compileDebugKotlin`,
+`py_compile`). Не задеплоено на боевой сервер, не протестировано вживую
+(два реальных
 устройства — одно отзывает, второе пытается зайти старым ключом; и
 отдельно — реальное срабатывание DMS с последующей проверкой, что отзыв
 успел уйти до вайпа).
