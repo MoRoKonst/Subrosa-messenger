@@ -323,6 +323,19 @@ def _db_setup_sync():
                 first_registered_at REAL NOT NULL
             )
         """)
+        # Client-initiated identity revocation ("Меня скомпрометировали" —
+        # see docs/ISSUE_backup_identity_hijack.md, "Candidate fixes" item 4).
+        # A revoked fingerprint can no longer complete register() on this
+        # server, even though the caller still cryptographically proves
+        # possession of the private key in the challenge/response handshake —
+        # that's the whole point: possession of a stolen key stops being
+        # sufficient once the real owner has revoked it.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS revoked_fingerprints (
+                fingerprint TEXT PRIMARY KEY,
+                revoked_at  REAL NOT NULL
+            )
+        """)
         conn.commit()
 
 
@@ -541,6 +554,33 @@ async def db_is_fingerprint_registered(fingerprint):
 async def db_mark_fingerprint_registered(fingerprint):
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _db_mark_fingerprint_registered_sync, fingerprint)
+
+
+def _db_revoke_fingerprint_sync(fingerprint):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO revoked_fingerprints (fingerprint, revoked_at) VALUES (?, ?)",
+            (fingerprint, time.time())
+        )
+        conn.commit()
+
+
+def _db_is_fingerprint_revoked_sync(fingerprint):
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM revoked_fingerprints WHERE fingerprint = ?", (fingerprint,)
+        ).fetchone()
+    return row is not None
+
+
+async def db_revoke_fingerprint(fingerprint):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _db_revoke_fingerprint_sync, fingerprint)
+
+
+async def db_is_fingerprint_revoked(fingerprint):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _db_is_fingerprint_revoked_sync, fingerprint)
 
 
 def save_access_code_qr(link, code):
@@ -1313,7 +1353,7 @@ async def handle_client(websocket):
                 # ── Profile ──
                 "profile_update",
                 # ── Session management ──
-                "session_reset",
+                "session_reset", "revoke_identity",
                 # ── Anonymous token routing ──
                 "subscribe_tokens", "anon_message",
                 # ── Anonymous Mailbox ──
@@ -1364,6 +1404,18 @@ async def handle_client(websocket):
                         print(f"[SECURITY] register: неверный/отсутствующий access_code для нового аккаунта {username} от {ip}")
                         await send_safe(websocket, json.dumps({"type": "access_code_required"}))
                         continue
+
+                # Identity revoked via "Меня скомпрометировали" (revoke_identity,
+                # below) — the challenge/response handshake still proves
+                # possession of the private key, but possession alone is no
+                # longer enough once the real owner has revoked it. Not
+                # federation-exempt: revocation is meaningful precisely because
+                # the fingerprint is derived from a key someone else may now
+                # also hold.
+                if await db_is_fingerprint_revoked(username):
+                    print(f"[SECURITY] register: отклонена регистрация отозванного fingerprint {username} от {ip}")
+                    await send_safe(websocket, json.dumps({"type": "identity_revoked"}))
+                    continue
 
                 totp_rejected = False
                 async with lock:
@@ -1759,6 +1811,21 @@ async def handle_client(websocket):
                     await send_safe(recipient["ws"], json.dumps({"type": "session_reset", "from": username}))
                 # ephemeral — not queued for offline delivery
                 continue
+
+            # ─── Identity revocation ("Меня скомпрометировали") ────────────────
+            # `username` here is this connection's own fingerprint, proven by the
+            # challenge/response handshake at connect time — not client-supplied,
+            # so there's no way to revoke anyone else's identity through this.
+            # Fired by the client right before it locally wipes the old key (see
+            # BackupManager.resetCompromisedIdentity() / ProfileScreen.kt's
+            # "Меня скомпрометировали"), so the old key stops being sufficient to
+            # log back in even if whoever compromised it still has it.
+            if msg_type == "revoke_identity":
+                await db_revoke_fingerprint(username)
+                print(f"[SECURITY] Identity отозвана по запросу владельца: {username}")
+                await send_safe(websocket, json.dumps({"type": "identity_revoked_ack"}))
+                await websocket.close()
+                return
 
             # ─── Edit ─────────────────────────────────────────────────────────
             if msg_type == "edit":
