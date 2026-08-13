@@ -796,7 +796,7 @@ fun AppNavigation() {
     val lockScope = rememberCoroutineScope()
 
     val lockVisible = isLocked == true && screen != "login" && screen != "register" && screen != "calculator" &&
-        screen != "totp_setup_required" && screen != "servers_from_totp_setup"
+        screen != "totp_setup_required" && screen != "servers_from_totp_setup" && screen != "battery_optimization_prompt"
 
     val shouldResetCalc by MainActivity.shouldResetToCalculator.collectAsState()
     LaunchedEffect(shouldResetCalc) {
@@ -1003,7 +1003,7 @@ fun AppNavigation() {
         "totp_setup_required" -> TotpSettingsScreen(
             onBack = {},
             mandatory = true,
-            onCompleted = { screen = "chats" },
+            onCompleted = { screen = "battery_optimization_prompt" },
             onOpenServers = { screen = "servers_from_totp_setup" }
         )
 
@@ -1011,6 +1011,14 @@ fun AppNavigation() {
         // button returns to the mandatory TOTP step, not "profile" —
         // "profile" isn't reachable yet at this point in onboarding.
         "servers_from_totp_setup" -> ServersScreen(onBack = { screen = "totp_setup_required" })
+
+        // One-shot onboarding nudge, new registrations only — see
+        // docs/ISSUE_backup_identity_hijack.md, "сворачивание приложения
+        // тихо душит фоновое соединение". Skippable, unlike TOTP above;
+        // also reachable later from Profile if skipped here.
+        "battery_optimization_prompt" -> BatteryOptimizationPromptScreen(
+            onDone = { screen = "chats" }
+        )
 
         "login" -> LoginScreen(
             onLoggedIn = {
@@ -1115,7 +1123,7 @@ fun AppNavigation() {
 
     }
 
-    if (screen !in listOf("register", "login", "totp_setup_required", "servers_from_totp_setup", "calculator")) {
+    if (screen !in listOf("register", "login", "totp_setup_required", "servers_from_totp_setup", "battery_optimization_prompt", "calculator")) {
         RecoveryCodeGate()
     }
 
