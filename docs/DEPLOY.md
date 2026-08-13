@@ -288,6 +288,19 @@ What confirms the origin/nginx side is completely fine: connecting directly to t
 
 We did not find a definitive root cause, only a working bypass — our best guess is a propagation/feature-activation delay specific to freshly created Cloudflare zones, unconfirmed. If you figure out the actual fix, please update this section.
 
+**Update — actual root cause found, unrelated to Cloudflare itself.** The real
+problem was a stale `api.beacon-app.org:4430` server block left over from
+before the domain rebrand, still sitting in the same `sites-available` file
+as the correct `api.subrosamessenger.com:8443` block. Its certificate path no
+longer existed, so `nginx -t` failed and **every** reload silently kept
+serving the old, never-reloaded config — including for the correct vhost,
+which looked fine on disk but was never actually loaded. `:4430` also isn't
+one of Cloudflare's supported proxied HTTPS ports (443/2053/2083/2087/2096/
+8443) in the first place, compounding the confusion. Fix: remove/comment out
+the dead block, confirm `nginx -t` passes clean, reload, then switch the DNS
+record back to proxied/orange-cloud on `:8443` — no Cloudflare-side setting
+needed changing at all.
+
 ---
 
 ## Security Recommendations

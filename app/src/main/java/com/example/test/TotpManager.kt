@@ -20,11 +20,19 @@ import javax.crypto.spec.SecretKeySpec
  * The secret is generated on-device and never stored inside the backup
  * blob itself; the user is expected to also save it in a separate
  * offline vault, so file+password alone stays insufficient to import.
+ *
+ * Recovery codes: the same 8 one-time codes the server issues at setup
+ * (originally just for the device_id-gated register() fallback) also get
+ * their hashes embedded in the exported backup (see
+ * saveRecoveryCodeHashes/BackupManager.exportBackup) — losing the TOTP
+ * secret itself doesn't have to mean losing the backup too, as long as one
+ * of the saved recovery codes still works.
  */
 object TotpManager {
     private const val PREFS_NAME = "totp_prefs"
     private const val KEY_SECRET = "totp_secret"
     private const val KEY_ENABLED = "totp_enabled"
+    private const val KEY_RECOVERY_HASHES = "totp_recovery_hashes"
 
     private const val TIME_STEP_SECONDS = 30L
     private const val CODE_DIGITS = 6
@@ -63,6 +71,38 @@ object TotpManager {
             .remove(KEY_SECRET)
             .putBoolean(KEY_ENABLED, false)
             .apply()
+    }
+
+    /** Hash for the recovery codes shown once at setup (server-generated,
+     *  same 8 codes used to satisfy device-gated register() when the
+     *  authenticator app is unavailable — see server.py's
+     *  generate_recovery_codes()). Same normalization as the server side
+     *  (_hash_recovery_code): trim + uppercase before hashing, so a code
+     *  typed in lowercase or with stray whitespace still matches. */
+    fun hashRecoveryCode(code: String): String {
+        val normalized = code.trim().uppercase()
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    /** Persists the same recovery-code hashes locally (SMK-wrapped) so
+     *  exportBackup() can embed them in the backup file — see
+     *  docs/ISSUE_backup_identity_hijack.md, Тир 4 item 15's "Восстановление
+     *  при утере TOTP-секрета" gap. Hashes only, never the raw codes — same
+     *  principle as the secret itself never living inside the backup. */
+    fun saveRecoveryCodeHashes(context: Context, hashes: List<String>) {
+        val wrapped = StorageKeyManager.wrapBytes(hashes.joinToString(",").toByteArray(Charsets.UTF_8))
+        prefs(context).edit().putString(KEY_RECOVERY_HASHES, wrapped).apply()
+    }
+
+    fun getRecoveryCodeHashes(context: Context): List<String> {
+        val stored = prefs(context).getString(KEY_RECOVERY_HASHES, null) ?: return emptyList()
+        return try {
+            String(StorageKeyManager.unwrapBytes(stored), Charsets.UTF_8)
+                .split(",").filter { it.isNotBlank() }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     fun otpAuthUri(secretBase32: String, account: String, issuer: String = "Subrosa"): String =

@@ -1262,11 +1262,20 @@ file.
 
 ### Tier 5 — deferred, bigger or still underspecified
 
-13. Cloudflare WebSocket-proxying root cause, reverting the temporary
-    `api.` DNS-only bypass + relaxed nginx `allow` list + `ServerManager.kt`
-    `:8443` override (task #52) — explicitly deprioritized: this only
-    affects the personal dev/test server, not any real client deployment,
-    since every client stands up their own infrastructure.
+13. ~~Cloudflare WebSocket-proxying root cause~~ — **done, was never
+    actually a Cloudflare problem**. Commit `922c41a`: nginx's
+    `api.subrosamessenger.com:8443` block was correct and working the
+    whole time — the real breakage was an unrelated dead
+    `api.beacon-app.org:4430` block earlier in the same
+    `sites-available` file (stale from before the rebrand, cert path long
+    gone), which failed `nginx -t` and silently blocked every reload from
+    taking effect. `:4430` also isn't even one of Cloudflare's supported
+    proxied HTTPS ports (443/2053/2083/2087/2096/8443) regardless of the
+    cert issue. `ServerManager.kt` now correctly points at `:8443`
+    (Cloudflare-proxied, orange-cloud) — the earlier DNS-only/grey-cloud
+    bypass and relaxed nginx `allow` list are no longer needed and should
+    be reverted if still active on the live server (not verified from
+    this repo whether that cleanup happened server-side).
 14. ~~Full palette unification (icon + in-app theme + website)~~ — **done**.
     **In-app Android theme (earlier pass)**: recolored all 3 themes in
     `SubrosaColors.kt` from the old navy/cyan scheme to a burgundy/gold
@@ -1546,16 +1555,22 @@ file.
    sendAnonOrDirect's direct fallback entirely" выше в этом файле).
    Ничего чинить не пришлось.
 
-   **Побочно найдено, не в скоупе этого пункта, не тронуто**: та же
-   функция `sendWithForwardSecrecy()` на Android имеет **симметричный**
-   прямой fallback и для обычных, не-первых сообщений (`else ->
-   sendWs(...)`, чуть ниже по коду) — если анон-токены закончились у уже
-   установленной сессии, туда тоже тихо уходит прямая адресация, тем же
-   классом проблемы, что и у session_init, просто чаще (на любое
-   сообщение, не только первое). Формально не входит в это Tier 2 item 9
-   (который был именно про session_init), но явно того же типа и,
-   вероятно, даже важнее по частоте срабатывания — кандидат на отдельный
-   пункт бэклога, не решено при этом проходе.
+   **Побочно найдено, не в скоупе этого пункта — но починено позже,
+   отдельным проходом**: та же функция `sendWithForwardSecrecy()` на
+   Android имела **симметричный** прямой fallback и для обычных,
+   не-первых сообщений — если анон-токены заканчивались у уже
+   установленной сессии, туда тоже тихо уходила прямая адресация, тем же
+   классом проблемы, что и у `session_init`, просто чаще (на любое
+   сообщение, не только первое). ~~Не решено при этом проходе~~ —
+   **исправлено**: `else`-ветка теперь вызывает `sendAnonOrDirect(to,
+   packet)` вместо прямого `sendWs(...)`, то есть при пустом пуле токенов
+   пакет встаёт в очередь (`pendingAnonPackets`) и уходит через тот же
+   queue-and-retry путь, что и всё остальное — комментарий в коде
+   (`MessengerService.kt`, конец `sendWithForwardSecrecy`) подтверждает,
+   что это было найдено вживую по логу сервера ("[MSG] message delivered"
+   при пустом пуле токенов), не просто теоретически. Эта заметка была
+   единственной оставшейся стале-версией — код давно починен, просто
+   запись в этом файле не была обновлена.
 10. ~~**Session_reset после восстановления бэкапа**~~ — **done**.
     `consumePendingPqMigrationContacts()`, упомянутая в исходной заметке,
     в коде не нашлась (похоже, была из более ранней идеи, так и не
@@ -1724,11 +1739,25 @@ file.
     **Не сделано в этой сессии**: Desktop-клиент не тронут (там свой
     `BackupManager.kt`, приватный ключ идёт через machine-bound PKCS12
     keystore, а не SMK — гэп нужно оценивать отдельно, не факт что тот же
-    паттерн подходит один в один). Также не реализовано: восстановление
-    при утере TOTP-секрета (сейчас это тупик — секрет не в бэкапе, значит
-    его больше негде взять, кроме как «плохо было бы жёстко», это
-    сознательный компромисс безопасности, а не забытый кейс, но
-    пользователю стоит явно об этом сказать в UI, что пока не сделано).
+    паттерн подходит один в один).
+
+    ~~Восстановление при утере TOTP-секрета (сейчас это тупик...)~~ —
+    **done, 2026-08-13**. Решение: переиспользовать те же 8 резервных
+    кодов, что сервер и так выдаёт при включении TOTP (`totp_setup`,
+    `generate_recovery_codes()` в `server.py`) — раньше они годились
+    только для обхода device-gated `register()`, теперь их хэши (не сами
+    коды — тот же принцип, что и с секретом) дополнительно сохраняются
+    локально (`TotpManager.saveRecoveryCodeHashes`, SMK-обёрнуто) и
+    кладутся в сам экспортируемый бэкап (`totp_recovery_hashes`, только
+    хэши). `BackupManager.importBackup()` получил новый опциональный
+    параметр `recoveryCode` — если секрет+код не сработали, но код
+    совпадает с одним из хэшей внутри бэкапа, импорт продолжается без
+    секрета, но TOTP-защита на новом устройстве остаётся выключенной
+    (не включается вслепую со старым, возможно скомпрометированным
+    секретом) — сообщение об успехе явно просит включить TOTP заново, тот
+    же принцип, что и в серверном device-gated recovery-flow. UI:
+    `BackupScreen.kt` получил третье, опциональное поле "резервный код"
+    рядом с секретом/кодом. Compiles clean. Desktop не тронут (см. выше).
     Live-тест на реальном устройстве не проводился, только
     `compileDebugKotlin` зелёный.
 

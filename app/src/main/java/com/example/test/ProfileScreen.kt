@@ -1107,24 +1107,7 @@ fun ProfileScreen(
                 TextButton(onClick = {
                     showCompromisedConfirm = false
                     scope.launch {
-                        // Best-effort — tell the server to revoke this fingerprint
-                        // (see docs/ISSUE_backup_identity_hijack.md, "Candidate
-                        // fixes" item 4) while the current WS connection is still
-                        // authenticated as the old identity, *before* the local
-                        // key is wiped below. A short grace period gives the
-                        // already-open socket a chance to actually flush the
-                        // frame before the process dies — there's no ack to wait
-                        // on by design, this is a one-shot fire-and-forget action
-                        // like the rest of this flow. If the device is offline
-                        // right now, the server simply never finds out — same
-                        // limitation as every other part of this deliberately
-                        // cheap reset.
-                        context.startService(
-                            Intent(context, MessengerService::class.java).apply {
-                                putExtra("revoke_identity", true)
-                            }
-                        )
-                        kotlinx.coroutines.delay(400)
+                        MessengerService.requestIdentityRevocation(context)
                         BackupManager.resetCompromisedIdentity(context)
                         context.stopService(Intent(context, MessengerService::class.java))
                         android.os.Process.killProcess(android.os.Process.myPid())

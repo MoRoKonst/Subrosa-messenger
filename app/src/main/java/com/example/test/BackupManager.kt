@@ -82,6 +82,16 @@ object BackupManager {
             put("version", 6)
             put("timestamp", System.currentTimeMillis())
             put("totp_enabled", TotpManager.isEnabled(context))
+            // Hashes only, not the raw codes — same principle as the secret
+            // itself never living inside the backup. Lets importBackup()
+            // accept one of these saved-elsewhere recovery codes in place of
+            // the secret+live-code pair when the secret itself is lost. See
+            // docs/ISSUE_backup_identity_hijack.md, "Восстановление при
+            // утере TOTP-секрета".
+            val recoveryHashes = TotpManager.getRecoveryCodeHashes(context)
+            if (recoveryHashes.isNotEmpty()) {
+                put("totp_recovery_hashes", JSONArray(recoveryHashes))
+            }
             put("username", username)
             put("display_name", displayName)
 
@@ -198,7 +208,8 @@ object BackupManager {
         encryptedData: String,
         password: String,
         totpSecret: String? = null,
-        totpCode: String? = null
+        totpCode: String? = null,
+        recoveryCode: String? = null
     ): Result<String> {
         return try {
             val decryptedBytes = decryptBackup(encryptedData, password)
@@ -214,17 +225,32 @@ object BackupManager {
             val backup = JSONObject(String(jsonBytes, Charsets.UTF_8))
             jsonBytes.fill(0)
 
+            var recoveryUsed = false
             if (backup.optBoolean("totp_enabled", false)) {
-                if (totpSecret.isNullOrBlank() || totpCode.isNullOrBlank()) {
-                    return Result.failure(IllegalStateException("Этот бэкап защищён TOTP — введите секрет и текущий код"))
-                }
-                if (!TotpManager.verifyCode(totpSecret, totpCode)) {
-                    return Result.failure(IllegalStateException("Неверный TOTP-код"))
-                }
                 if (!StorageKeyManager.isUnlocked) {
                     return Result.failure(IllegalStateException("Приложение заблокировано — сначала разблокируйте его, чтобы импортировать бэкап"))
                 }
-                TotpManager.enable(context, totpSecret)
+                val recoveryHashes = backup.optJSONArray("totp_recovery_hashes")
+                val recoveryMatch = !recoveryCode.isNullOrBlank() && recoveryHashes != null &&
+                    (0 until recoveryHashes.length()).any { i ->
+                        recoveryHashes.getString(i) == TotpManager.hashRecoveryCode(recoveryCode)
+                    }
+                if (recoveryMatch) {
+                    // Same principle as the server-side device-gated flow's
+                    // recovery-code fallback: a code substitutes for the lost
+                    // secret exactly once, and leaves TOTP protection off
+                    // afterward rather than silently carrying the old,
+                    // now-partially-compromised secret forward — the caller
+                    // is expected to prompt the user to set it up fresh.
+                    recoveryUsed = true
+                } else if (!totpSecret.isNullOrBlank() && !totpCode.isNullOrBlank()) {
+                    if (!TotpManager.verifyCode(totpSecret, totpCode)) {
+                        return Result.failure(IllegalStateException("Неверный TOTP-код"))
+                    }
+                    TotpManager.enable(context, totpSecret)
+                } else {
+                    return Result.failure(IllegalStateException("Этот бэкап защищён TOTP — введите секрет и текущий код, либо один из резервных кодов"))
+                }
             }
 
             // Full wipe of whatever identity is currently active on this
@@ -397,7 +423,11 @@ object BackupManager {
                 }
             }
 
-            Result.success("Импортировано успешно (версия $version)")
+            if (recoveryUsed) {
+                Result.success("Импортировано успешно (версия $version). TOTP-защита сброшена резервным кодом — включите её заново в настройках.")
+            } else {
+                Result.success("Импортировано успешно (версия $version)")
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }
