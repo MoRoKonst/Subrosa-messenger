@@ -1,11 +1,14 @@
 package com.subrosa.messenger
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -126,7 +129,7 @@ fun GroupChatScreen(
 
     if (group == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = Color(0xFF00E5FF))
+            CircularProgressIndicator(color = Color(0xFFD9A566))
         }
         return
     }
@@ -183,6 +186,47 @@ fun GroupChatScreen(
                         if (idx != -1) messages.removeAt(idx)
                     }
                 }
+
+                service.onGroupImageReceived = { receivedGroupId, from, imageId, file ->
+                    if (receivedGroupId == groupId) {
+                        SoundManager.playMessageReceived()
+                        val displayMsg = GroupMessage(
+                            id = imageId,
+                            groupId = groupId,
+                            senderId = from,
+                            senderName = ChatStorage.getContactName(context, from),
+                            text = s.groupChatAttachPhoto,
+                            isOwn = false,
+                            imagePath = file.absolutePath
+                        )
+                        messages.add(displayMsg)
+                        scope.launch(Dispatchers.IO) {
+                            GroupManager.saveGroupMessage(context, userId, displayMsg)
+                        }
+                        scope.launch { listState.animateScrollToItem(messages.size - 1) }
+                    }
+                }
+
+                service.onGroupFileReceived = { receivedGroupId, from, fileId, file, fileName ->
+                    if (receivedGroupId == groupId) {
+                        SoundManager.playMessageReceived()
+                        val displayMsg = GroupMessage(
+                            id = fileId,
+                            groupId = groupId,
+                            senderId = from,
+                            senderName = ChatStorage.getContactName(context, from),
+                            text = "📄 $fileName",
+                            isOwn = false,
+                            filePath = file.absolutePath,
+                            fileName = fileName
+                        )
+                        messages.add(displayMsg)
+                        scope.launch(Dispatchers.IO) {
+                            GroupManager.saveGroupMessage(context, userId, displayMsg)
+                        }
+                        scope.launch { listState.animateScrollToItem(messages.size - 1) }
+                    }
+                }
             }
 
             override fun onServiceDisconnected(name: ComponentName) {
@@ -204,7 +248,110 @@ fun GroupChatScreen(
             messengerService?.onGroupMessageReceived = null
             messengerService?.onGroupReactionReceived = null
             messengerService?.onGroupMessageDeleted = null
+            messengerService?.onGroupImageReceived = null
+            messengerService?.onGroupFileReceived = null
             try { context.unbindService(connection) } catch (e: Exception) {}
+        }
+    }
+
+    // Photo/file pickers reuse MainActivity's shared PICK_IMAGE_REQUEST/
+    // PICK_FILE_REQUEST StateFlows (see ChatScreen.kt) rather than a
+    // dedicated launcher — only one screen is visible at a time, so the
+    // global flow is safe to share. Sending itself goes through the group
+    // key (sendGroupImage/sendGroupFile), not the 1:1 per-contact path.
+    LaunchedEffect(Unit) {
+        MainActivity.selectedPhotoUri.collect { uri: android.net.Uri? ->
+            uri ?: return@collect
+            MainActivity.selectedPhotoUri.value = null
+            val g = group ?: return@collect
+            val groupKey = g.groupKey ?: return@collect
+            try {
+                val bitmap = android.provider.MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                if (bitmap.byteCount > 100 * 1024 * 1024) {
+                    android.widget.Toast.makeText(context, s.chatPhotoTooBig, android.widget.Toast.LENGTH_SHORT).show()
+                    bitmap.recycle()
+                    return@collect
+                }
+                val imageBytes = compressImageForSend(bitmap)
+                val imageId = UUID.randomUUID().toString()
+                val imageFile = SecureFileStorage.blobFile(context.filesDir, imageId)
+                SecureFileStorage.write(context, imageFile, imageBytes)
+
+                val displayMsg = GroupMessage(
+                    id = imageId,
+                    groupId = groupId,
+                    senderId = userId,
+                    senderName = username,
+                    text = s.groupChatAttachPhoto,
+                    isOwn = true,
+                    imagePath = imageFile.absolutePath
+                )
+                messages.add(displayMsg)
+                scope.launch(Dispatchers.IO) {
+                    GroupManager.saveGroupMessage(context, userId, displayMsg)
+                }
+                scope.launch { listState.animateScrollToItem(messages.size - 1) }
+
+                val recipients = g.members.filter { it != userId }
+                messengerService?.sendGroupImage(groupId, recipients, groupKey, imageBytes)
+            } catch (e: Exception) {
+                android.util.Log.e("GroupChatScreen", "Group image send error: ${e.message}")
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        MainActivity.selectedFileUri.collect { uri: android.net.Uri? ->
+            uri ?: return@collect
+            MainActivity.selectedFileUri.value = null
+            val g = group ?: return@collect
+            val groupKey = g.groupKey ?: return@collect
+            try {
+                val cursor = context.contentResolver.query(uri, null, null, null, null)
+                val fileName = cursor?.use {
+                    if (it.moveToFirst()) {
+                        val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex >= 0) it.getString(nameIndex) else "file"
+                    } else "file"
+                } ?: "file"
+
+                val mimeType = context.contentResolver.getType(uri) ?: "*/*"
+                val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                val bytes = if (rawBytes != null && mimeType.startsWith("image/")) {
+                    stripExif(context, rawBytes)
+                } else rawBytes
+
+                if (bytes == null || bytes.isEmpty()) return@collect
+                if (bytes.size > 20 * 1024 * 1024) {
+                    android.widget.Toast.makeText(context, s.chatFileTooBig, android.widget.Toast.LENGTH_SHORT).show()
+                    return@collect
+                }
+
+                val fileId = UUID.randomUUID().toString()
+                val file = SecureFileStorage.blobFile(context.filesDir, fileId)
+                SecureFileStorage.write(context, file, bytes)
+
+                val displayMsg = GroupMessage(
+                    id = fileId,
+                    groupId = groupId,
+                    senderId = userId,
+                    senderName = username,
+                    text = "📄 $fileName",
+                    isOwn = true,
+                    filePath = file.absolutePath,
+                    fileName = fileName
+                )
+                messages.add(displayMsg)
+                scope.launch(Dispatchers.IO) {
+                    GroupManager.saveGroupMessage(context, userId, displayMsg)
+                }
+                scope.launch { listState.animateScrollToItem(messages.size - 1) }
+
+                val recipients = g.members.filter { it != userId }
+                messengerService?.sendGroupFile(groupId, recipients, groupKey, fileName, bytes)
+            } catch (e: Exception) {
+                android.util.Log.e("GroupChatScreen", "Group file send error: ${e.message}")
+            }
         }
     }
 
@@ -215,7 +362,7 @@ fun GroupChatScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(
                         shape = CircleShape,
-                        color = Color(0xFF2481CC),
+                        color = Color(0xFFC77B4F),
                         modifier = Modifier.size(40.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -258,14 +405,14 @@ fun GroupChatScreen(
                     Icon(Icons.Default.MoreVert, s.groupChatInfo, tint = Color.White)
                 }
             },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF091a66))
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF4A151A))
         )
 
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color(0xFF141e4a), Color(0xFF0d1238))))
+                .background(Brush.verticalGradient(listOf(Color(0xFF2B0F14), Color(0xFF180A0C))))
                 .padding(horizontal = 8.dp),
             state = listState
         ) {
@@ -289,7 +436,7 @@ fun GroupChatScreen(
             val ctxMsg = contextMenuMessage!!
             AlertDialog(
                 onDismissRequest = { contextMenuMessage = null },
-                containerColor = Color(0xFF091a66),
+                containerColor = Color(0xFF4A151A),
                 title = null,
                 text = {
                     Column {
@@ -400,7 +547,7 @@ fun GroupChatScreen(
                     }
                 },
                 confirmButton = {},
-                containerColor = Color(0xFF091a66)
+                containerColor = Color(0xFF4A151A)
             )
         }
 
@@ -408,7 +555,7 @@ fun GroupChatScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF0d1238))
+                    .background(Color(0xFF180A0C))
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -432,7 +579,7 @@ fun GroupChatScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF091a66))
+                .background(Color(0xFF4A151A))
                 .padding(8.dp)
                 .navigationBarsPadding()
                 .imePadding(),
@@ -452,10 +599,30 @@ fun GroupChatScreen(
                     },
                     text = {
                         Column {
-                            TextButton(onClick = { showAttachMenu = false }) {
+                            TextButton(onClick = {
+                                showAttachMenu = false
+                                try {
+                                    (context as? MainActivity)?.startActivityForResult(
+                                        Intent(Intent.ACTION_GET_CONTENT).apply {
+                                            type = "*/*"
+                                            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*"))
+                                            addCategory(Intent.CATEGORY_OPENABLE)
+                                        },
+                                        MainActivity.PICK_IMAGE_REQUEST
+                                    )
+                                } catch (e: Exception) {}
+                            }) {
                                 Text(s.groupChatAttachPhoto, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono)
                             }
-                            TextButton(onClick = { showAttachMenu = false }) {
+                            TextButton(onClick = {
+                                showAttachMenu = false
+                                try {
+                                    (context as? MainActivity)?.startActivityForResult(
+                                        Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE) },
+                                        MainActivity.PICK_FILE_REQUEST
+                                    )
+                                } catch (e: Exception) {}
+                            }) {
                                 Text(s.groupChatAttachFile, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono)
                             }
                             TextButton(onClick = {
@@ -479,7 +646,7 @@ fun GroupChatScreen(
                         }
                     },
                     confirmButton = {},
-                    containerColor = Color(0xFF091a66)
+                    containerColor = Color(0xFF4A151A)
                 )
             }
 
@@ -729,7 +896,7 @@ fun GroupMessageBubble(
 
     val avatarColor = remember(msg.senderName) {
         listOf(
-            Color(0xFF2481CC), Color(0xFFE74C3C), Color(0xFF27AE60),
+            Color(0xFFC77B4F), Color(0xFFE74C3C), Color(0xFF27AE60),
             Color(0xFFF39C12), Color(0xFF9B59B6), Color(0xFF1ABC9C)
         )[msg.senderName.hashCode().absoluteValue % 6]
     }
@@ -802,6 +969,32 @@ fun GroupMessageBubble(
                 shadowElevation = 1.dp
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+
+                    if (msg.imagePath != null) {
+                        val bitmap = remember(msg.imagePath) {
+                            try {
+                                if (msg.imagePath.endsWith(".enc")) {
+                                    val bytes = SecureFileStorage.read(context, File(msg.imagePath))
+                                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                } else android.graphics.BitmapFactory.decodeFile(msg.imagePath)
+                            } catch (e: Exception) { null }
+                        }
+                        if (bitmap != null) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 160.dp, max = 320.dp)
+                                    .padding(bottom = 4.dp)
+                            )
+                        }
+                    }
+
+                    if (msg.fileName != null && msg.filePath != null) {
+                        FilePreview(fileName = msg.fileName, filePath = msg.filePath, context = context)
+                    }
 
                     if (isVoice && voiceFile != null) {
                         Row(
