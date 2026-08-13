@@ -2681,12 +2681,31 @@ async def handle_client(websocket):
                 if clients.get(username, {}).get("ws") == websocket:
                     clients.pop(username, None)
                 authenticated_users.pop(websocket, None)
-                # Чистим токены этого клиента из known_tokens чтобы очередь не росла вечно
+                # Only the dead socket's routing entry is cleared here — there
+                # is genuinely nowhere left to deliver to. known_tokens and
+                # token_pending are deliberately left alone: this used to
+                # wipe them too ("чтобы очередь не растёт вечно"), but that
+                # tied a token's very existence to a single continuous
+                # WebSocket session, so ANY disconnect — even a benign few-
+                # second reconnect — instantly turned every token this owner
+                # had handed out into an unknown/fake-looking token. A
+                # contact still holding one of those tokens got a silently
+                # dropped anon_message and a *faked* "ack" back (see the
+                # anon_message handler's is_known branch — that fake ack is
+                # intentional, to keep real vs. decoy tokens
+                # indistinguishable from the sender's point of view), which
+                # looks exactly like "sent successfully" while nothing was
+                # ever delivered. token_pending is already self-bounded (10
+                # queued messages per token, see anon_message handler) so
+                # there's no unbounded-growth risk from leaving it populated
+                # across a reconnect; known_tokens re-links to the new
+                # websocket for free the moment the owner resubscribes
+                # (subscribe_tokens already flushes token_pending on
+                # (re)subscribe). Root-caused live 2026-08-13 — see
+                # docs/ISSUE_backup_identity_hijack.md.
                 owned_tokens = ws_to_tokens.pop(websocket, set())
                 for t in owned_tokens:
                     token_to_ws.pop(t, None)
-                    known_tokens.discard(t)
-                    token_pending.pop(t, None)
             if username in rate_limits:
                 rate_limits[username]["disconnected_at"] = time.time()
             suspicious_activity.pop(username, None)
