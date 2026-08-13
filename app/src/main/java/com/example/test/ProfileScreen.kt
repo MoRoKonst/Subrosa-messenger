@@ -198,6 +198,19 @@ fun isEmergencyServiceEnabled(context: android.content.Context): Boolean =
             it.resolveInfo.serviceInfo.name.contains("EmergencyService")
         }
 
+/** Whether the OEM's battery manager is free to throttle/kill this app's
+ *  background network — official foreground-service exemptions from Doze
+ *  aren't always honored by vendor battery managers (MIUI etc.) unless the
+ *  app is also separately whitelisted here. Root-caused live: backgrounding
+ *  the app let outgoing writes (delivery receipts, then everything) stall
+ *  silently with zero exceptions, then the WebSocket died outright — see
+ *  docs/ISSUE_backup_identity_hijack.md. Single system dialog, no multi-step
+ *  Settings navigation needed (unlike the accessibility service above). */
+fun isIgnoringBatteryOptimizations(context: android.content.Context): Boolean {
+    val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+    return pm.isIgnoringBatteryOptimizations(context.packageName)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
@@ -228,6 +241,7 @@ fun ProfileScreen(
     var emergencyEnabled        by remember { mutableStateOf(UserStorage.isEmergencyWipeEnabled(context) && isEmergencyServiceEnabled(context)) }
     var showEmergencyInfoDialog by remember { mutableStateOf(false) }
     var torEnabled              by remember { mutableStateOf(UserStorage.isTorEnabled(context)) }
+    var batteryUnrestricted     by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
 
     val displayName      = UserStorage.getUserDisplayName(context)
     val userId           = UserStorage.getUserId(context)
@@ -263,6 +277,10 @@ fun ProfileScreen(
                     showEmergencyInfoDialog = false
                     Toast.makeText(context, s.emergencyInfoDone, Toast.LENGTH_SHORT).show()
                 }
+                // Re-sync after returning from the system battery-optimization
+                // dialog too — it's a single Allow/Deny prompt, no multi-step
+                // navigation, so this just picks up whatever the user chose.
+                batteryUnrestricted = isIgnoringBatteryOptimizations(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -910,6 +928,43 @@ fun ProfileScreen(
                                     onCheckedChange = {
                                         torEnabled = it
                                         UserStorage.setTorEnabled(context, it)
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = c.accent,
+                                        checkedTrackColor = c.accent.copy(alpha = 0.35f)
+                                    )
+                                )
+                            }
+                        )
+                        PDivider()
+                        PRow(
+                            title = s.profileBatteryUnrestricted,
+                            subtitle = s.profileBatteryUnrestrictedSub,
+                            trailing = {
+                                Switch(
+                                    checked = batteryUnrestricted,
+                                    onCheckedChange = { wantOn ->
+                                        // No API to programmatically revoke this once
+                                        // granted — only the system dialog can grant
+                                        // it. If the user is trying to turn it back
+                                        // off, send them to the OS settings screen
+                                        // where they can do that manually instead;
+                                        // local state isn't flipped speculatively,
+                                        // it re-syncs for real on ON_RESUME above.
+                                        try {
+                                            if (wantOn) {
+                                                context.startActivity(
+                                                    Intent(
+                                                        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                                        Uri.parse("package:${context.packageName}")
+                                                    )
+                                                )
+                                            } else {
+                                                context.startActivity(
+                                                    Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                                )
+                                            }
+                                        } catch (_: Exception) {}
                                     },
                                     colors = SwitchDefaults.colors(
                                         checkedThumbColor = c.accent,

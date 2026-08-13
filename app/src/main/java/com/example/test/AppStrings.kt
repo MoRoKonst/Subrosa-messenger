@@ -63,6 +63,7 @@ interface IStr3 {
     val profileNotMeConfirm: String; val profileDiagnostics: String
     val profileSourceCode: String
     val profileTorEnabled: String; val profileTorEnabledSub: String
+    val profileBatteryUnrestricted: String; val profileBatteryUnrestrictedSub: String
     val profileCompromised: String
     val profileCompromisedTitle: String; val profileCompromisedText: String
     val profileCompromisedConfirm: String
@@ -430,6 +431,8 @@ private val ru3 = object : IStr3 {
     override val profileDiagnostics = "Диагностика безопасности"
     override val profileTorEnabled = "Использовать Tor"
     override val profileTorEnabledSub = "Соединение через Orbot вместо прямого. Запуск Orbot при старте может занять до 10-15 секунд"
+    override val profileBatteryUnrestricted = "Игнорировать оптимизацию батареи"
+    override val profileBatteryUnrestrictedSub = "Без этого оболочка телефона (особенно MIUI и подобные) может тихо душить фоновое соединение — сообщения и квитанции перестают доходить без каких-либо ошибок"
     override val profilePanicTitle = "Panic Password"
     override val profilePanicSub = "Пароль для экстренного удаления всех данных"
     override val profilePanicSetStatus = "Установлен"
@@ -989,6 +992,8 @@ private val en3 = object : IStr3 {
     override val profileDiagnostics = "Security diagnostics"
     override val profileTorEnabled = "Use TOR"
     override val profileTorEnabledSub = "Route through Orbot instead of a direct connection. Starting Orbot can take up to 10-15 seconds"
+    override val profileBatteryUnrestricted = "Ignore battery optimization"
+    override val profileBatteryUnrestrictedSub = "Without this, the phone's OEM shell (especially MIUI and similar) can silently choke the background connection — messages and receipts stop arriving with no visible error"
     override val profilePanicTitle = "Panic Password"
     override val profilePanicSub = "Password for emergency data deletion"
     override val profilePanicSetStatus = "Set"
