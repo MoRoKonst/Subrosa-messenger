@@ -97,7 +97,19 @@ class MessengerService : Service() {
 
     private fun buildOkHttpClient(useTor: Boolean): OkHttpClient {
         val builder = OkHttpClient.Builder()
-            .pingInterval(0, TimeUnit.SECONDS)
+            // Was 0 (disabled) — meant a dead connection was only ever
+            // discovered on the next actual write, which could lag the real
+            // disconnect by up to a minute (see nginx's proxy_send_timeout,
+            // default 60s, with no explicit override in docs/nginx-
+            // subrosamessenger.conf.snippet — the only client-side traffic
+            // between real sends is pollMailbox's 30s cadence, so a single
+            // delayed/missed cycle, more likely on an emulator's virtual NIC
+            // than a real phone radio, can silently exceed it). A 20s
+            // WebSocket ping both counts as send traffic for that same
+            // timeout and lets OkHttp itself detect a dead connection within
+            // one ping interval instead of waiting for the next application
+            // write.
+            .pingInterval(20, TimeUnit.SECONDS)
             .connectTimeout(if (useTor) 60 else 15, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.SECONDS)
         if (useTor) {
