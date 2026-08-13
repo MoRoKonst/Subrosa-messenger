@@ -246,6 +246,7 @@ fun ChatScreen(
     var playingVoiceId by remember { mutableStateOf<String?>(null) }
     var playingVideoId by remember { mutableStateOf<String?>(null) }
     var showKeyWarning by remember { mutableStateOf(false) }
+    var showRevokedWarning by remember { mutableStateOf(false) }
     var isTorConnected by remember { mutableStateOf(TorManager.isConnected) }
     val context = LocalContext.current
     var torWarningDismissed by remember {
@@ -469,6 +470,10 @@ fun ChatScreen(
 
                 service.onKeyChanged = { contactId ->
                     if (contactId == recipient) showKeyWarning = true
+                }
+
+                service.onContactRevoked = { contactId ->
+                    if (contactId == recipient) showRevokedWarning = true
                 }
 
                 service.onReadReceived = { messageId ->
@@ -817,6 +822,7 @@ fun ChatScreen(
             if (!isEditMode) ChatStorage.saveDraft(context, userId, recipient, inputText)
             messengerService?.onVoiceReceived = null
             messengerService?.onKeyChanged = null
+            messengerService?.onContactRevoked = null
             messengerService?.onReadReceived = null
             messengerService?.onDeliveredReceived = null
             messengerService?.onMessageReceived = null
@@ -885,6 +891,23 @@ fun ChatScreen(
                                     confirmButton = {
                                         TextButton(onClick = { KeyHistoryManager.markAsVerified(context, recipient); showKeyWarning = false }) {
                                             Text(s.chatKeyWarningConfirm)
+                                        }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = { onBack() }) { Text(s.chatKeyWarningLeave) }
+                                    }
+                                )
+                            }
+                            if (showRevokedWarning) {
+                                AlertDialog(
+                                    onDismissRequest = {},
+                                    title = { Text(s.chatRevokedWarningTitle) },
+                                    text = {
+                                        Text(s.chatRevokedWarningText, color = Color.Red)
+                                    },
+                                    confirmButton = {
+                                        TextButton(onClick = { showRevokedWarning = false }) {
+                                            Text(s.chatRevokedWarningConfirm)
                                         }
                                     },
                                     dismissButton = {

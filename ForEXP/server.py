@@ -1705,6 +1705,16 @@ async def handle_client(websocket):
                     bootstrap_token = pick_bootstrap_token(target)
                     if bootstrap_token:
                         bundle_to_send["bootstrap_token"] = bootstrap_token
+                    # Flags a bundle belonging to a fingerprint revoked via
+                    # "Меня скомпрометировали"/Dead Man's Switch (see
+                    # docs/ISSUE_backup_identity_hijack.md, Тир 5's "Пометка
+                    # prekey bundle как revoked") — register() already
+                    # refuses a revoked fingerprint outright, but a contact
+                    # starting a *new* X3DH session against this bundle has
+                    # no other way to learn the identity was revoked before
+                    # trusting it.
+                    if await db_is_fingerprint_revoked(target):
+                        bundle_to_send["revoked"] = True
                     response = json.dumps({"type": "prekey_bundle_response", "from": target, "bundle": bundle_to_send})
                     await websocket.send(response)
                 else:
@@ -1755,6 +1765,18 @@ async def handle_client(websocket):
                         if bootstrap_token:
                             bundle_to_send["bootstrap_token"] = bootstrap_token
                         results[t] = bundle_to_send
+
+                # Same revoked-flag as get_prekey_bundle, checked outside the
+                # lock (same reasoning: SQLite lookups shouldn't serialize
+                # behind the in-memory clients/prekey_bundles lock). Flagging
+                # a decoy target's bundle here doesn't leak which target in
+                # the batch is the real one — the server can't tell that
+                # either way, decoy or not.
+                fetched_targets = [t for t in targets if results.get(t) is not None]
+                revoked_flags = await asyncio.gather(*(db_is_fingerprint_revoked(t) for t in fetched_targets))
+                for t, is_revoked in zip(fetched_targets, revoked_flags):
+                    if is_revoked:
+                        results[t]["revoked"] = True
 
                 await websocket.send(json.dumps({
                     "type": "prekey_bundles_batch_response",

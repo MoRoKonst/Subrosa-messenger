@@ -262,6 +262,15 @@ class MessengerService : Service() {
     var onEditReceived: ((String, String) -> Unit)? = null
     var onImageReceived: ((String, android.graphics.Bitmap) -> Unit)? = null
     var onKeyChanged: ((String) -> Unit)? = null
+    // Fired when a fetched prekey bundle is flagged "revoked" by the server
+    // (see server.py's get_prekey_bundle/get_prekey_bundles_batch and
+    // docs/ISSUE_backup_identity_hijack.md, Тир 5, "Пометка prekey bundle
+    // как revoked") — the contact's owner used "Меня скомпрометировали" or
+    // Dead Man's Switch, so this identity is no longer trustworthy even
+    // though the bundle itself still parses fine. Mirrors onKeyChanged's
+    // warn-don't-block precedent: a heads-up, not a hard stop on the
+    // session that's about to be established.
+    var onContactRevoked: ((String) -> Unit)? = null
     var onVoiceReceived: ((String, File, Int) -> Unit)? = null
     var onFileReceived: ((String, File, String) -> Unit)? = null
     var onGroupMessageReceived: ((String, GroupMessage) -> Unit)? = null
@@ -3871,6 +3880,10 @@ class MessengerService : Service() {
             // would find nothing (already removed here) and silently drop
             // messages that should have fallen back to legacy encryption.
             val queued = pendingSessionMessages.remove(from)
+            if (bundleJsonRaw.optBoolean("revoked", false)) {
+                Log.w(TAG, "⚠️ prekey bundle от $from помечен сервером как revoked")
+                withContext(Dispatchers.Main) { onContactRevoked?.invoke(from) }
+            }
             try {
                 val rawBundle = SessionKeyManager.parsePrekeyBundle(bundleJsonRaw)
 
