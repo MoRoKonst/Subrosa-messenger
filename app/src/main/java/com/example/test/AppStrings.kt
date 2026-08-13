@@ -64,6 +64,8 @@ interface IStr3 {
     val profileSourceCode: String
     val profileTorEnabled: String; val profileTorEnabledSub: String
     val profileBatteryUnrestricted: String; val profileBatteryUnrestrictedSub: String
+    val batteryPromptTitle: String; val batteryPromptText: String
+    val batteryPromptAllow: String; val batteryPromptSkip: String
     val profileCompromised: String
     val profileCompromisedTitle: String; val profileCompromisedText: String
     val profileCompromisedConfirm: String
@@ -433,6 +435,10 @@ private val ru3 = object : IStr3 {
     override val profileTorEnabledSub = "Соединение через Orbot вместо прямого. Запуск Orbot при старте может занять до 10-15 секунд"
     override val profileBatteryUnrestricted = "Игнорировать оптимизацию батареи"
     override val profileBatteryUnrestrictedSub = "Без этого оболочка телефона (особенно MIUI и подобные) может тихо душить фоновое соединение — сообщения и квитанции перестают доходить без каких-либо ошибок"
+    override val batteryPromptTitle = "Не дайте оболочке душить связь"
+    override val batteryPromptText = "На многих телефонах (особенно MIUI и подобных) при сворачивании приложения фоновое соединение тихо глушится — сообщения и квитанции перестают доходить без единой ошибки. Разрешите приложению игнорировать оптимизацию батареи, чтобы связь оставалась надёжной даже в фоне. Это можно включить позже в Профиле."
+    override val batteryPromptAllow = "Разрешить"
+    override val batteryPromptSkip = "Пропустить"
     override val profilePanicTitle = "Panic Password"
     override val profilePanicSub = "Пароль для экстренного удаления всех данных"
     override val profilePanicSetStatus = "Установлен"
@@ -994,6 +1000,10 @@ private val en3 = object : IStr3 {
     override val profileTorEnabledSub = "Route through Orbot instead of a direct connection. Starting Orbot can take up to 10-15 seconds"
     override val profileBatteryUnrestricted = "Ignore battery optimization"
     override val profileBatteryUnrestrictedSub = "Without this, the phone's OEM shell (especially MIUI and similar) can silently choke the background connection — messages and receipts stop arriving with no visible error"
+    override val batteryPromptTitle = "Don't let the shell choke your connection"
+    override val batteryPromptText = "On many phones (especially MIUI and similar), backgrounding the app silently throttles the background connection — messages and receipts stop arriving with no error at all. Allow the app to ignore battery optimization so the connection stays reliable even in the background. You can also turn this on later from Profile."
+    override val batteryPromptAllow = "Allow"
+    override val batteryPromptSkip = "Skip"
     override val profilePanicTitle = "Panic Password"
     override val profilePanicSub = "Password for emergency data deletion"
     override val profilePanicSetStatus = "Set"
