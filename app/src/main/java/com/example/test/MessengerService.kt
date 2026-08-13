@@ -247,6 +247,8 @@ class MessengerService : Service() {
     var onVoiceReceived: ((String, File, Int) -> Unit)? = null
     var onFileReceived: ((String, File, String) -> Unit)? = null
     var onGroupMessageReceived: ((String, GroupMessage) -> Unit)? = null
+    var onGroupImageReceived: ((groupId: String, from: String, imageId: String, file: File) -> Unit)? = null
+    var onGroupFileReceived: ((groupId: String, from: String, fileId: String, file: File, fileName: String) -> Unit)? = null
     var onGroupReactionReceived: ((String, String, String, String) -> Unit)? = null
     var onGroupInviteReceived: ((Group, String) -> Unit)? = null
     var onTotpSetupResult: ((success: Boolean, reason: String?, recoveryCodes: List<String>?) -> Unit)? = null
@@ -1830,6 +1832,134 @@ class MessengerService : Service() {
 
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ file_chunk error: ${e.message}", e)
+                }
+            }
+
+            // Reassembly for sendGroupImage()/sendGroupFile() — same batched-
+            // chunk-per-member-fanout shape as video_chunk_batch, decrypted
+            // with the group's shared AES key (looked up via GroupManager)
+            // instead of the sender's per-contact key. transferKey includes
+            // groupId so a stalled/duplicate transfer from one group can't
+            // collide with another group's transfer using the same imageId.
+            "group_image_batch" -> {
+                try {
+                    val from = json.getString("from")
+                    val groupId = json.getString("group_id")
+                    val imageId = json.getString("image_id")
+                    val totalChunks = json.getInt("total_chunks")
+                    val chunksArr = json.getJSONArray("chunks")
+
+                    val senderKey = publicKeys[from]
+                        ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also {
+                            publicKeys[from] = it
+                        }
+                    val groupKey = GroupManager.getGroup(this@MessengerService, groupId)?.groupKey
+
+                    if (senderKey == null || groupKey == null) {
+                        Log.w(TAG, "group_image_batch: нет ключа отправителя или группы $groupId")
+                        return
+                    }
+
+                    val transferKey = "$groupId:$from:$imageId"
+                    val chunks = imageChunks.getOrPut(transferKey) { mutableMapOf() }
+                    for (i in 0 until chunksArr.length()) {
+                        val c = chunksArr.getJSONObject(i)
+                        val chunkIndex = c.getInt("chunk_index")
+                        val chunkData = c.getString("data")
+                        val signature = c.optString("signature", null)
+                        if (signature == null || !CryptoManager.verifyChunk(chunkData, signature, senderKey, imageId, chunkIndex)) {
+                            Log.e(TAG, "⚠️ Неверная подпись group_image chunk от $from")
+                            continue
+                        }
+                        chunks[chunkIndex] = chunkData
+                    }
+                    imageTotals[transferKey] = totalChunks
+
+                    if (chunks.size == totalChunks) {
+                        val ordered = (0 until totalChunks).map { chunks[it]!! }
+                        val packedData = ordered.joinToString("")
+                        imageChunks.remove(transferKey)
+                        imageTotals.remove(transferKey)
+
+                        val decryptedBase64 = GroupManager.decryptGroupMessage(packedData, groupKey)
+                        val imageBytes = android.util.Base64.decode(decryptedBase64, android.util.Base64.NO_WRAP)
+                        val file = SecureFileStorage.blobFile(filesDir, imageId)
+                        SecureFileStorage.write(this@MessengerService, file, imageBytes)
+
+                        withContext(Dispatchers.Main) {
+                            onGroupImageReceived?.invoke(groupId, from, imageId, file)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "group_image_batch error: ${e.message}", e)
+                }
+            }
+
+            "group_file_batch" -> {
+                try {
+                    val from = json.getString("from")
+                    val groupId = json.getString("group_id")
+                    val fileId = sanitizePathComponent(json.getString("file_id"))
+                    val encryptedFileName = json.optString("encrypted_file_name", null)
+                    val totalChunks = json.getInt("total_chunks")
+                    val chunksArr = json.getJSONArray("chunks")
+
+                    val senderKey = publicKeys[from]
+                        ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also {
+                            publicKeys[from] = it
+                        }
+                    val groupKey = GroupManager.getGroup(this@MessengerService, groupId)?.groupKey
+
+                    if (senderKey == null || groupKey == null) {
+                        Log.w(TAG, "group_file_batch: нет ключа отправителя или группы $groupId")
+                        return
+                    }
+
+                    val transferKey = "$groupId:$from:$fileId"
+                    if (!fileChunks.containsKey(transferKey)) {
+                        val decryptedName = try {
+                            if (encryptedFileName != null) GroupManager.decryptGroupMessage(encryptedFileName, groupKey) else "file"
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Не удалось расшифровать имя группового файла: ${e.message}")
+                            "file"
+                        }
+                        fileChunks[transferKey] = FileMeta(sanitizePathComponent(decryptedName), totalChunks, mutableListOf())
+                    }
+
+                    for (i in 0 until chunksArr.length()) {
+                        val c = chunksArr.getJSONObject(i)
+                        val chunkIndex = c.getInt("chunk_index")
+                        val chunkData = c.getString("data")
+                        val signature = c.optString("signature", null)
+                        if (signature == null || !CryptoManager.verifyChunk(chunkData, signature, senderKey, fileId, chunkIndex)) {
+                            Log.e(TAG, "⚠️ Неверная подпись group_file chunk от $from")
+                            continue
+                        }
+                        fileChunks[transferKey]?.chunks?.add(chunkIndex to chunkData)
+                    }
+
+                    val receivedChunks = fileChunks[transferKey]?.chunks?.size ?: 0
+                    if (receivedChunks == totalChunks) {
+                        val fileName = fileChunks[transferKey]?.name ?: "file"
+                        val sortedChunks = fileChunks[transferKey]?.chunks?.sortedBy { it.first }
+                        if (sortedChunks == null) {
+                            Log.e(TAG, "fileChunks[$transferKey] исчез до сборки — пропускаем")
+                            return
+                        }
+                        val fullPackedData = sortedChunks.joinToString("") { it.second }
+                        fileChunks.remove(transferKey)
+
+                        val decryptedBase64 = GroupManager.decryptGroupMessage(fullPackedData, groupKey)
+                        val fileBytes = android.util.Base64.decode(decryptedBase64, android.util.Base64.NO_WRAP)
+                        val file = SecureFileStorage.blobFile(filesDir, fileId)
+                        SecureFileStorage.write(this@MessengerService, file, fileBytes)
+
+                        withContext(Dispatchers.Main) {
+                            onGroupFileReceived?.invoke(groupId, from, fileId, file, fileName)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "group_file_batch error: ${e.message}", e)
                 }
             }
 
@@ -4777,6 +4907,111 @@ class MessengerService : Service() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "sendGroupReaction error: ${e.message}")
+            }
+        }
+    }
+
+    /** Group photo send. Mirrors sendImage()'s own encrypt-then-chunk shape,
+     *  but encrypts once with the shared group AES key (GroupManager) instead
+     *  of per-recipient hybrid encryption, and — like sendVideoCircle's
+     *  video_chunk_batch — bundles CHUNK_BATCH_SIZE chunks into one
+     *  anon_message per member per batch. Without batching this would cost
+     *  chunks × members single-use tokens, which is exactly the pattern that
+     *  drained the pool for unbatched video/ICE sends earlier. */
+    fun sendGroupImage(groupId: String, members: List<String>, groupKey: ByteArray, imageBytes: ByteArray) {
+        if (!isConnected) return
+        val imageId = UUID.randomUUID().toString()
+        val recipients = members.filter { it != username }
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                Log.d(TAG, "Отправка группового изображения (группа: $groupId, ${recipients.size} получателей)")
+                val base64Image = android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP)
+                val encrypted = GroupManager.encryptGroupMessage(base64Image, groupKey)
+                val encryptedChunks = encrypted.chunked(120_000)
+                Log.d(TAG, "Групповое изображение зашифровано: ${encryptedChunks.size} чанков")
+
+                val CHUNK_BATCH_SIZE = 15
+                encryptedChunks.chunked(CHUNK_BATCH_SIZE).forEachIndexed { batchIdx, batch ->
+                    val chunksJson = org.json.JSONArray()
+                    batch.forEachIndexed { relIdx, chunk ->
+                        val index = batchIdx * CHUNK_BATCH_SIZE + relIdx
+                        val signature = CryptoManager.signChunk(chunk, imageId, index)
+                        chunksJson.put(JSONObject().apply {
+                            put("chunk_index", index)
+                            put("data", chunk)
+                            put("signature", signature)
+                        })
+                    }
+                    recipients.forEach { memberId ->
+                        sendAnonOrDirect(memberId, JSONObject().apply {
+                            put("type", "group_image_batch")
+                            put("from", username)
+                            put("to", memberId)
+                            put("group_id", groupId)
+                            put("image_id", imageId)
+                            put("total_chunks", encryptedChunks.size)
+                            put("chunks", chunksJson)
+                        })
+                    }
+                    delay(30)
+                }
+
+                Log.d(TAG, "✅ Групповое изображение отправлено")
+            } catch (e: Exception) {
+                Log.e(TAG, "sendGroupImage error: ${e.message}", e)
+            }
+        }
+    }
+
+    /** Group file send — same batched-chunk-per-member-fanout shape as
+     *  sendGroupImage(), plus the file name encrypted with the group key
+     *  (mirrors sendFile()'s encrypted_file_name privacy fix, docs/
+     *  ISSUE_backup_identity_hijack.md's "file_name в открытом виде"). */
+    fun sendGroupFile(groupId: String, members: List<String>, groupKey: ByteArray, fileName: String, fileBytes: ByteArray) {
+        if (!isConnected) return
+        val fileId = UUID.randomUUID().toString()
+        val recipients = members.filter { it != username }
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                Log.d(TAG, "Отправка группового файла: $fileName (группа: $groupId, ${recipients.size} получателей)")
+                val base64File = android.util.Base64.encodeToString(fileBytes, android.util.Base64.NO_WRAP)
+                val encrypted = GroupManager.encryptGroupMessage(base64File, groupKey)
+                val encryptedFileName = GroupManager.encryptGroupMessage(fileName, groupKey)
+                val encryptedChunks = encrypted.chunked(120_000)
+                Log.d(TAG, "Групповой файл зашифрован: ${encryptedChunks.size} чанков")
+
+                val CHUNK_BATCH_SIZE = 15
+                encryptedChunks.chunked(CHUNK_BATCH_SIZE).forEachIndexed { batchIdx, batch ->
+                    val chunksJson = org.json.JSONArray()
+                    batch.forEachIndexed { relIdx, chunk ->
+                        val index = batchIdx * CHUNK_BATCH_SIZE + relIdx
+                        val signature = CryptoManager.signChunk(chunk, fileId, index)
+                        chunksJson.put(JSONObject().apply {
+                            put("chunk_index", index)
+                            put("data", chunk)
+                            put("signature", signature)
+                        })
+                    }
+                    recipients.forEach { memberId ->
+                        sendAnonOrDirect(memberId, JSONObject().apply {
+                            put("type", "group_file_batch")
+                            put("from", username)
+                            put("to", memberId)
+                            put("group_id", groupId)
+                            put("file_id", fileId)
+                            put("encrypted_file_name", encryptedFileName)
+                            put("total_chunks", encryptedChunks.size)
+                            put("chunks", chunksJson)
+                        })
+                    }
+                    delay(30)
+                }
+
+                Log.d(TAG, "✅ Групповой файл отправлен")
+            } catch (e: Exception) {
+                Log.e(TAG, "sendGroupFile error: ${e.message}", e)
             }
         }
     }

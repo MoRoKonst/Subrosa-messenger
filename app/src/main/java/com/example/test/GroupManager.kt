@@ -40,7 +40,15 @@ data class GroupMessage(
     val text: String,
     val timestamp: Long = System.currentTimeMillis(),
     val isOwn: Boolean = false,
-    val reactions: Map<String, String> = emptyMap()
+    val reactions: Map<String, String> = emptyMap(),
+    // Mirrors ChatStorage.StoredMessage's attachment fields — group chat
+    // previously had no photo/file support at all (UI buttons were literal
+    // "(coming soon)" stubs, no send/receive path existed). imagePath/
+    // filePath point at the same SecureFileStorage-encrypted blob files
+    // 1:1 attachments use.
+    val imagePath: String? = null,
+    val filePath: String? = null,
+    val fileName: String? = null
 )
 
 object GroupManager {
@@ -305,6 +313,9 @@ object GroupManager {
                 put("timestamp", msg.timestamp)
                 put("isOwn", msg.isOwn)
                 put("reactions", JSONObject(msg.reactions))
+                msg.imagePath?.let { put("imagePath", it) }
+                msg.filePath?.let { put("filePath", it) }
+                msg.fileName?.let { put("fileName", it) }
             })
         }
 
@@ -326,6 +337,9 @@ object GroupManager {
                 put("timestamp", msg.timestamp)
                 put("isOwn", msg.isOwn)
                 put("reactions", JSONObject(msg.reactions))
+                msg.imagePath?.let { put("imagePath", it) }
+                msg.filePath?.let { put("filePath", it) }
+                msg.fileName?.let { put("fileName", it) }
             })
         }
         prefs.edit().putString("messages", json.toString()).apply()
@@ -353,7 +367,10 @@ object GroupManager {
                     text = obj.getString("text"),
                     timestamp = obj.getLong("timestamp"),
                     isOwn = obj.getBoolean("isOwn"),
-                    reactions = reactions
+                    reactions = reactions,
+                    imagePath = obj.optString("imagePath", null),
+                    filePath = obj.optString("filePath", null),
+                    fileName = obj.optString("fileName", null)
                 )
             }.sortedBy { it.timestamp }
         } catch (e: Exception) {
