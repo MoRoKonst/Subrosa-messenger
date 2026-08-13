@@ -101,7 +101,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     )
                 }
 
-                SectionHeader("Уровни уничтожения", c.textPrimary.copy(alpha = 0.6f))
+                SectionHeader(s.guideWipeLevelsTitle, c.textPrimary.copy(alpha = 0.6f))
                 WipeLevelCard(
                     title = s.wipeLevelHard,
                     desc = s.wipeHardDesc,
@@ -171,7 +171,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                                 val hours = dmsRemaining / 3_600_000
                                 val minutes = (dmsRemaining % 3_600_000) / 60_000
                                 Text(
-                                    "Осталось: ${hours}ч ${minutes}м",
+                                    s.dmsRemainingText(hours, minutes),
                                     fontSize = 12.sp,
                                     color = Color(0xFF66BB6A)
                                 )
@@ -215,7 +215,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                         }
 
                         if (timeoutEnabled) {
-                            Text("Уничтожить если нет входа более:", color = c.textPrimary.copy(alpha = 0.6f), fontSize = 13.sp)
+                            Text(s.timeoutWipeThresholdLabel, color = c.textPrimary.copy(alpha = 0.6f), fontSize = 13.sp)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 listOf(24, 48, 72).forEach { h ->
                                     FilterChip(
