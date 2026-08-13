@@ -951,7 +951,7 @@ fun ProfileScreen(
                             .padding(horizontal = 20.dp, vertical = 16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("⚠️", fontSize = 18.sp, modifier = Modifier.padding(end = 12.dp))
+                        Text("", fontSize = 18.sp, modifier = Modifier.padding(end = 12.dp))
                         Text(
                             s.profileNotMe,
                             fontSize = 15.sp,
@@ -978,7 +978,7 @@ fun ProfileScreen(
                             .padding(horizontal = 20.dp, vertical = 16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("🔄", fontSize = 18.sp, modifier = Modifier.padding(end = 12.dp))
+                        Text("", fontSize = 18.sp, modifier = Modifier.padding(end = 12.dp))
                         Text(
                             s.profileCompromised,
                             fontSize = 15.sp,
