@@ -12,9 +12,23 @@ object RootDetector {
         DANGER
     }
 
+    /** Machine-readable indicator codes — RootDetector itself stays language-
+     *  agnostic; AppStrings.rootReasonText(code) maps each to the localized
+     *  label shown in MainActivity's root-warning dialogs. The emulator
+     *  codes deliberately don't carry the raw emulatorScore() number — that
+     *  score is an internal confidence heuristic, not something a user can
+     *  act on or make sense of. */
+    enum class RootReason {
+        ROOT_BINARY, TEST_KEYS_BUILD, ROOT_PACKAGE, WHICH_SU, SYSTEM_WRITABLE,
+        DEBUGGER_CONNECTED, TRACER_PID,
+        FRIDA_PORT, FRIDA_MAPS, FRIDA_PROCESS,
+        XPOSED_BRIDGE, XPOSED_PACKAGE, XPOSED_MAPS,
+        EMULATOR_HIGH_CONFIDENCE, EMULATOR_POSSIBLE
+    }
+
     data class RootCheckResult(
         val level: RootLevel,
-        val reasons: List<String>
+        val reasons: List<RootReason>
     )
 
     fun isDeviceRooted(): Boolean {
@@ -22,30 +36,30 @@ object RootDetector {
     }
 
     fun checkResult(): RootCheckResult {
-        val reasons = mutableListOf<String>()
+        val reasons = mutableListOf<RootReason>()
 
-        if (checkRootBinaries())    reasons.add("su бинарник найден")
-        if (checkBuildTags())       reasons.add("test-keys сборка")
-        if (checkRootPackages())    reasons.add("root-приложение установлено")
-        if (checkWhichSu())         reasons.add("which su вернул результат")
-        if (checkSystemWritable())  reasons.add("/system доступен на запись")
+        if (checkRootBinaries())    reasons.add(RootReason.ROOT_BINARY)
+        if (checkBuildTags())       reasons.add(RootReason.TEST_KEYS_BUILD)
+        if (checkRootPackages())    reasons.add(RootReason.ROOT_PACKAGE)
+        if (checkWhichSu())         reasons.add(RootReason.WHICH_SU)
+        if (checkSystemWritable())  reasons.add(RootReason.SYSTEM_WRITABLE)
 
         if (!BuildConfig.DEBUG) {
-            if (checkDebuggerConnected()) reasons.add("JDWP-отладчик подключён (adb/Android Studio)")
-            if (checkTracerPid())         reasons.add("процесс трассируется (GDB/strace/LLDB)")
+            if (checkDebuggerConnected()) reasons.add(RootReason.DEBUGGER_CONNECTED)
+            if (checkTracerPid())         reasons.add(RootReason.TRACER_PID)
         }
 
-        if (checkFridaPort())       reasons.add("Frida-сервер активен (порт 27042)")
-        if (checkFridaMaps())       reasons.add("Frida-агент найден в памяти процесса")
-        if (checkFridaProcesses())  reasons.add("Frida-процесс обнаружен")
+        if (checkFridaPort())       reasons.add(RootReason.FRIDA_PORT)
+        if (checkFridaMaps())       reasons.add(RootReason.FRIDA_MAPS)
+        if (checkFridaProcesses())  reasons.add(RootReason.FRIDA_PROCESS)
 
-        if (checkXposedBridge())    reasons.add("Xposed/LSPosed активен в рантайме")
-        if (checkXposedPackages())  reasons.add("Xposed/LSPosed менеджер установлен")
-        if (checkXposedMaps())      reasons.add("XposedBridge.jar найден в памяти процесса")
+        if (checkXposedBridge())    reasons.add(RootReason.XPOSED_BRIDGE)
+        if (checkXposedPackages())  reasons.add(RootReason.XPOSED_PACKAGE)
+        if (checkXposedMaps())      reasons.add(RootReason.XPOSED_MAPS)
 
         val emuScore = emulatorScore()
-        if (emuScore >= 4)          reasons.add("эмулятор (высокая уверенность, score=$emuScore)")
-        else if (emuScore >= 2)     reasons.add("возможно эмулятор (score=$emuScore)")
+        if (emuScore >= 4)          reasons.add(RootReason.EMULATOR_HIGH_CONFIDENCE)
+        else if (emuScore >= 2)     reasons.add(RootReason.EMULATOR_POSSIBLE)
 
         val level = when {
             reasons.isEmpty()  -> RootLevel.NONE
