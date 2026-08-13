@@ -66,6 +66,7 @@ interface IStr3 {
     val profileBatteryUnrestricted: String; val profileBatteryUnrestrictedSub: String
     val batteryPromptTitle: String; val batteryPromptText: String
     val batteryPromptAllow: String; val batteryPromptSkip: String
+    val profileServiceNotifVisible: String; val profileServiceNotifVisibleSub: String
     val profileCompromised: String
     val profileCompromisedTitle: String; val profileCompromisedText: String
     val profileCompromisedConfirm: String
@@ -439,6 +440,8 @@ private val ru3 = object : IStr3 {
     override val batteryPromptText = "На многих телефонах (особенно MIUI и подобных) при сворачивании приложения фоновое соединение тихо глушится — сообщения и квитанции перестают доходить без единой ошибки. Разрешите приложению игнорировать оптимизацию батареи, чтобы связь оставалась надёжной даже в фоне. Это можно включить позже в Профиле."
     override val batteryPromptAllow = "Разрешить"
     override val batteryPromptSkip = "Пропустить"
+    override val profileServiceNotifVisible = "Показывать значок сервиса"
+    override val profileServiceNotifVisibleSub = "По умолчанию выключено — значка Subrosa в шторке нет, чтобы не выдавать, что мессенджер работает. Включите, если важнее стабильность соединения в фоне: невидимое уведомление некоторые прошивки (MIUI и подобные) охотнее прибивают вместе со связью"
     override val profilePanicTitle = "Panic Password"
     override val profilePanicSub = "Пароль для экстренного удаления всех данных"
     override val profilePanicSetStatus = "Установлен"
@@ -1004,6 +1007,8 @@ private val en3 = object : IStr3 {
     override val batteryPromptText = "On many phones (especially MIUI and similar), backgrounding the app silently throttles the background connection — messages and receipts stop arriving with no error at all. Allow the app to ignore battery optimization so the connection stays reliable even in the background. You can also turn this on later from Profile."
     override val batteryPromptAllow = "Allow"
     override val batteryPromptSkip = "Skip"
+    override val profileServiceNotifVisible = "Show service icon"
+    override val profileServiceNotifVisibleSub = "Off by default — no Subrosa icon in the notification shade, so nothing gives away that the messenger is running. Turn it on if background reliability matters more: some shells (MIUI and similar) are more willing to kill a fully hidden notification along with the connection"
     override val profilePanicTitle = "Panic Password"
     override val profilePanicSub = "Password for emergency data deletion"
     override val profilePanicSetStatus = "Set"

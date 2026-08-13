@@ -50,6 +50,16 @@ class MessengerService : Service() {
         const val CHANNEL_ID = "messenger_channel"
 
         const val CHANNEL_ID_SERVICE = "messenger_service_silent"
+        // Visible-but-quiet alternative — same notification, no sound/
+        // vibration, but IMPORTANCE_LOW instead of IMPORTANCE_MIN so it
+        // actually shows a status bar icon instead of being fully hidden.
+        // User's own choice (UserStorage.isServiceNotificationVisible) —
+        // see docs/ISSUE_backup_identity_hijack.md: MIN was probably chosen
+        // for discretion (no visible sign Subrosa is running to someone
+        // glancing at the phone), but that same low-priority signal can
+        // make OEM battery managers more willing to kill the background
+        // connection. Not everyone weighs that tradeoff the same way.
+        const val CHANNEL_ID_SERVICE_VISIBLE = "messenger_service_visible"
         const val NOTIFICATION_ID = 1
         private const val TAG = "MessengerService"
 
@@ -967,6 +977,16 @@ class MessengerService : Service() {
                     sendWs(JSONObject().apply { put("type", "revoke_identity") }.toString())
                 }
             }
+            return START_STICKY
+        }
+
+        if (intent?.getBooleanExtra("refresh_notification", false) == true) {
+            // Fired by ProfileScreen.kt right after the user flips the
+            // hidden/visible service-notification toggle — re-posts the
+            // foreground notification on the now-preferred channel
+            // immediately, instead of waiting for the next service restart.
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.notify(NOTIFICATION_ID, buildNotification())
             return START_STICKY
         }
 
@@ -4662,18 +4682,36 @@ class MessengerService : Service() {
                 setShowBadge(false)
             }
             nm.createNotificationChannel(serviceChannel)
+
+            // Same silent, badge-less, no-sound notification as above —
+            // only the importance level differs, which is what actually
+            // controls whether it gets a status bar icon.
+            val serviceChannelVisible = NotificationChannel(
+                CHANNEL_ID_SERVICE_VISIBLE,
+                "Subrosa Service",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Фоновый сервис Subrosa"
+                setSound(null, null)
+                enableVibration(false)
+                enableLights(false)
+                setShowBadge(false)
+            }
+            nm.createNotificationChannel(serviceChannelVisible)
         }
     }
 
     private fun buildNotification(): Notification {
         val intent = Intent(this, MainActivity::class.java)
         val pending = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
-        return NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
+        val visible = UserStorage.isServiceNotificationVisible(this)
+        val channelId = if (visible) CHANNEL_ID_SERVICE_VISIBLE else CHANNEL_ID_SERVICE
+        return NotificationCompat.Builder(this, channelId)
             .setContentTitle("💬 Subrosa Messenger")
             .setSmallIcon(android.R.drawable.ic_dialog_email)
             .setContentIntent(pending)
             .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setPriority(if (visible) NotificationCompat.PRIORITY_LOW else NotificationCompat.PRIORITY_MIN)
             .build()
     }
 
