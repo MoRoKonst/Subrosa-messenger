@@ -245,7 +245,9 @@ interface IStr9 {
     val dmsNotifTitle: String; val dmsNotifText: String; val dmsNotifGraceText: String
     val dmsIntervalLabel: String; val dmsIntervalHours: String; val dmsIntervalMinutes: String
     val dmsEnabledLabel: String
+    val dmsRemainingText: (Long, Long) -> String
     val timeoutWipeTitle: String; val timeoutWipeSubtitle: String
+    val timeoutWipeThresholdLabel: String
     val wipeOnBreachTitle: String; val wipeOnBreachSubtitle: String
     val wipeLevelLabel: String
     val wipeLevelHard: String; val wipeLevelNuclear: String
@@ -755,8 +757,8 @@ private val ru8 = object : IStr8 {
     override val groupChatPickReaction = "Выбери реакцию"
     override val groupChatEditing = "Редактирование"
     override val groupChatAttach = "Прикрепить"
-    override val groupChatAttachPhoto = "Фото (скоро)"
-    override val groupChatAttachFile = "Файл (скоро)"
+    override val groupChatAttachPhoto = "Фото"
+    override val groupChatAttachFile = "Файл"
     override val groupChatGeo = "Геопозиция"
     override val groupChatGeoPermission = "Разрешите доступ к геопозиции"
     override val groupChatGeoFail = "Не удалось определить позицию"
@@ -774,8 +776,10 @@ private val ru9 = object : IStr9 {
     override val dmsIntervalHours = "ч"
     override val dmsIntervalMinutes = "мин"
     override val dmsEnabledLabel = "Включить Dead Man's Switch"
+    override val dmsRemainingText: (Long, Long) -> String = { h, m -> "Осталось: ${h}ч ${m}м" }
     override val timeoutWipeTitle = "Таймаут пароля"
     override val timeoutWipeSubtitle = "Уничтожить данные если нет входа в приложение дольше заданного времени"
+    override val timeoutWipeThresholdLabel = "Уничтожить если нет входа более:"
     override val wipeOnBreachTitle = "Wipe при взломе"
     override val wipeOnBreachSubtitle = "Уничтожить данные при обнаружении критической угрозы IDS"
     override val wipeLevelLabel = "Уровень уничтожения"
@@ -972,7 +976,7 @@ private val en3 = object : IStr3 {
     override val profileCompromisedText = "Your current key, contacts, chats and sessions will be destroyed permanently. You'll get a new key and can register again — contacts will need to exchange a new invite code with you. Your password and device security settings (TOTP, panic, auto-wipe) are not affected."
     override val profileCompromisedConfirm = "Yes, reset identity"
     override val profileDiagnostics = "Security diagnostics"
-    override val profileTorEnabled = "Use Tor"
+    override val profileTorEnabled = "Use TOR"
     override val profileTorEnabledSub = "Route through Orbot instead of a direct connection. Starting Orbot can take up to 10-15 seconds"
     override val profilePanicTitle = "Panic Password"
     override val profilePanicSub = "Password for emergency data deletion"
@@ -1306,8 +1310,8 @@ private val en8 = object : IStr8 {
     override val groupChatPickReaction = "Pick a reaction"
     override val groupChatEditing = "Editing"
     override val groupChatAttach = "Attach"
-    override val groupChatAttachPhoto = "Photo (coming soon)"
-    override val groupChatAttachFile = "File (coming soon)"
+    override val groupChatAttachPhoto = "Photo"
+    override val groupChatAttachFile = "File"
     override val groupChatGeo = "Location"
     override val groupChatGeoPermission = "Grant location access"
     override val groupChatGeoFail = "Could not determine location"
@@ -1325,8 +1329,10 @@ private val en9 = object : IStr9 {
     override val dmsIntervalHours = "h"
     override val dmsIntervalMinutes = "min"
     override val dmsEnabledLabel = "Enable Dead Man's Switch"
+    override val dmsRemainingText: (Long, Long) -> String = { h, m -> "Remaining: ${h}h ${m}m" }
     override val timeoutWipeTitle = "Password timeout"
     override val timeoutWipeSubtitle = "Destroy data if the app has not been unlocked for the specified time"
+    override val timeoutWipeThresholdLabel = "Destroy if not opened for more than:"
     override val wipeOnBreachTitle = "Wipe on breach"
     override val wipeOnBreachSubtitle = "Destroy data when a critical IDS threat is detected"
     override val wipeLevelLabel = "Destruction level"
