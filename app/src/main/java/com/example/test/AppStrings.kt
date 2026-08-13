@@ -66,6 +66,7 @@ interface IStr3 {
     val profileCompromised: String
     val profileCompromisedTitle: String; val profileCompromisedText: String
     val profileCompromisedConfirm: String
+    val identityRevokedError: String
     val profilePanicTitle: String; val profilePanicSub: String
     val profilePanicSetStatus: String; val profilePanicEnterLabel: String
     val profilePanicInstruction: String
@@ -422,6 +423,7 @@ private val ru3 = object : IStr3 {
     override val profileCompromisedTitle = "Смена identity"
     override val profileCompromisedText = "Текущий ключ, контакты, чаты и сессии будут уничтожены безвозвратно. Вы получите новый ключ и сможете зарегистрироваться заново — контактам нужно будет заново обменяться с вами кодом приглашения. Пароль и настройки безопасности устройства (TOTP, паника, автовайп) не затрагиваются."
     override val profileCompromisedConfirm = "Да, сменить identity"
+    override val identityRevokedError = "Этот аккаунт был отозван (после «Меня скомпрометировали»). Войти с этим ключом больше нельзя — зарегистрируйтесь заново."
     override val profileDiagnostics = "Диагностика безопасности"
     override val profileTorEnabled = "Использовать Tor"
     override val profileTorEnabledSub = "Соединение через Orbot вместо прямого. Запуск Orbot при старте может занять до 10-15 секунд"
@@ -975,6 +977,7 @@ private val en3 = object : IStr3 {
     override val profileCompromisedTitle = "Identity reset"
     override val profileCompromisedText = "Your current key, contacts, chats and sessions will be destroyed permanently. You'll get a new key and can register again — contacts will need to exchange a new invite code with you. Your password and device security settings (TOTP, panic, auto-wipe) are not affected."
     override val profileCompromisedConfirm = "Yes, reset identity"
+    override val identityRevokedError = "This account was revoked (after \"I've been compromised\"). This key can no longer log in — register again."
     override val profileDiagnostics = "Security diagnostics"
     override val profileTorEnabled = "Use TOR"
     override val profileTorEnabledSub = "Route through Orbot instead of a direct connection. Starting Orbot can take up to 10-15 seconds"

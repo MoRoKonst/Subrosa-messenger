@@ -916,6 +916,21 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
+        if (intent?.getBooleanExtra("revoke_identity", false) == true) {
+            // "Меня скомпрометировали" — see docs/ISSUE_backup_identity_hijack.md,
+            // "Candidate fixes" item 4. Fired by ProfileScreen.kt right before it
+            // wipes the local key; the server marks this connection's already-
+            // authenticated fingerprint revoked so the old key stops being
+            // sufficient to register again, even if whoever compromised it still
+            // has it.
+            if (isConnected) {
+                scope.launch(Dispatchers.IO) {
+                    sendWs(JSONObject().apply { put("type", "revoke_identity") }.toString())
+                }
+            }
+            return START_STICKY
+        }
+
         intent?.getStringExtra("avatar_update")?.let { b64 ->
             UserStorage.saveMyAvatar(this, b64)
 
@@ -1413,6 +1428,23 @@ class MessengerService : Service() {
                 withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(
                         this@MessengerService, s.serversAccessCodeRequired, android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+
+            "identity_revoked" -> {
+                // Server rejected register() — this fingerprint was revoked via
+                // a previous "Меня скомпрометировали" on another device (or this
+                // same device, before a fresh registration). The challenge/
+                // response handshake still proves possession of the private
+                // key, but that's no longer sufficient once the owner revoked
+                // it. Nothing to retry — the identity is permanently done.
+                Log.e(TAG, "register отклонён сервером: identity отозвана владельцем")
+                isConnected = false
+                withContext(Dispatchers.Main) {
+                    onStatusChanged?.invoke(false)
+                    android.widget.Toast.makeText(
+                        this@MessengerService, s.identityRevokedError, android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
             }
