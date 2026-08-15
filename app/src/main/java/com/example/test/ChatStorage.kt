@@ -353,6 +353,24 @@ object ChatStorage {
         return prefs.getString("key_$contactId", null)
     }
 
+    /** ML-KEM (PQ) public key counterpart to saveContactPublicKey/
+     *  getContactPublicKey above — was missing entirely until now, so
+     *  MessengerService's in-memory-only publicKeysPq map lost every
+     *  contact's PQ key on every service restart (process death, OOM
+     *  kill, phone reboot), forcing a full prekey-bundle refetch before
+     *  any hybrid-encrypted send could proceed, even for long-established
+     *  contacts. Stored as base64, same convention as the classical key. */
+    fun saveContactPqPublicKey(context: Context, contactId: String, pqPublicKey: ByteArray) {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        prefs.edit().putString("pqkey_$contactId", Base64.encodeToString(pqPublicKey, Base64.NO_WRAP)).apply()
+    }
+
+    fun getContactPqPublicKey(context: Context, contactId: String): ByteArray? {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val b64 = prefs.getString("pqkey_$contactId", null) ?: return null
+        return try { Base64.decode(b64, Base64.NO_WRAP) } catch (e: Exception) { null }
+    }
+
     fun saveContactAvatar(context: Context, contactId: String, base64: String) {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .edit().putString("avatar_$contactId", base64).apply()
