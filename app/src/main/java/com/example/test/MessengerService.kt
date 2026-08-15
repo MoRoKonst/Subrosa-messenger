@@ -187,6 +187,16 @@ class MessengerService : Service() {
     // hybridize the legacy ephemeral-ECDH path (encrypt/decrypt, voice, group
     // key distribution) against harvest-now-decrypt-later, same as X3DH.
     private val publicKeysPq = mutableMapOf<String, ByteArray>()
+
+    /** publicKeysPq is populated only by handleFetchedPrekeyBundle() and was
+     *  never persisted to disk (unlike publicKeys, which always falls back
+     *  to ChatStorage.getContactPublicKey()) — every service restart wiped
+     *  it, forcing a full prekey-bundle refetch before any hybrid-encrypted
+     *  send to an already-established contact could proceed. Mirrors the
+     *  publicKeys[to] ?: ChatStorage.getContactPublicKey(to)?.also{} pattern
+     *  used everywhere else in this file. Root-caused live 2026-08-16. */
+    private fun resolvePqKey(contactId: String): ByteArray? =
+        publicKeysPq[contactId] ?: ChatStorage.getContactPqPublicKey(this, contactId)?.also { publicKeysPq[contactId] = it }
     // Was a mutableSetOf<String> ("sent once ever this process lifetime, never
     // again") — found live: a burst of usage (a video call's signaling traffic,
     // several video circles) can drain a contact's token allocation well
@@ -3203,7 +3213,7 @@ class MessengerService : Service() {
     private fun sendEncrypted(to: String, text: String, publicKey: String, messageId: String? = null) {
         val id = messageId ?: UUID.randomUUID().toString()
         MessageQueue.remove(this@MessengerService, id)
-        val pqKey = publicKeysPq[to]
+        val pqKey = resolvePqKey(to)
         if (pqKey == null) {
             Log.w(TAG, "sendEncrypted: нет PQ-ключа для $to, запрашиваем бандл и откладываем")
             pendingMessages.getOrPut(to) { mutableListOf() }.add(Pair(to, text))
@@ -3269,7 +3279,7 @@ class MessengerService : Service() {
         scope.launch(Dispatchers.IO) {
             try {
                 val cachedKey = publicKeys[to] ?: ChatStorage.getContactPublicKey(this@MessengerService, to)?.also { publicKeys[to] = it }
-                val cachedPqKey = publicKeysPq[to]
+                val cachedPqKey = resolvePqKey(to)
                 if (cachedKey == null || cachedPqKey == null) {
                     Log.w(TAG, "sendVoice: нет ключа $to — запрашиваем")
                     requestPrekeyBundle(to)
@@ -3395,7 +3405,7 @@ class MessengerService : Service() {
         scope.launch(Dispatchers.IO) {
             try {
                 val cachedKey = publicKeys[to] ?: return@launch
-                val cachedPqKey = publicKeysPq[to] ?: return@launch
+                val cachedPqKey = resolvePqKey(to) ?: return@launch
                 val encrypted = CryptoManager.encrypt(emoji, cachedKey, cachedPqKey)
                 val signature = CryptoManager.sign(encrypted)
                 sendAnonOrDirect(to, JSONObject().apply {
@@ -3415,7 +3425,7 @@ class MessengerService : Service() {
     fun sendEdit(to: String, messageId: String, newText: String) {
         if (!isConnected) return
         val cachedKey = publicKeys[to] ?: return
-        val cachedPqKey = publicKeysPq[to] ?: return
+        val cachedPqKey = resolvePqKey(to) ?: return
         scope.launch(Dispatchers.IO) {
             try {
                 val encrypted = CryptoManager.encrypt(newText, cachedKey, cachedPqKey)
@@ -3489,7 +3499,7 @@ class MessengerService : Service() {
                 publicKeys[to] = it
             }
 
-        val cachedPqKey = publicKeysPq[to]
+        val cachedPqKey = resolvePqKey(to)
         if (cachedKey == null || cachedPqKey == null) {
             synchronized(pendingImages) { pendingImages.add(PendingImage(to, chunks)) }
             Log.w(TAG, "sendImage: нет ключа для $to — запрашиваем, изображение в очереди")
@@ -3557,7 +3567,7 @@ class MessengerService : Service() {
             publicKeys[to] = it
         }
 
-        val cachedPqKey = publicKeysPq[to]
+        val cachedPqKey = resolvePqKey(to)
         if (cachedKey == null || cachedPqKey == null) {
             synchronized(pendingFileSends) { pendingFileSends.add(PendingFileSend(to, fileName, chunks, fileId)) }
             Log.w(TAG, "sendFile: нет ключа для $to — запрашиваем, файл в очереди")
@@ -3684,14 +3694,14 @@ class MessengerService : Service() {
             return
         }
 
-        Log.d(TAG, "DEBUG-BOOTSTRAP sendVideoCircle: to=$to hasKey=${publicKeys[to] != null} hasPqKey=${publicKeysPq[to] != null} encFilePath=${encFilePath.isNotEmpty()}")
+        Log.d(TAG, "DEBUG-BOOTSTRAP sendVideoCircle: to=$to hasKey=${publicKeys[to] != null} hasPqKey=${resolvePqKey(to) != null} encFilePath=${encFilePath.isNotEmpty()}")
 
         val cachedKey = publicKeys[to]
             ?: ChatStorage.getContactPublicKey(this@MessengerService, to)?.also {
                 publicKeys[to] = it
             }
 
-        val cachedPqKey = publicKeysPq[to]
+        val cachedPqKey = resolvePqKey(to)
         if (cachedKey == null || cachedPqKey == null) {
             if (encFilePath.isNotEmpty()) {
                 synchronized(pendingVideoCircles) {
@@ -3935,6 +3945,7 @@ class MessengerService : Service() {
 
                 publicKeys[from] = bundle.identityKey
                 publicKeysPq[from] = android.util.Base64.decode(bundle.pqKemPublicKey, android.util.Base64.NO_WRAP)
+                ChatStorage.saveContactPqPublicKey(this@MessengerService, from, publicKeysPq[from]!!)
                 ChatStorage.saveContactPublicKey(this@MessengerService, from, bundle.identityKey)
                 if (KeyHistoryManager.checkKeyChange(this@MessengerService, from, bundle.identityKey)) {
                     Log.w(TAG, "⚠️ TOFU: ключ контакта $from изменился при получении bundle!")
@@ -4179,7 +4190,7 @@ class MessengerService : Service() {
 
         val recipientKey = publicKeys[contact]
             ?: ChatStorage.getContactPublicKey(this@MessengerService, contact)?.also { publicKeys[contact] = it }
-        val recipientPqKey = publicKeysPq[contact]
+        val recipientPqKey = resolvePqKey(contact)
 
         // anon_message requires a hybrid (classical+PQ) encryption key for the recipient.
         // A brand-new contact whose channel was established purely via mailbox (no
@@ -4930,7 +4941,7 @@ class MessengerService : Service() {
                             publicKeys[memberId] = it
                         }
 
-                    val memberPqKey = publicKeysPq[memberId]
+                    val memberPqKey = resolvePqKey(memberId)
                     if (memberPublicKey != null && memberPqKey != null) {
 
                         val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, memberPublicKey, memberPqKey)
@@ -5151,7 +5162,7 @@ class MessengerService : Service() {
                         publicKeys[newMemberId] = it
                     }
 
-                val memberPqKey = publicKeysPq[newMemberId]
+                val memberPqKey = resolvePqKey(newMemberId)
                 if (memberPublicKey != null && memberPqKey != null) {
                     val encryptedGroupKey = GroupManager.encryptGroupKeyForMember(groupKey, memberPublicKey, memberPqKey)
                     val signature = CryptoManager.sign(encryptedGroupKey)
@@ -5232,7 +5243,7 @@ class MessengerService : Service() {
                             publicKeys[memberId] = it
                         }
 
-                    val memberPqKey = publicKeysPq[memberId]
+                    val memberPqKey = resolvePqKey(memberId)
                     if (memberPublicKey != null && memberPqKey != null) {
                         val encryptedNewKey = GroupManager.encryptGroupKeyForMember(newGroupKey, memberPublicKey, memberPqKey)
                         val signature = CryptoManager.sign(encryptedNewKey)
