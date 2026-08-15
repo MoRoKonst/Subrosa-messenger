@@ -4520,6 +4520,20 @@ class MessengerService : Service() {
                 scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
             }
 
+            // session_init's x3dh_header only ever carries a PQ KEM
+            // ciphertext encapsulated against OUR public key (see
+            // SessionKeyManager.initiateSession) — the sender's own PQ
+            // public key is never in it, there's nothing to extract here.
+            // Without this, the receiving side of a brand new contact had
+            // no PQ key cached until it happened to need one later (reply
+            // via sendEncrypted, a reaction, group-key distribution),
+            // paying a full prekey-bundle round-trip right when the user
+            // was waiting on it. Fetch proactively instead, right when the
+            // channel opens. Root-caused live 2026-08-16.
+            if (resolvePqKey(from) == null) {
+                requestPrekeyBundle(from)
+            }
+
             pendingSessionMessages.remove(from)?.forEach { (text, msgId) ->
                 if (text.startsWith("__voice__|")) {
                     val parts = text.removePrefix("__voice__|").split("|", limit = 3)
