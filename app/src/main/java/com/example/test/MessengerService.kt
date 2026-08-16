@@ -2191,6 +2191,11 @@ class MessengerService : Service() {
                     withContext(Dispatchers.Main) { onVoiceReceived?.invoke(voiceId, voiceFile, duration) }
                 } catch (e: Exception) {
                     Log.e(TAG, "voice error: ${e.message}")
+                    // Re-thrown — same class of fix as "message"/session_init
+                    // above (docs/ISSUE_backup_identity_hijack.md): a decrypt
+                    // failure here shouldn't let anon_delivery_ack fire as if
+                    // this voice message had actually been received.
+                    throw e
                 }
             }
 
@@ -2282,6 +2287,12 @@ class MessengerService : Service() {
                                     put("from", username)
                                     put("to", from)
                                 })
+                                // Re-thrown deliberately — see the outer catch
+                                // below for why. This decrypt genuinely
+                                // failed; the message was never actually
+                                // shown to the user despite handleMessage()
+                                // otherwise returning "cleanly" from here.
+                                throw e
                             }
                             return
                         }
@@ -2304,6 +2315,20 @@ class MessengerService : Service() {
                         put("from", username)
                         put("to", from)
                     })
+                    // Re-thrown on purpose — found live 2026-08-17: this
+                    // catch used to swallow the failure silently, so
+                    // handleMessage() returned "cleanly" from the caller's
+                    // point of view even though the message was never
+                    // decrypted or shown. The anon_delivery handler (see
+                    // its call to handleMessage()) only sends
+                    // anon_delivery_ack when handleMessage() returns
+                    // without throwing — swallowing this exception meant a
+                    // decrypt failure got acked as if it had succeeded, so
+                    // the server's token_pending fallback copy got
+                    // discarded and the message was never retried after
+                    // the session got fixed via the session_reset just
+                    // sent above. See docs/ISSUE_backup_identity_hijack.md.
+                    throw e
                 }
             }
 
@@ -4666,6 +4691,16 @@ class MessengerService : Service() {
                 put("from", username)
                 put("to", from)
             })
+            // Re-thrown — same reasoning as the "message" case's catch
+            // block: this is literally yesterday's "OPK N уже использован"
+            // failure mode. Without this, handleMessage() (called from the
+            // anon_delivery handler) would return "cleanly" and send
+            // anon_delivery_ack even though the session was never actually
+            // established — the server's token_pending fallback would get
+            // discarded, and the sender's message would never get retried
+            // once the session_reset above actually gets things back in
+            // sync. See docs/ISSUE_backup_identity_hijack.md.
+            throw e
         }
     }
 
