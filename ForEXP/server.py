@@ -1355,7 +1355,7 @@ async def handle_client(websocket):
                 # ── Session management ──
                 "session_reset", "revoke_identity",
                 # ── Anonymous token routing ──
-                "subscribe_tokens", "anon_message",
+                "subscribe_tokens", "anon_message", "anon_delivery_ack",
                 # ── Anonymous Mailbox ──
                 "mailbox_put", "mailbox_fetch",
                 # ── Device-gated registration TOTP ──
@@ -2484,23 +2484,28 @@ async def handle_client(websocket):
                     if msg_id:
                         await send_safe(websocket, json.dumps({"type": "ack", "id": msg_id}))
                     continue
-                delivery = json.dumps({"type": "anon_delivery", "payload": payload})
+                delivery = json.dumps({"type": "anon_delivery", "token": token, "payload": payload})
+
+                # Queued as a fallback BEFORE attempting live delivery, and
+                # only cleared once the recipient explicitly acks it
+                # (anon_delivery_ack, above) — send_safe() succeeding below
+                # only means the write to the socket didn't raise, not that
+                # the recipient's app actually processed the frame. Without
+                # this, a connection dying in that exact race window
+                # silently lost the message with zero trace, no retry
+                # anywhere. Single-use tokens mean at most one entry is ever
+                # queued here per token, so a plain overwrite (not append)
+                # is correct. subscribe_tokens's existing flush-on-resubscribe
+                # logic is what actually redelivers this if the live attempt
+                # below never gets acked — no new retry mechanism needed.
                 async with lock:
+                    token_pending[token] = [{"type": "anon_delivery", "token": token, "payload": payload}]
                     target_ws = token_to_ws.get(token)
                 if target_ws:
                     ok = await send_safe(target_ws, delivery)
                     if ok:
-                        # Токен одноразовый — удаляем после доставки
-                        async with lock:
-                            token_to_ws.pop(token, None)
-                            ws_to_tokens.get(target_ws, set()).discard(token)
-                        print(f"[ANON] Доставлено по токену …{token[-6:]}")
-                    else:
-                        # Получатель закрыл сокет между проверкой и отправкой — ставим в очередь
-                        async with lock:
-                            q = token_pending.setdefault(token, [])
-                            if len(q) < 10:
-                                q.append({"type": "anon_delivery", "payload": payload})
+                        print(f"[ANON] Отправлено по токену …{token[-6:]} (ждём anon_delivery_ack)")
+                    # else: получатель закрыл сокет между проверкой и отправкой — уже в очереди выше
                 else:
                     # Токен не зарегистрирован локально — пробуем федерацию по fingerprint из payload
                     fed_to = payload.get("to") if isinstance(payload, dict) else None
@@ -2508,18 +2513,15 @@ async def handle_client(websocket):
                         forwarded = await forward_to_peers(fed_to, payload)
                         if forwarded:
                             print(f"[ANON→FED] Токен …{token[-6:]} не найден локально, переслано по fingerprint → {fed_to}")
-                        else:
-                            # Ни локально ни по федерации — ставим в очередь по токену
+                            # Federation path doesn't ack back through this
+                            # server, so the local pending-fallback would
+                            # never get cleared — drop it rather than
+                            # redeliver forever on every future resubscribe.
                             async with lock:
-                                q = token_pending.setdefault(token, [])
-                                if len(q) < 10:
-                                    q.append({"type": "anon_delivery", "payload": payload})
+                                token_pending.pop(token, None)
+                        else:
                             print(f"[ANON] Токен …{token[-6:]} офлайн, сообщение в очереди")
                     else:
-                        async with lock:
-                            q = token_pending.setdefault(token, [])
-                            if len(q) < 10:
-                                q.append({"type": "anon_delivery", "payload": payload})
                         print(f"[ANON] Токен …{token[-6:]} офлайн, сообщение в очереди")
                 if msg_id:
                     await send_safe(websocket, json.dumps({"type": "ack", "id": msg_id}))
@@ -2625,6 +2627,26 @@ async def handle_client(websocket):
                 asyncio.create_task(db_delete_recovery_codes(username))
                 print(f"[TOTP] Device-gated registration protection disabled for {username}")
                 await send_safe(websocket, json.dumps({"type": "totp_disable_ok"}))
+                continue
+
+            # ─── Anonymous delivery confirmation ───────────────────────────────
+            # Real end-to-end delivery confirmation — see the anon_message
+            # handler above: send_safe() succeeding only means the write to
+            # the socket didn't raise, not that the recipient's app actually
+            # processed the frame. A connection dying in that exact race
+            # window used to silently lose the message with zero trace, no
+            # retry anywhere. Found live 2026-08-17 — confirmed as a
+            # genuinely frequent case (unstable mobile connections), not a
+            # rare edge case. See docs/ISSUE_backup_identity_hijack.md.
+            if msg_type == "anon_delivery_ack":
+                token = message.get("token", "")
+                if token and len(token) == MAX_TOKEN_LEN:
+                    async with lock:
+                        token_pending.pop(token, None)
+                        target_ws_final = token_to_ws.pop(token, None)
+                        if target_ws_final:
+                            ws_to_tokens.get(target_ws_final, set()).discard(token)
+                    print(f"[ANON] Подтверждена доставка токена …{token[-6:]}")
                 continue
 
             # ─── Client-side diagnostic "ticket" ─────────────────────────────────
