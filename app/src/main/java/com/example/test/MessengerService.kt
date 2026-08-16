@@ -175,6 +175,17 @@ class MessengerService : Service() {
         set(value) { field = value; connected = value; connectionState.value = value }
     private var isConnecting = false
     private var handshakeDone = false
+    // Guards SessionKeyManager.initialize() below — was
+    // `!SessionKeyManager.hasSession("__init_check__")`, a sentinel
+    // fingerprint never created anywhere in SessionKeyManager, so that
+    // check was permanently true and initialize() (SPK rotation check, OPK
+    // pool reload+refill, full session reload from disk) ran on literally
+    // every successful reconnect instead of once per process lifetime.
+    // Root-caused live 2026-08-17 alongside a genuine "OPK N уже
+    // использован или не существует" session_init failure — not confirmed
+    // as the sole cause, but running this full reinit path far more often
+    // than intended is wrong regardless and worth closing on its own.
+    private var sessionManagerInitialized = false
     private var reconnectAttempts = 0
     private var failuresOnCurrentServer = 0
     private val MAX_FAILURES_BEFORE_SWITCH = 3
@@ -1421,8 +1432,8 @@ class MessengerService : Service() {
                 PanicNotificationManager.show(this@MessengerService)
 
                 try {
-                    if (!SessionKeyManager.hasSession("__init_check__")) {
-
+                    if (!sessionManagerInitialized) {
+                        sessionManagerInitialized = true
                         SessionKeyManager.initialize(this@MessengerService)
                         Log.d(TAG, "SessionKeyManager переинициализирован")
                     }
