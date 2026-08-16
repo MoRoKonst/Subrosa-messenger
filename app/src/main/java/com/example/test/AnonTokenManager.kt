@@ -1,10 +1,21 @@
 package com.subrosa.messenger
 
 import android.content.Context
+import android.util.Log
 import org.json.JSONArray
 import java.security.SecureRandom
 
 object AnonTokenManager {
+
+    // DEBUG-TOKENLIFE prefix on every log line here — grep-able tag for the
+    // 2026-08-17 "messages queued as offline despite a supposedly stable
+    // connection" investigation (docs/ISSUE_backup_identity_hijack.md).
+    // Suffix-only token logging (last 6 chars, "…abc123") matches the
+    // convention server.py already uses in its own [ANON] logs, so a
+    // client/server log pair can be matched by eye without exposing the
+    // full token value in either log.
+    private const val TAG = "AnonTokenManager"
+    private fun short(token: String) = "…${token.takeLast(6)}"
 
     private const val PREF_MY_TOKENS = "anon_my_tokens"
     private const val PREFS_NAME = "anon_token_store"
@@ -63,6 +74,13 @@ object AnonTokenManager {
         val newTokens = (1..needed).map { generateToken() }
         val combined = existing + newTokens
         prefs(ctx).edit().putString(PREF_MY_TOKENS, JSONArray(combined).toString()).apply()
+        // These new tokens only become known to the server once subscribe_tokens
+        // actually goes out with them included — both call sites (connect()'s
+        // initial subscribe and sendAnonTokensTo()'s resupply-triggered one)
+        // already re-send the FULL current pool every time, so this alone
+        // shouldn't desync anything — logged to confirm that's really true in
+        // practice, not just in theory.
+        Log.d(TAG, "DEBUG-TOKENLIFE ensureMyTokenPool: топ-ап +${newTokens.size} новых токенов (было ${existing.size}, стало ${combined.size})")
         combined
     }
 
@@ -86,12 +104,23 @@ object AnonTokenManager {
 
     fun addContactTokens(ctx: Context, fingerprint: String, tokens: List<String>) = synchronized(lock) {
         val existing = getContactTokens(ctx, fingerprint).toMutableList()
-        existing.addAll(tokens.filter { it.isNotBlank() && it.length == 32 })
+        val originalSize = existing.size
+        val valid = tokens.filter { it.isNotBlank() && it.length == 32 }
+        // A duplicate here (a token we already have in this contact's pool
+        // arriving again) would explain a token getting reused after it was
+        // already legitimately spent once — logged as a warning since it
+        // shouldn't normally happen, not just informational noise.
+        val duplicates = valid.filter { it in existing }
+        if (duplicates.isNotEmpty()) {
+            Log.w(TAG, "DEBUG-TOKENLIFE addContactTokens($fingerprint): ${duplicates.size} токен(ов) уже были в пуле — ${duplicates.map { short(it) }}")
+        }
+        existing.addAll(valid)
 
         val capped = if (existing.size > POOL_SIZE) existing.takeLast(POOL_SIZE) else existing
         prefs(ctx).edit()
             .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(capped).toString())
             .apply()
+        Log.d(TAG, "DEBUG-TOKENLIFE addContactTokens($fingerprint): +${valid.size} (было $originalSize, стало ${capped.size})")
     }
 
     fun needsRefill(ctx: Context, fingerprint: String): Boolean =
@@ -116,12 +145,19 @@ object AnonTokenManager {
      * to the slower mailbox poll cycle. */
     fun consumeNextContactToken(ctx: Context, fingerprint: String, allowReserve: Boolean = false): String? = synchronized(lock) {
         val tokens = getContactTokens(ctx, fingerprint).toMutableList()
-        if (tokens.isEmpty()) return@synchronized null
-        if (!allowReserve && tokens.size <= RESERVE_TOKENS) return@synchronized null
+        if (tokens.isEmpty()) {
+            Log.d(TAG, "DEBUG-TOKENLIFE consumeNextContactToken($fingerprint): пул пуст")
+            return@synchronized null
+        }
+        if (!allowReserve && tokens.size <= RESERVE_TOKENS) {
+            Log.d(TAG, "DEBUG-TOKENLIFE consumeNextContactToken($fingerprint): остались только резервные (${tokens.size})")
+            return@synchronized null
+        }
         val token = tokens.removeAt(0)
         prefs(ctx).edit()
             .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(tokens).toString())
             .apply()
+        Log.d(TAG, "DEBUG-TOKENLIFE consumeNextContactToken($fingerprint): взят ${short(token)}, осталось ${tokens.size}")
         token
     }
 
@@ -138,6 +174,12 @@ object AnonTokenManager {
      *  live 2026-08-16. */
     fun restoreContactToken(ctx: Context, fingerprint: String, token: String) = synchronized(lock) {
         val tokens = getContactTokens(ctx, fingerprint).toMutableList()
+        // Should be rare — every occurrence is a send that definitely never
+        // left the device. Warn level, not debug, so it stands out.
+        Log.w(TAG, "DEBUG-TOKENLIFE restoreContactToken($fingerprint): возвращён ${short(token)} — sendWs() вернул false")
+        if (token in tokens) {
+            Log.w(TAG, "DEBUG-TOKENLIFE restoreContactToken($fingerprint): ${short(token)} уже был в пуле — восстанавливаем дубликат!")
+        }
         tokens.add(0, token)
         prefs(ctx).edit()
             .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(tokens).toString())
