@@ -683,6 +683,28 @@ class MessengerService : Service() {
                 // Confirmed via live device testing: a call would connect over ICE and then
                 // get torn down within ~1-2 seconds by this handler, well before
                 // CallManager's own recovery logic ever got a chance to run.
+                //
+                // The same naive-close mistake was still here for the main
+                // WebSocket, just not caught until later: onLost() fires per
+                // Network object, not "internet is gone" — a phone juggling
+                // WiFi and mobile can get onLost() for one transport right as
+                // the other takes over (a harmless handoff), and this used to
+                // force-close a perfectly good, freshly reconnected socket on
+                // every such event. Root-caused live 2026-08-16: toggled
+                // airplane mode for 30s, watched the server log show a full
+                // successful reconnect (register/subscribe_tokens/prekey
+                // bundle) immediately followed by another disconnect ~10s
+                // later — no real network gap in between, no client-side
+                // error at all, matching exactly this pattern. Only close if
+                // there's genuinely no active network left at all; a real
+                // dead connection on the surviving network still gets caught
+                // by the WebSocket's own ping/pong (pingInterval, see
+                // buildOkHttpClient) on its own timescale.
+                val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                if (cm.activeNetwork != null) {
+                    Log.d(TAG, "Сеть потеряна ($network), но есть другая активная — не трогаем соединение")
+                    return
+                }
                 Log.d(TAG, "Сеть потеряна")
                 isConnected = false
                 webSocket?.close(1000, "network lost")
