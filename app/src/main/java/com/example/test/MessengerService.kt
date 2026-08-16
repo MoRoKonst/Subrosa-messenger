@@ -1335,8 +1335,30 @@ class MessengerService : Service() {
                         }
                     }
                 }
-                SessionKeyManager.deleteAllSessions()
-                SessionKeyManager.initialize(this@MessengerService)
+                // Was `SessionKeyManager.deleteAllSessions()` followed by
+                // `initialize()` here, unconditionally, on literally every
+                // successful register() — i.e. every single reconnect, not
+                // just app start. deleteAllSessions() wipes every Double
+                // Ratchet session for every contact from BOTH memory AND
+                // disk (see its own doc comment), plus the in-memory OPK
+                // pool and current SPK. Root-caused live 2026-08-17: this
+                // is why a contact's session kept vanishing right around
+                // reconnects all evening, cascading into "Пакет повреждён
+                // (ephemeral key)" decrypt failures, mutual session_reset,
+                // and — worse — permanently undecryptable in-flight
+                // messages (their ratchet state was gone on both ends by
+                // the time of redelivery, no amount of retrying the same
+                // ciphertext could ever fix that). SessionKeyManager.
+                // initialize() is already called exactly once per process
+                // lifetime elsewhere in this function (the
+                // sessionManagerInitialized guard, fixed 2026-08-17) — this
+                // was a redundant, unguarded duplicate of that same
+                // "run once" intent that never got a guard, and unlike the
+                // guarded one it also actively destroyed session state
+                // instead of just reloading it. Intentional
+                // deleteAllSessions() calls for identity resets/panic wipes
+                // (BackupManager.kt, WipeManager.kt) are untouched — this
+                // was specifically the unconditional per-reconnect copy.
                 publishPrekeyBundle()
 
                 val myTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
