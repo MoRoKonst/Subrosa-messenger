@@ -3081,12 +3081,31 @@ class MessengerService : Service() {
             "anon_delivery" -> {
                 try {
                     val payload = json.getJSONObject("payload")
+                    val transportToken = json.optString("token", null)
 
                     payload.optString("_anon_token").takeIf { it.isNotBlank() }?.let {
                         AnonTokenManager.consumeMyToken(this@MessengerService, it)
                     }
 
                     handleMessage(payload)
+
+                    // Real confirmation that this device actually processed
+                    // the delivery — server.py used to treat its own
+                    // send_safe() succeeding as final (the write not
+                    // raising, not proof this device got it), so a
+                    // connection dying in that exact race window silently
+                    // lost the message. Only sent once handleMessage()
+                    // returns without throwing; server.py keeps the
+                    // fallback copy in token_pending (redelivered on next
+                    // subscribe_tokens) until this arrives. Root-caused
+                    // live 2026-08-17 — see
+                    // docs/ISSUE_backup_identity_hijack.md.
+                    if (!transportToken.isNullOrBlank()) {
+                        sendWs(JSONObject().apply {
+                            put("type", "anon_delivery_ack")
+                            put("token", transportToken)
+                        }.toString())
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "anon_delivery error: ${e.message}")
                 }
