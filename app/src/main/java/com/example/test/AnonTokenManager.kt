@@ -125,6 +125,25 @@ object AnonTokenManager {
         token
     }
 
+    /** Undoes consumeNextContactToken() when the send it was consumed for
+     *  turned out to never actually leave the device (sendWs()'s underlying
+     *  webSocket.send() returned false — the socket was already closed).
+     *  Without this, a token spent on a doomed send during a connectivity
+     *  blip was gone for good: not retried locally (already removed from
+     *  the pool) and never reaching the server at all (so it never even
+     *  hit token_pending's offline-queue path either) — silent message
+     *  loss that only "Забота о собеседнике" health-check would eventually
+     *  paper over. Prepended back to the front so it's the next one tried
+     *  again, not appended to the back behind newer tokens. Root-caused
+     *  live 2026-08-16. */
+    fun restoreContactToken(ctx: Context, fingerprint: String, token: String) = synchronized(lock) {
+        val tokens = getContactTokens(ctx, fingerprint).toMutableList()
+        tokens.add(0, token)
+        prefs(ctx).edit()
+            .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(tokens).toString())
+            .apply()
+    }
+
     private const val PREF_MY_MBOX_TAGS   = "mbox_my_tags"
     private const val PREF_CT_MBOX_PREFIX = "mbox_ct_"
     private const val MBOX_TOTAL = 20
