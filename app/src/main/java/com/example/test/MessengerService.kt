@@ -1330,6 +1330,7 @@ class MessengerService : Service() {
 
                 val myTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
                 if (myTokens.isNotEmpty()) {
+                    Log.d(TAG, "DEBUG-TOKENLIFE connect(): subscribe_tokens (${myTokens.size}) — ${myTokens.map { "…${it.takeLast(6)}" }}")
                     sendWs(JSONObject().apply {
                         put("type", "subscribe_tokens")
                         put("tokens", org.json.JSONArray(myTokens))
@@ -3166,6 +3167,7 @@ class MessengerService : Service() {
                             put("payload", packet)
                         }
                         val sent = sendWs(addPadding(anonPacket).toString())
+                        Log.d(TAG, "DEBUG-TOKENLIFE sendWithForwardSecrecy: to=$to id=$id isFirst=$isFirst token=…${anonToken.takeLast(6)} bootstrap=${bootstrapToken != null} sendWs=$sent")
                         // Same token-loss bug as sendAnonOrDirect() — consumeNextContactToken()
                         // above already permanently removed this single-use
                         // token from the local pool before we knew whether the
@@ -3416,6 +3418,7 @@ class MessengerService : Service() {
                 put("payload", packet)
             }
             val sent = sendWs(addPadding(anonPacket).toString())
+            Log.d(TAG, "DEBUG-TOKENLIFE sendAnonOrDirect: to=$to type=${packet.optString("type")} id=${packet.optString("id").ifBlank { packet.optString("message_id") }} token=…${token.takeLast(6)} sendWs=$sent")
             if (!sent) {
                 // Definite failure, not just unconfirmed — the socket was
                 // already closed when we tried. Give the token back rather
@@ -4353,6 +4356,7 @@ class MessengerService : Service() {
         }
 
         val allMyTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
+        Log.d(TAG, "DEBUG-TOKENLIFE sendAnonTokensTo($contact): re-subscribe_tokens (${allMyTokens.size}) — ${allMyTokens.map { "…${it.takeLast(6)}" }}")
         sendWs(JSONObject().apply {
             put("type", "subscribe_tokens")
             put("tokens", org.json.JSONArray(allMyTokens))
