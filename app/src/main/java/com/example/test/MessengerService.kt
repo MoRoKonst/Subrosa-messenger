@@ -1116,15 +1116,28 @@ class MessengerService : Service() {
         "$groupId|${members.joinToString(",")}|${admins.joinToString(",")}"
 
 
-    private fun sendWs(json: String) {
+    /** Returns whether the frame actually left this device — false means
+     *  webSocket.send() found the socket already closed (or there's no
+     *  webSocket at all), a definite failure, not just "unconfirmed". The
+     *  AGGRESSIVE-cover-traffic path enqueues onto outboundQueue instead of
+     *  sending directly; that always "succeeds" from this function's point
+     *  of view (the frame will go out once outboundQueueSenderJob drains
+     *  it, same as any other queued frame — not this call's problem to
+     *  track further). See sendAnonOrDirect() for why this return value
+     *  matters: consumeNextContactToken() already removed a single-use
+     *  token from the local pool before this call, and a definite send
+     *  failure needs to restore it rather than silently losing the token
+     *  and the message both. */
+    private fun sendWs(json: String): Boolean {
         val mode = UserStorage.getCoverTrafficMode(this)
         if (mode == UserStorage.CoverTrafficMode.AGGRESSIVE && isConnected) {
             if (!outboundQueue.offer(json)) {
                 Log.w(TAG, "outboundQueue переполнена — отправляем напрямую")
-                webSocket?.send(json)
+                return webSocket?.send(json) ?: false
             }
+            return true
         } else {
-            webSocket?.send(json)
+            return webSocket?.send(json) ?: false
         }
     }
 
@@ -3130,7 +3143,19 @@ class MessengerService : Service() {
                             put("token", anonToken)
                             put("payload", packet)
                         }
-                        sendWs(addPadding(anonPacket).toString())
+                        val sent = sendWs(addPadding(anonPacket).toString())
+                        // Same token-loss bug as sendAnonOrDirect() — consumeNextContactToken()
+                        // above already permanently removed this single-use
+                        // token from the local pool before we knew whether the
+                        // send would actually leave the device. A definite
+                        // failure (socket already closed) needs the token back,
+                        // otherwise it's gone with no server-side trace and no
+                        // way to retry with it. Doesn't apply to bootstrapToken —
+                        // that's a one-off server-supplied value, not drawn from
+                        // the persistent per-contact pool, nothing to restore.
+                        if (!sent && bootstrapToken == null) {
+                            AnonTokenManager.restoreContactToken(this@MessengerService, to, anonToken)
+                        }
 
                         if (AnonTokenManager.needsRefill(this@MessengerService, to) && shouldResupplyTokens(to)) {
                             scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
@@ -3345,6 +3370,22 @@ class MessengerService : Service() {
     // claims. When no token is available, the packet is queued and a token
     // refill/mailbox bootstrap is kicked off instead of sending in the clear.
     private fun sendAnonOrDirect(to: String, packet: JSONObject) {
+        // Don't even try to consume a token for a connection we already
+        // know is down — consumeNextContactToken() below permanently
+        // removes a single-use token from the local pool the instant it's
+        // called, regardless of whether the send that follows actually
+        // reaches the server. Skipping straight to the queue-and-retry
+        // path here avoids burning through the whole pool during an
+        // extended outage (found live: a burst of send attempts while
+        // offline for 60-90s silently drained tokens with no way to get
+        // them back — no server-side trace at all, since the packets never
+        // left the device, so it wasn't even the "офлайн, в очередь" path,
+        // just silent loss until the 15-minute health-check eventually
+        // re-bootstrapped the channel from scratch).
+        if (!isConnected) {
+            queuePendingAnon(to, packet)
+            return
+        }
         val token = AnonTokenManager.consumeNextContactToken(this, to)
         if (token != null) {
             val anonPacket = JSONObject().apply {
@@ -3352,7 +3393,15 @@ class MessengerService : Service() {
                 put("token", token)
                 put("payload", packet)
             }
-            sendWs(addPadding(anonPacket).toString())
+            val sent = sendWs(addPadding(anonPacket).toString())
+            if (!sent) {
+                // Definite failure, not just unconfirmed — the socket was
+                // already closed when we tried. Give the token back rather
+                // than losing both it and the message.
+                AnonTokenManager.restoreContactToken(this, to, token)
+                queuePendingAnon(to, packet)
+                return
+            }
             // Proactive early-warning refill — previously only wired into
             // sendWithForwardSecrecy() and sendTyping(), which don't cover
             // this function at all. Found live: a batched video circle send
@@ -3369,24 +3418,28 @@ class MessengerService : Service() {
                 scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
             }
         } else {
-            val queueSize = synchronized(pendingAnonPackets) {
-                pendingAnonPackets.getOrPut(to) { mutableListOf() }.add(packet)
-                pendingAnonPackets[to]?.size ?: 0
+            queuePendingAnon(to, packet)
+        }
+    }
+
+    private fun queuePendingAnon(to: String, packet: JSONObject) {
+        val queueSize = synchronized(pendingAnonPackets) {
+            pendingAnonPackets.getOrPut(to) { mutableListOf() }.add(packet)
+            pendingAnonPackets[to]?.size ?: 0
+        }
+        Log.d(TAG, "DEBUG-BOOTSTRAP sendAnonOrDirect: нет токена/связи для $to, поставлено в очередь (в очереди: $queueSize) type=${packet.optString("type")}")
+        val shouldBootstrap = synchronized(lastTokenBootstrapAttempt) {
+            val now = System.currentTimeMillis()
+            val last = lastTokenBootstrapAttempt[to] ?: 0L
+            if (now - last >= TOKEN_BOOTSTRAP_COOLDOWN_MS) {
+                lastTokenBootstrapAttempt[to] = now
+                true
+            } else {
+                false
             }
-            Log.d(TAG, "DEBUG-BOOTSTRAP sendAnonOrDirect: нет токена для $to, поставлено в очередь (в очереди: $queueSize) type=${packet.optString("type")}")
-            val shouldBootstrap = synchronized(lastTokenBootstrapAttempt) {
-                val now = System.currentTimeMillis()
-                val last = lastTokenBootstrapAttempt[to] ?: 0L
-                if (now - last >= TOKEN_BOOTSTRAP_COOLDOWN_MS) {
-                    lastTokenBootstrapAttempt[to] = now
-                    true
-                } else {
-                    false
-                }
-            }
-            if (shouldBootstrap) {
-                scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
-            }
+        }
+        if (shouldBootstrap) {
+            scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
         }
     }
 
@@ -4269,7 +4322,13 @@ class MessengerService : Service() {
             put("token", anonToken)
             put("payload", payload)
         }
-        sendWs(addPadding(anonPacket).toString())
+        // Same restore-on-definite-failure as sendAnonOrDirect()/
+        // sendWithForwardSecrecy() — this one was consumed from the reserve
+        // tier specifically (allowReserve=true), worth not losing it to a
+        // send that never left the device either.
+        if (!sendWs(addPadding(anonPacket).toString())) {
+            AnonTokenManager.restoreContactToken(this@MessengerService, contact, anonToken)
+        }
 
         val allMyTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
         sendWs(JSONObject().apply {
