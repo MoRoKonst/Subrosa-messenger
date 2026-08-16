@@ -2460,8 +2460,21 @@ async def handle_client(websocket):
                             token_to_ws[t] = websocket
                             known_tokens.add(t)
                             existing.add(t)
-                            # Флашим отложенные сообщения для этого токена
-                            pending = token_pending.pop(t, [])
+                            # Same "stays queued until anon_delivery_ack"
+                            # discipline as the anon_message handler — see
+                            # docs/ISSUE_backup_identity_hijack.md,
+                            # 2026-08-17. This used to pop the fallback copy
+                            # unconditionally and fire a fire-and-forget
+                            # send with the result never checked — if that
+                            # redelivery attempt also failed (or the client
+                            # failed to actually process it), the message
+                            # was gone with zero trace anywhere, since
+                            # nothing ever put it back. Confirmed live: a
+                            # message queued as "офлайн" got silently lost
+                            # exactly this way on the recipient's next
+                            # reconnect. Left in token_pending here — only
+                            # the anon_delivery_ack handler clears it now.
+                            pending = token_pending.get(t, [])
                             for p in pending:
                                 asyncio.create_task(send_safe(websocket, json.dumps(p)))
                         ws_to_tokens[websocket] = existing
