@@ -171,6 +171,37 @@ def _totp_decrypt_from_storage(stored: str) -> str:
 # decides whether a code is required or valid.
 SERVER_ACCESS_PROTECTED = os.environ.get("SERVER_ACCESS_PROTECTED", "").strip().lower() in ("1", "true", "yes")
 
+# ─── Registration flood/Sybil mitigation ──────────────────────────────────────
+# Neither of these cares about the caller's IP, on purpose — an attacker with
+# many real devices/IPs defeats any per-IP limit trivially, so both are keyed
+# on the thing that's actually scarce for them: minting a brand-new identity.
+#
+# MAX_REGISTERED_USERS: hard cap on total distinct fingerprints ever
+# registered (registered_fingerprints table, survives restarts). 0/unset =
+# unlimited. Deliberately a *setting*, not a fixed number baked into the
+# code — every deployment's real capacity differs.
+MAX_REGISTERED_USERS = int(os.environ.get("MAX_REGISTERED_USERS", "0") or "0")
+
+# POW_DIFFICULTY_BITS: a brand-new fingerprint's first-ever register() must
+# include a pow_nonce such that sha256(handshake_challenge + pow_nonce) has
+# at least this many leading zero bits. Only paid once per identity, never
+# again on reconnect — costs a real device real CPU time per fake account it
+# wants to mint, which a per-IP limit can't touch. 0 = disabled. ~18 bits is
+# sub-second on a phone but adds up fast at scale (avg 2^18 ≈ 262k hashes).
+POW_DIFFICULTY_BITS = int(os.environ.get("POW_DIFFICULTY_BITS", "18") or "0")
+
+
+def pow_leading_zero_bits(digest: bytes) -> int:
+    bits = 0
+    for byte in digest:
+        if byte == 0:
+            bits += 8
+            continue
+        bits += 8 - byte.bit_length()
+        break
+    return bits
+
+
 # ─── Federation ───────────────────────────────────────────────────────────────
 # Set env FEDERATION_SECRET to the same value on all servers (shared symmetric key).
 # Set env FEDERATION_PEERS to a comma-separated list of peer WebSocket URLs,
@@ -556,6 +587,17 @@ async def db_is_fingerprint_registered(fingerprint):
 async def db_mark_fingerprint_registered(fingerprint):
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _db_mark_fingerprint_registered_sync, fingerprint)
+
+
+def _db_count_registered_fingerprints_sync():
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT COUNT(*) FROM registered_fingerprints").fetchone()
+    return row[0] if row else 0
+
+
+async def db_count_registered_fingerprints():
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _db_count_registered_fingerprints_sync)
 
 
 def _db_revoke_fingerprint_sync(fingerprint):
@@ -1394,13 +1436,38 @@ async def handle_client(websocket):
                 fingerprint = hashlib.sha256(key_bytes).digest()[:8].hex().upper()
                 username    = fingerprint
 
+                is_new_fingerprint = not await db_is_fingerprint_registered(username)
+
+                # Registration cap + proof-of-work — both keyed on "is this a
+                # brand-new identity", never re-checked on reconnect. Neither
+                # cares about IP: a cap counts real DB rows regardless of who
+                # asked, and PoW cost is paid by the device doing the hashing,
+                # not routed through any address the attacker chose.
+                if is_new_fingerprint and MAX_REGISTERED_USERS > 0:
+                    total = await db_count_registered_fingerprints()
+                    if total >= MAX_REGISTERED_USERS:
+                        print(f"[SECURITY] register: сервер заполнен ({total}/{MAX_REGISTERED_USERS}), отказ новому {username} от {ip}")
+                        await send_safe(websocket, json.dumps({"type": "registration_full"}))
+                        continue
+
+                if is_new_fingerprint and POW_DIFFICULTY_BITS > 0:
+                    pow_nonce = message.get("pow_nonce", "")
+                    digest = hashlib.sha256(challenge + pow_nonce.encode("utf-8", "ignore")).digest()
+                    if pow_leading_zero_bits(digest) < POW_DIFFICULTY_BITS:
+                        print(f"[SECURITY] register: недостаточный PoW для нового аккаунта {username} от {ip}")
+                        await send_safe(websocket, json.dumps({
+                            "type": "pow_required",
+                            "difficulty_bits": POW_DIFFICULTY_BITS
+                        }))
+                        continue
+
                 # Optional access-code allowlist — see SERVER_ACCESS_PROTECTED.
                 # Only for this fingerprint's very first-ever registration; a
                 # client is free to keep sending a (by then already-consumed,
                 # or simply absent) access_code on every later reconnect —
                 # harmless, since it's not even looked at once the fingerprint
                 # is already known.
-                if SERVER_ACCESS_PROTECTED and not await db_is_fingerprint_registered(username):
+                if SERVER_ACCESS_PROTECTED and is_new_fingerprint:
                     access_code = (message.get("access_code") or "").strip().upper()
                     if not access_code or not await db_check_and_consume_access_code(access_code, username):
                         print(f"[SECURITY] register: неверный/отсутствующий access_code для нового аккаунта {username} от {ip}")
