@@ -162,6 +162,7 @@ interface IStr6 {
     val chatContextReply: String; val chatContextCopy: String
     val chatContextReaction: String; val chatContextEdit: String
     val chatContextDeleteOwn: String; val chatContextDeleteAll: String
+    val chatContextResend: String
     val chatPickReaction: String; val chatDisappearTitle: String
     val chatDisappearOff: String; val chatDisappear1h: String
     val chatDisappear24h: String; val chatDisappear7d: String
@@ -611,6 +612,7 @@ private val ru6 = object : IStr6 {
     override val chatContextEdit = "Редактировать"
     override val chatContextDeleteOwn = "Удалить у себя"
     override val chatContextDeleteAll = "Удалить у всех"
+    override val chatContextResend = "Отправить снова"
     override val chatPickReaction = "Выбери реакцию"
     override val chatDisappearTitle = "Исчезающие сообщения"
     override val chatDisappearOff = "Выкл"
@@ -1181,6 +1183,7 @@ private val en6 = object : IStr6 {
     override val chatContextEdit = "Edit"
     override val chatContextDeleteOwn = "Delete for me"
     override val chatContextDeleteAll = "Delete for everyone"
+    override val chatContextResend = "Send again"
     override val chatPickReaction = "Pick a reaction"
     override val chatDisappearTitle = "Disappearing messages"
     override val chatDisappearOff = "Off"

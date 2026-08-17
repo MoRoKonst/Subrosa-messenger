@@ -1257,6 +1257,33 @@ fun ChatScreen(
                                 contextMenuMessage = null
                             }) { Text(s.chatContextEdit, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
                         }
+                        if (ctxMsg.isOwn && ctxMsg.isFailed && ctxMsg.text.isNotEmpty()) {
+                            TextButton(onClick = {
+                                val idx = messages.indexOfFirst { it.id == ctxMsg.id }
+                                if (idx != -1) messages.removeAt(idx)
+                                val replyId = ctxMsg.replyTo?.id
+                                scope.launch(Dispatchers.IO) {
+                                    ChatStorage.deleteMessage(context, userId, recipient, ctxMsg.id)
+                                }
+                                val msgId = messengerService?.send(recipient, ctxMsg.text, replyToId = replyId)
+                                    ?: UUID.randomUUID().toString()
+                                ChatStorage.saveOrUpdateMessage(context, userId, recipient,
+                                    ChatStorage.StoredMessage(id = msgId, text = ctxMsg.text, isOwn = true, replyToId = replyId))
+                                messages.add(Message(id = msgId, text = ctxMsg.text, isOwn = true, replyTo = ctxMsg.replyTo, isPending = true))
+                                scope.launch { listState.animateScrollToItem(messages.size - 1) }
+                                val deliveryTimeoutJob = scope.launch {
+                                    delay(60_000L)
+                                    val idx2 = messages.indexOfFirst { it.id == msgId }
+                                    if (idx2 != -1) messages[idx2] = messages[idx2].copy(isPending = false, isFailed = true)
+                                    withContext(Dispatchers.IO) {
+                                        ChatStorage.markFailed(context, userId, recipient, msgId)
+                                    }
+                                    pendingDeliveryJobs.remove(msgId)
+                                }
+                                pendingDeliveryJobs[msgId] = deliveryTimeoutJob
+                                contextMenuMessage = null
+                            }) { Text(s.chatContextResend, color = c.accent, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                        }
                         TextButton(onClick = {
                             val idx = messages.indexOfFirst { it.id == ctxMsg.id }
                             if (idx != -1) messages.removeAt(idx)

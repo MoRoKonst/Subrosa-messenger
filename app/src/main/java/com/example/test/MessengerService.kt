@@ -3627,7 +3627,12 @@ class MessengerService : Service() {
     }
 
     fun sendDeleteMessage(to: String, messageId: String) {
-        if (!isConnected) return
+        // No isConnected guard on purpose — sendAnonOrDirect() already
+        // queues correctly when offline (queuePendingAnon), same as every
+        // other send path. This function used to bail out entirely while
+        // offline: the local copy was deleted immediately, but the peer's
+        // copy was never told, permanently and silently, since there was no
+        // retry and no error shown to the user. Root-caused live 2026-08-17.
         scope.launch(Dispatchers.IO) {
             sendAnonOrDirect(to, JSONObject().apply {
                 put("type", "message_delete")
@@ -3640,7 +3645,8 @@ class MessengerService : Service() {
     }
 
     fun sendGroupDeleteMessage(groupId: String, messageId: String, members: List<String>) {
-        if (!isConnected) return
+        // Same fix as sendDeleteMessage() above — no isConnected guard,
+        // sendAnonOrDirect() already queues per-member when offline.
         scope.launch(Dispatchers.IO) {
             members.filter { it != username }.forEach { memberId ->
                 sendAnonOrDirect(memberId, JSONObject().apply {
