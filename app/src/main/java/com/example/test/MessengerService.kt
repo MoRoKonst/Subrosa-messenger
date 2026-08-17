@@ -1694,6 +1694,7 @@ class MessengerService : Service() {
             "read" -> {
                 val messageId = json.getString("id")
                 val from = json.optString("from", null)
+                Log.i(TAG, "ПОЛУЧЕНА квитанция read id=$messageId ← $from @ ${System.currentTimeMillis()}")
 
                 if (from != null) {
                     val myId = UserStorage.getUserId(this@MessengerService)
@@ -1705,6 +1706,7 @@ class MessengerService : Service() {
             "delivered" -> {
                 val messageId = json.optString("id", null) ?: return
                 val from      = json.optString("from", null) ?: return
+                Log.i(TAG, "ПОЛУЧЕНА квитанция delivered id=$messageId ← $from @ ${System.currentTimeMillis()}")
 
                 val myId = UserStorage.getUserId(this@MessengerService)
                 ChatStorage.markDelivered(this@MessengerService, myId, from, messageId)
@@ -3455,6 +3457,7 @@ class MessengerService : Service() {
     }
 
     fun sendRead(to: String, messageId: String) {
+        Log.i(TAG, "ОТПРАВЛЯЮ квитанцию read id=$messageId → $to @ ${System.currentTimeMillis()}")
         val packet = JSONObject().apply {
             put("type", "read")
             put("from", username)
@@ -4522,6 +4525,7 @@ class MessengerService : Service() {
         Log.i(TAG, "ПОЛУЧЕНО message ${messageId ?: "?"} ← $from @ ${System.currentTimeMillis()}")
 
         if (messageId != null) {
+            Log.i(TAG, "ОТПРАВЛЯЮ квитанцию delivered id=$messageId → $from @ ${System.currentTimeMillis()}")
             sendAnonOrDirect(from, JSONObject().apply {
                 put("type", "delivered")
                 put("from", username)

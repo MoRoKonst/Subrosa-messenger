@@ -2738,9 +2738,24 @@ async def handle_client(websocket):
                 # (subscribe_tokens already flushes token_pending on
                 # (re)subscribe). Root-caused live 2026-08-13 — see
                 # docs/ISSUE_backup_identity_hijack.md.
+                #
+                # The per-token pop below must check ownership first. A client
+                # always resubscribes the same persistent ~50-token set on every
+                # reconnect. If the OLD connection is a zombie (TCP half-open,
+                # only detected dead once ping_timeout=30s elapses) and the
+                # client already reconnected and re-subscribed on a NEW
+                # websocket in that window, token_to_ws[t] now correctly points
+                # at the new connection — but this cleanup running late for the
+                # old one would blow that fresh mapping away, making every one
+                # of those tokens report "офлайн" for up to ping_timeout
+                # seconds after a perfectly healthy reconnect. Root-caused live
+                # 2026-08-17 (server log showed tokens just subscribed on a new
+                # connection reported offline 18-42s later — exactly the
+                # ping_timeout window) — see docs/ISSUE_backup_identity_hijack.md.
                 owned_tokens = ws_to_tokens.pop(websocket, set())
                 for t in owned_tokens:
-                    token_to_ws.pop(t, None)
+                    if token_to_ws.get(t) == websocket:
+                        token_to_ws.pop(t, None)
             if username in rate_limits:
                 rate_limits[username]["disconnected_at"] = time.time()
             suspicious_activity.pop(username, None)
