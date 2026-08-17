@@ -100,6 +100,7 @@ interface IStr4 {
     val serversScanQrButton: String; val serversUploadQrButton: String
     val serversScanQrPrompt: String; val serversQrInvalid: String; val serversQrNotFound: String
     val serversAccessCodeRequired: String
+    val serversRegistrationFull: String
     val groupInfoTitle: String; val groupInfoNotFound: String
     val groupInfoMembersCount: (Int) -> String; val groupInfoDescription: String
     val groupInfoAddDescription: String; val groupInfoNoDescription: String
@@ -497,6 +498,7 @@ private val ru4 = object : IStr4 {
     override val serversQrInvalid = "Это не похоже на код сервера Subrosa"
     override val serversQrNotFound = "QR-код не найден на фото"
     override val serversAccessCodeRequired = "Этот сервер требует код доступа для регистрации — попроси у оператора QR-код или ссылку"
+    override val serversRegistrationFull = "Этот сервер достиг лимита аккаунтов и сейчас не принимает новые регистрации"
     override val serversPort = "Порт"
     override val groupInfoTitle = "Информация о группе"
     override val groupInfoNotFound = "Группа не найдена"
@@ -1068,6 +1070,7 @@ private val en4 = object : IStr4 {
     override val serversQrInvalid = "This doesn't look like a Subrosa server code"
     override val serversQrNotFound = "No QR code found in the photo"
     override val serversAccessCodeRequired = "This server requires an access code to register — ask the operator for a QR code or link"
+    override val serversRegistrationFull = "This server has reached its account limit and isn't accepting new registrations right now"
     override val serversPort = "Port"
     override val groupInfoTitle = "Group info"
     override val groupInfoNotFound = "Group not found"

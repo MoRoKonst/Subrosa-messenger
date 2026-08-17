@@ -175,6 +175,8 @@ class MessengerService : Service() {
         set(value) { field = value; connected = value; connectionState.value = value }
     private var isConnecting = false
     private var handshakeDone = false
+    private var lastChallengeBytes: ByteArray? = null
+    private var lastRegisterPacket: JSONObject? = null
     // Guards SessionKeyManager.initialize() below — was
     // `!SessionKeyManager.hasSession("__init_check__")`, a sentinel
     // fingerprint never created anywhere in SessionKeyManager, so that
@@ -1307,7 +1309,7 @@ class MessengerService : Service() {
                 // forever on every subsequent reconnect.
                 val recoveryCode = pendingRecoveryCode
                 pendingRecoveryCode = null
-                sendWs(JSONObject().apply {
+                val registerPacket = JSONObject().apply {
                     put("type", "register")
                     put("from", username)
                     put("name", displayName)
@@ -1318,7 +1320,14 @@ class MessengerService : Service() {
                     if (totpSecret != null) put("totp_code", TotpManager.currentCode(totpSecret))
                     if (!accessCode.isNullOrBlank()) put("access_code", accessCode)
                     if (!recoveryCode.isNullOrBlank()) put("recovery_code", recoveryCode)
-                }.toString())
+                }
+                // Remembered so the "pow_required" handler below can resend this
+                // exact packet with a pow_nonce added, without redoing the
+                // recovery_code/access_code/totp gathering above (recoveryCode
+                // in particular is one-shot — pendingRecoveryCode is already
+                // cleared by the time a retry would happen).
+                lastRegisterPacket = registerPacket
+                sendWs(registerPacket.toString())
 
                 val contacts = ChatStorage.getContacts(this@MessengerService)
                 contacts.forEach { contactId ->
@@ -1434,6 +1443,7 @@ class MessengerService : Service() {
                 try {
                     val challengeData = json.getString("data")
                     val challengeBytes = android.util.Base64.decode(challengeData, android.util.Base64.DEFAULT)
+                    lastChallengeBytes = challengeBytes
                     val signature = CryptoManager.signBytes(challengeBytes)
                     sendWs(JSONObject().apply {
                         put("type", "challenge_response")
@@ -1567,6 +1577,40 @@ class MessengerService : Service() {
                 withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(
                         this@MessengerService, s.serversAccessCodeRequired, android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+
+            "pow_required" -> {
+                // Server wants proof-of-work on this new fingerprint's very
+                // first registration (MAX_REGISTERED_USERS/POW_DIFFICULTY_BITS
+                // in server.py) — mint cost tied to real device CPU time, not
+                // to IP, which a multi-device attacker can't route around.
+                // Transparent to the user: solve it and just resend register,
+                // no UI involved.
+                val challengeBytes = lastChallengeBytes
+                val basePacket = lastRegisterPacket
+                val difficultyBits = json.optInt("difficulty_bits", 18)
+                if (challengeBytes == null || basePacket == null) {
+                    Log.e(TAG, "pow_required: нет сохранённого challenge/register-пакета для повтора")
+                    return
+                }
+                withContext(Dispatchers.Default) {
+                    val nonce = solveProofOfWork(challengeBytes, difficultyBits)
+                    val retryPacket = JSONObject(basePacket.toString()).apply {
+                        put("pow_nonce", nonce)
+                    }
+                    sendWs(retryPacket.toString())
+                }
+            }
+
+            "registration_full" -> {
+                // MAX_REGISTERED_USERS reached — nothing to retry, this isn't
+                // transient like pow_required.
+                Log.e(TAG, "register отклонён сервером: сервер заполнен (достигнут лимит аккаунтов)")
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        this@MessengerService, s.serversRegistrationFull, android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
             }
@@ -3452,6 +3496,35 @@ class MessengerService : Service() {
             put("from", username)
             put("to", to)
         })
+    }
+
+    /** Server-side proof-of-work gate on brand-new registrations
+     *  (MAX_REGISTERED_USERS/POW_DIFFICULTY_BITS in server.py) — finds a
+     *  nonce such that sha256(challenge + nonce) has at least [difficultyBits]
+     *  leading zero bits, matching the server's own check byte-for-byte.
+     *  Pure CPU work, no network — run off the IO dispatcher (see caller). */
+    private fun solveProofOfWork(challenge: ByteArray, difficultyBits: Int): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        var counter = 0L
+        while (true) {
+            val nonce = counter.toString()
+            digest.reset()
+            digest.update(challenge)
+            digest.update(nonce.toByteArray(Charsets.UTF_8))
+            if (powLeadingZeroBits(digest.digest()) >= difficultyBits) return nonce
+            counter++
+        }
+    }
+
+    private fun powLeadingZeroBits(bytes: ByteArray): Int {
+        var bits = 0
+        for (b in bytes) {
+            val v = b.toInt() and 0xFF
+            if (v == 0) { bits += 8; continue }
+            bits += 8 - (32 - Integer.numberOfLeadingZeros(v))
+            break
+        }
+        return bits
     }
 
     /** Debounced to once per ~3s per contact — sent per-keystroke it would burn
