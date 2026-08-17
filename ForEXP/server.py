@@ -2684,11 +2684,13 @@ async def handle_client(websocket):
         print(f"[ERROR] {e}")
     finally:
         if username:
-            # Очищаем анонимные токены этого клиента
-            async with lock:
-                tokens = ws_to_tokens.pop(websocket, set())
-                for t in tokens:
-                    token_to_ws.pop(t, None)
+            # Anon-token cleanup happens once, further down (the
+            # ownership-checked block right before rate_limits cleanup) — a
+            # duplicate, unguarded copy of this exact loop used to live here
+            # too and ran FIRST, popping ws_to_tokens[websocket] before the
+            # real (guarded) block below ever got to see it — so the guard
+            # never actually ran against real data. Root-caused live
+            # 2026-08-17 (second round) — see docs/ISSUE_backup_identity_hijack.md.
 
             # Auto call_end: если пользователь отвалился во время звонка — уведомляем собеседника
             call_info = None
