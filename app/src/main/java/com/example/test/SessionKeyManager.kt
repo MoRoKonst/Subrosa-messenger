@@ -858,7 +858,17 @@ object SessionKeyManager {
 
     fun hasSession(contactId: String): Boolean = sessions.containsKey(contactId)
 
-    fun deleteSession(contactId: String) {
+    // synchronized(this) — must serialize against nextSendKey/nextRecvKey's own
+    // synchronized(this) blocks. Without it, a burst of concurrently-processed
+    // incoming messages for the same contact (Dispatchers.IO thread pool — e.g.
+    // several queued messages flushed at once after a long disconnect) could
+    // have one message's decrypt-failure handler call deleteSession() mid-flight
+    // while other messages for the same contact were still inside their own
+    // nextRecvKey() call, yanking the session out from under them and turning
+    // what should have been independent decrypt attempts into "Нет сессии"
+    // failures for messages that may have decrypted fine on their own. Root-
+    // caused live 2026-08-17 — see docs/ISSUE_backup_identity_hijack.md.
+    fun deleteSession(contactId: String) = synchronized(this) {
         val state = sessions.remove(contactId)
         state?.let {
             SecureMemory.wipe(it.sendChainKey)
@@ -875,7 +885,7 @@ object SessionKeyManager {
         removeSessionFromStorage(contactId)
     }
 
-    fun deleteAllSessions() {
+    fun deleteAllSessions() = synchronized(this) {
         sessions.values.forEach {
             SecureMemory.wipe(it.sendChainKey)
             SecureMemory.wipe(it.recvChainKey)
