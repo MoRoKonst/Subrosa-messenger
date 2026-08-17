@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -794,9 +795,29 @@ fun AppNavigation() {
     var lockPassword by remember { mutableStateOf("") }
     var lockPasswordError by remember { mutableStateOf("") }
     val lockScope = rememberCoroutineScope()
+    val lockFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+    val lockFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
     val lockVisible = isLocked == true && screen != "login" && screen != "register" && screen != "calculator" &&
         screen != "totp_setup_required" && screen != "servers_from_totp_setup" && screen != "battery_optimization_prompt"
+
+    // Security-critical: without this, the password field just sits there
+    // unfocused when the lock overlay fades in — Compose doesn't move
+    // keyboard focus to a newly-visible composable on its own. Whatever
+    // field held focus before locking (e.g. a chat's message input still
+    // composed underneath, since this is an overlay, not a screen swap)
+    // keeps it, and the keyboard — which the OS can still show, e.g. right
+    // after an app update/cold start — sends keystrokes there instead.
+    // Found live: user typed their unlock password blind, it landed in a
+    // chat's draft input box instead, in plaintext. clearFocus() first,
+    // then explicitly claim it for the password field.
+    LaunchedEffect(lockVisible) {
+        if (lockVisible) {
+            lockFocusManager.clearFocus(force = true)
+            kotlinx.coroutines.delay(100)
+            lockFocusRequester.requestFocus()
+        }
+    }
 
     val shouldResetCalc by MainActivity.shouldResetToCalculator.collectAsState()
     LaunchedEffect(shouldResetCalc) {
@@ -1185,7 +1206,9 @@ fun AppNavigation() {
                             }
                         }
                     ),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(lockFocusRequester),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Color(0xFFC77B4F),
                         unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
