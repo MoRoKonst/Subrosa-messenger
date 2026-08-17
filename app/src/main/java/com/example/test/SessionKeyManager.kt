@@ -740,6 +740,11 @@ object SessionKeyManager {
         }
         val lookupKey = "$epochPrefix$expectedCounter"
 
+        Log.d(TAG, "DEBUG-RATCHET nextRecvKey($contactId): expectedCounter=$expectedCounter " +
+            "recvCounter=${state.recvCounter} isDHStep=$isDHStep dhKeyB64=${dhKeyB64?.takeLast(12)} " +
+            "currentDhPubB64=${currentDhPubB64?.takeLast(12)} lookupKey=$lookupKey " +
+            "skippedKeys=${state.skippedKeys.keys}")
+
         state.skippedKeys[lookupKey]?.let { skippedKey ->
             val newSkipped = state.skippedKeys.toMutableMap().also { it.remove(lookupKey) }
             val newTs = state.skippedKeyTimestamps.toMutableMap().also { it.remove(lookupKey) }
@@ -748,6 +753,23 @@ object SessionKeyManager {
             saveSession(updated)
             Log.d(TAG, "Использован пропущенный ключ $lookupKey")
             return skippedKey
+        }
+
+        if (expectedCounter <= state.recvCounter) {
+            // No skipped-key entry was found above for this exact lookupKey,
+            // yet expectedCounter isn't ahead of recvCounter either — this
+            // falls through to the "normal, in-order" derivation path below,
+            // which advances the chain and returns whatever key that
+            // produces. That's only correct if expectedCounter really is the
+            // current position; if it's a genuinely older counter (already
+            // passed, key evicted/never stored — e.g. an epochPrefix
+            // mismatch across a DH ratchet step), this silently derives the
+            // WRONG key and the caller will see a plain BAD_DECRYPT with no
+            // indication why. Logged to catch that case live — see
+            // docs/ISSUE_backup_identity_hijack.md, 2026-08-17.
+            Log.w(TAG, "DEBUG-RATCHET nextRecvKey($contactId): expectedCounter=$expectedCounter " +
+                "<= recvCounter=${state.recvCounter}, no skipped key for lookupKey=$lookupKey — " +
+                "falling through to normal derivation, likely wrong if expectedCounter != recvCounter")
         }
 
         if (expectedCounter > state.recvCounter) {
