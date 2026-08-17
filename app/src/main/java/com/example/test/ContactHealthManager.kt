@@ -19,6 +19,15 @@ object ContactHealthManager {
     const val SILENCE_THRESHOLD_MS = 15 * 60 * 1000L
     const val MAILBOX_RETRY_WAIT_MS = 5 * 60 * 1000L
 
+    // Purely a UI-facing "recently active" signal, distinct from isSilent()'s
+    // 15-minute recovery trigger below. There is no real presence protocol
+    // here by design — anonymous token routing means the server can't tell
+    // us who's connected (that would leak who's talking to whom). This is
+    // the best honest approximation: "we've actually heard from them, or had
+    // something delivered to them, in the last few minutes" — not "they are
+    // connected right now", which this app has no way to know.
+    const val RECENTLY_ACTIVE_MS = 2 * 60 * 1000L
+
     // Separate from isSilent()'s time-based check above — this is a plain
     // consecutive-count trigger: 10 of our own messages to a contact in a row
     // with not one "delivered" landing in between. isSilent() needs 15
@@ -87,6 +96,17 @@ object ContactHealthManager {
         val silentIncoming = lastIn == 0L || now - lastIn > SILENCE_THRESHOLD_MS
         val silentDelivered = lastOut == 0L || lastDelivered == 0L || now - lastDelivered > SILENCE_THRESHOLD_MS
         return silentIncoming && silentDelivered
+    }
+
+    /** See RECENTLY_ACTIVE_MS above — an honest "heard from them (or they
+     * confirmed receipt of something) within the last couple minutes", not
+     * a claim they're connected right now. */
+    fun isRecentlyActive(ctx: Context, contactId: String): Boolean {
+        val now = System.currentTimeMillis()
+        val lastIn = getLong(ctx, "last_in_$contactId")
+        val lastDelivered = getLong(ctx, "last_delivered_$contactId")
+        val last = maxOf(lastIn, lastDelivered)
+        return last != 0L && now - last <= RECENTLY_ACTIVE_MS
     }
 
     fun getState(ctx: Context, contactId: String): PingState =

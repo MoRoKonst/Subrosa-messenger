@@ -289,6 +289,15 @@ fun ChatScreen(
     var inputText by remember { mutableStateOf("") }
     var showVerifyDialog by remember { mutableStateOf(false) }
     var isOnline by remember { mutableStateOf(false) }
+    // Header status text ("online"/"offline") — deliberately NOT the same
+    // signal as isOnline above, which is this device's own connection to
+    // the server (used to gate sending). There is no real presence protocol
+    // for contacts (see ContactHealthManager.RECENTLY_ACTIVE_MS) — showing
+    // isOnline here used to claim "the contact is online" when it actually
+    // only meant "I am online", which is misleading regardless of whether
+    // the contact has said anything in hours. This tracks real, recent
+    // activity from the contact instead.
+    var contactRecentlyActive by remember { mutableStateOf(false) }
     var messengerService by remember { mutableStateOf<MessengerService?>(null) }
     var isTyping by remember { mutableStateOf(false) }
     var typingJob by remember { mutableStateOf<Job?>(null) }
@@ -445,6 +454,7 @@ fun ChatScreen(
                 val service = (binder as MessengerService.LocalBinder).getService()
                 messengerService = service
                 isOnline = service.isOnline()
+                contactRecentlyActive = ContactHealthManager.isRecentlyActive(context, recipient)
                 service.clearNotifLines("dm_$recipient")
 
                 // If this contact's anonymous channel isn't confirmed established yet,
@@ -549,6 +559,7 @@ fun ChatScreen(
 
                 service.onMessageReceived = { from, _ ->
                     if (from == recipient) {
+                        contactRecentlyActive = true
                         SoundManager.playMessageReceived()
                         val sender = from
                         scope.launch(Dispatchers.IO) {
@@ -680,6 +691,18 @@ fun ChatScreen(
         MainActivity.chatListVersion.value++
         val draft = ChatStorage.loadDraft(context, userId, recipient)
         if (draft.isNotBlank()) inputText = draft
+    }
+
+    // Polls rather than hooking onDeliveredReceived directly — that callback
+    // only carries a messageId, not the sender, so there's no clean way to
+    // confirm a given delivered event is actually for `recipient` without
+    // extra plumbing. Polling also covers the "ages back out to offline"
+    // side, which no single event captures.
+    LaunchedEffect(recipient) {
+        while (true) {
+            delay(30_000L)
+            contactRecentlyActive = ContactHealthManager.isRecentlyActive(context, recipient)
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -937,7 +960,7 @@ fun ChatScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 val statusKey = when {
                                     isTyping -> "typing"
-                                    isOnline -> "online"
+                                    contactRecentlyActive -> "online"
                                     else     -> "offline"
                                 }
                                 AnimatedContent(
