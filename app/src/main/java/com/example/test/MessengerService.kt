@@ -2305,12 +2305,7 @@ class MessengerService : Service() {
                                 handleIncomingDecryptedMessage(from, fallback, messageId, json)
                             } catch (e: Exception) {
 
-                                requestPrekeyBundle(from)
-                                sendAnonOrDirect(from, JSONObject().apply {
-                                    put("type", "session_reset")
-                                    put("from", username)
-                                    put("to", from)
-                                })
+                                sendSessionResetDebounced(from)
                                 // Re-thrown deliberately — see the outer catch
                                 // below for why. This decrypt genuinely
                                 // failed; the message was never actually
@@ -2331,14 +2326,7 @@ class MessengerService : Service() {
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Ошибка расшифровки от $from: ${e.message}")
-                    SessionKeyManager.deleteSession(from)
-                    requestPrekeyBundle(from)
-
-                    sendAnonOrDirect(from, JSONObject().apply {
-                        put("type", "session_reset")
-                        put("from", username)
-                        put("to", from)
-                    })
+                    sendSessionResetDebounced(from)
                     // Re-thrown on purpose — found live 2026-08-17: this
                     // catch used to swallow the failure silently, so
                     // handleMessage() returned "cleanly" from the caller's
@@ -3433,6 +3421,34 @@ class MessengerService : Service() {
     }
 
     private val lastTypingSentAt = mutableMapOf<String, Long>()
+
+    private val lastSessionResetSentAt = mutableMapOf<String, Long>()
+
+    /** Debounced to once per 10s per contact. Every decrypt failure from a
+     *  given contact independently wiped the session and fired its own
+     *  session_reset + prekey re-fetch — a burst of several failed messages
+     *  in a row (e.g. a few queued sends landing back-to-back after a
+     *  reconnect) fired that many resets. Found live 2026-08-17: one side
+     *  queued 5 session_reset sends to the same contact within ~3.5s (all
+     *  stuck behind a temporary token/connection gap), and once delivered,
+     *  each one independently deleted the recipient's session again —
+     *  including sessions the recipient had *already* freshly
+     *  re-established off an earlier reset in the same burst. Self-sustaining
+     *  loop, not a one-time hiccup: "Пакет повреждён" / repeated
+     *  session_reset never settled on its own. See
+     *  docs/ISSUE_backup_identity_hijack.md. */
+    private fun sendSessionResetDebounced(to: String) {
+        val now = System.currentTimeMillis()
+        if (now - (lastSessionResetSentAt[to] ?: 0L) < 10_000L) return
+        lastSessionResetSentAt[to] = now
+        SessionKeyManager.deleteSession(to)
+        requestPrekeyBundle(to)
+        sendAnonOrDirect(to, JSONObject().apply {
+            put("type", "session_reset")
+            put("from", username)
+            put("to", to)
+        })
+    }
 
     /** Debounced to once per ~3s per contact — sent per-keystroke it would burn
      *  through the (finite, 50-slot) anon token pool almost instantly, since it
@@ -4711,12 +4727,7 @@ class MessengerService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "session_init error: ${e.message}")
 
-            requestPrekeyBundle(from)
-            sendAnonOrDirect(from, JSONObject().apply {
-                put("type", "session_reset")
-                put("from", username)
-                put("to", from)
-            })
+            sendSessionResetDebounced(from)
             // Re-thrown — same reasoning as the "message" case's catch
             // block: this is literally yesterday's "OPK N уже использован"
             // failure mode. Without this, handleMessage() (called from the
