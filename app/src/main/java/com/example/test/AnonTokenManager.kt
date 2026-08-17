@@ -21,12 +21,14 @@ object AnonTokenManager {
     private const val PREFS_NAME = "anon_token_store"
     private const val PREF_CT_PREFIX = "anon_ct_"
     private const val POOL_SIZE = 50
-    // 16, not just "some low number" — refilling isn't instant: it takes a round
-    // trip (I send my batch → they receive it → THEY reciprocate with a fresh
-    // batch of theirs, which is what actually replenishes my supply). Needs
-    // enough headroom that typing + a couple of messages don't outrun that
-    // round trip before it completes.
-    private const val REFILL_THRESHOLD = 16
+    // Refilling isn't instant: it takes a round trip (I send my batch → they
+    // receive it → THEY reciprocate with a fresh batch of theirs, which is
+    // what actually replenishes my supply). Lowered from 16 to 8 — RESERVE_TOKENS
+    // already guarantees the resupply message itself can always fire even at
+    // zero ordinary-traffic tokens, so this only needs headroom for ordinary
+    // traffic during the round trip, not a safety margin against starving the
+    // resupply signal too.
+    private const val REFILL_THRESHOLD = 8
     private const val BATCH_TO_SHARE = 20
     // Tokens below this count are off-limits to ordinary traffic (text,
     // typing, receipts, video/image/file chunks — everything routed through
