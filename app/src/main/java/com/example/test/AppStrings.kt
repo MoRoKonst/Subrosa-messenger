@@ -154,6 +154,8 @@ interface IStr6 {
     val chatKeyWarningConfirm: String; val chatKeyWarningLeave: String
     val chatRevokedWarningTitle: String; val chatRevokedWarningText: String
     val chatRevokedWarningConfirm: String
+    val chatSendBlockedTitle: String; val chatSendBlockedText: String
+    val chatSendBlockedConfirm: String
     val chatTyping: String; val chatMenu: String
     val chatAudioCall: String; val chatVideoCall: String
     val chatVerifyAction: String; val chatDirectConnection: String
@@ -594,6 +596,9 @@ private val ru6 = object : IStr6 {
     override val chatRevokedWarningTitle = "ВНИМАНИЕ!"
     override val chatRevokedWarningText = "Identity этого собеседника была отозвана владельцем (через «Меня скомпрометировали» или Dead Man's Switch) — это может означать, что его ключ был скомпрометирован.\n\nСвяжитесь с ним другим способом и попросите новый код приглашения."
     override val chatRevokedWarningConfirm = "Понятно"
+    override val chatSendBlockedTitle = "Собеседник не получает сообщения"
+    override val chatSendBlockedText = "Уже 10 сообщений подряд ушли без единого подтверждения о доставке. Похоже, собеседник давно не в сети.\n\nОтправка временно приостановлена — дождитесь, пока он выйдет в сеть. Сообщения, которые вы уже написали, никуда не делись и уйдут автоматически."
+    override val chatSendBlockedConfirm = "Понятно"
     override val chatTyping = "печатает..."
     override val chatMenu = "Меню"
     override val chatAudioCall = "Аудиозвонок"
@@ -1161,6 +1166,9 @@ private val en6 = object : IStr6 {
     override val chatRevokedWarningTitle = "WARNING!"
     override val chatRevokedWarningText = "This contact's identity was revoked by its owner (via \"I've been compromised\" or Dead Man's Switch) — this may mean their key was compromised.\n\nContact them through another channel and ask for a new invite code."
     override val chatRevokedWarningConfirm = "Got it"
+    override val chatSendBlockedTitle = "This contact isn't receiving messages"
+    override val chatSendBlockedText = "10 messages in a row went out with no delivery confirmation at all. This contact appears to have been offline for a while.\n\nSending is paused until they come back online. Messages you've already sent haven't gone anywhere — they'll go through automatically once the connection recovers."
+    override val chatSendBlockedConfirm = "Got it"
     override val chatTyping = "typing..."
     override val chatMenu = "Menu"
     override val chatAudioCall = "Audio call"

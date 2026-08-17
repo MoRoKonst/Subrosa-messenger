@@ -302,6 +302,7 @@ class MessengerService : Service() {
     var onTypingReceived: ((String) -> Unit)? = null
     var onReadReceived: ((String) -> Unit)? = null
     var onDeliveredReceived: ((String) -> Unit)? = null
+    var onContactSendUnblocked: ((String) -> Unit)? = null
     var onEditReceived: ((String, String) -> Unit)? = null
     var onImageReceived: ((String, android.graphics.Bitmap) -> Unit)? = null
     var onKeyChanged: ((String) -> Unit)? = null
@@ -1711,7 +1712,10 @@ class MessengerService : Service() {
                 val myId = UserStorage.getUserId(this@MessengerService)
                 ChatStorage.markDelivered(this@MessengerService, myId, from, messageId)
                 ContactHealthManager.recordDelivered(this@MessengerService, from)
-                withContext(Dispatchers.Main) { onDeliveredReceived?.invoke(messageId) }
+                withContext(Dispatchers.Main) {
+                    onDeliveredReceived?.invoke(messageId)
+                    onContactSendUnblocked?.invoke(from)
+                }
             }
 
             // ── "Забота о собеседнике": peer health-check ping/pong ────────────

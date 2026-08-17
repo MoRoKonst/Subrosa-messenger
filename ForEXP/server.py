@@ -42,8 +42,10 @@ active_calls        = {}   # username → {"peer": str, "call_id": str} — дл
 # Сервер не знает кому принадлежит токен — только какой WebSocket его слушает.
 token_to_ws:  dict = {}   # token (str) → websocket
 token_pending: dict = {}  # token (str) → list[dict]  (очередь для офлайн-клиентов)
+token_pending_created: dict = {}  # token (str) → time.time() когда встал в очередь (для TTL)
 ws_to_tokens: dict = {}   # websocket → set[str]       (для очистки при дисконнекте)
 known_tokens: set  = set() # токены, которые хоть раз были зарегистрированы (фейки дропаем)
+TOKEN_PENDING_TTL_SEC = 24 * 3600
 
 # ─── Anonymous Mailbox ────────────────────────────────────────────────────────
 # Слепое хранилище для первого контакта: сервер не знает кто кому пишет.
@@ -2513,6 +2515,7 @@ async def handle_client(websocket):
                 # below never gets acked — no new retry mechanism needed.
                 async with lock:
                     token_pending[token] = [{"type": "anon_delivery", "token": token, "payload": payload}]
+                    token_pending_created[token] = time.time()
                     target_ws = token_to_ws.get(token)
                 if target_ws:
                     ok = await send_safe(target_ws, delivery)
@@ -2532,6 +2535,7 @@ async def handle_client(websocket):
                             # redeliver forever on every future resubscribe.
                             async with lock:
                                 token_pending.pop(token, None)
+                                token_pending_created.pop(token, None)
                         else:
                             print(f"[ANON] Токен …{token[-6:]} офлайн, сообщение в очереди")
                     else:
@@ -2656,6 +2660,7 @@ async def handle_client(websocket):
                 if token and len(token) == MAX_TOKEN_LEN:
                     async with lock:
                         token_pending.pop(token, None)
+                        token_pending_created.pop(token, None)
                         target_ws_final = token_to_ws.pop(token, None)
                         if target_ws_final:
                             ws_to_tokens.get(target_ws_final, set()).discard(token)
@@ -2866,6 +2871,29 @@ async def federation_watchdog():
             print(f"[WATCHDOG] Пир удалён из реестра: {url}")
 
 
+# ─── Watchdog: TTL для token_pending (раз в час) ─────────────────────────────
+# token_pending — чистая in-memory очередь без персистентности (осознанно, см.
+# комментарий у anon_message выше): рестарт сервера и так её обнуляет. Но пока
+# сервер живёт, запись держится там БЕЗГРАНИЧНО, пока получатель не пришлёт
+# anon_delivery_ack — если получатель пропал на дни/недели (не просто на
+# реконнект), это неограниченный рост в ОЗУ. TTL 24ч: после этого срока
+# сообщение считается устаревшим и вычищается — тот же принцип, что и у
+# pending_messages в SQLite (MSG_TTL_SEC), просто отдельный, более короткий
+# срок для in-memory очереди.
+async def token_pending_watchdog():
+    while True:
+        await asyncio.sleep(3600)
+        now = time.time()
+        async with lock:
+            expired = [t for t, created in token_pending_created.items()
+                       if now - created > TOKEN_PENDING_TTL_SEC]
+            for t in expired:
+                token_pending.pop(t, None)
+                token_pending_created.pop(t, None)
+        if expired:
+            print(f"[WATCHDOG] token_pending: вычищено {len(expired)} устаревших (>24ч) записей")
+
+
 # ─── Запуск ───────────────────────────────────────────────────────────────────
 
 async def main(ssl_context=None):
@@ -2895,6 +2923,9 @@ async def main(ssl_context=None):
     if FEDERATION_SECRET:
         asyncio.create_task(federation_watchdog())
         print("[WATCHDOG] Запущен (проверка пиров каждые 3600с)")
+
+    asyncio.create_task(token_pending_watchdog())
+    print(f"[WATCHDOG] token_pending TTL запущен (проверка раз в час, TTL={TOKEN_PENDING_TTL_SEC//3600}ч)")
 
     async with websockets.serve(
         handle_client,

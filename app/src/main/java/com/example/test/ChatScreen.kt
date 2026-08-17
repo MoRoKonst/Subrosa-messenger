@@ -247,6 +247,7 @@ fun ChatScreen(
     var playingVideoId by remember { mutableStateOf<String?>(null) }
     var showKeyWarning by remember { mutableStateOf(false) }
     var showRevokedWarning by remember { mutableStateOf(false) }
+    var showSendBlockedWarning by remember { mutableStateOf(false) }
     var isTorConnected by remember { mutableStateOf(TorManager.isConnected) }
     val context = LocalContext.current
     var torWarningDismissed by remember {
@@ -474,6 +475,10 @@ fun ChatScreen(
 
                 service.onContactRevoked = { contactId ->
                     if (contactId == recipient) showRevokedWarning = true
+                }
+
+                service.onContactSendUnblocked = { contactId ->
+                    if (contactId == recipient) showSendBlockedWarning = false
                 }
 
                 service.onReadReceived = { messageId ->
@@ -823,6 +828,7 @@ fun ChatScreen(
             messengerService?.onVoiceReceived = null
             messengerService?.onKeyChanged = null
             messengerService?.onContactRevoked = null
+            messengerService?.onContactSendUnblocked = null
             messengerService?.onReadReceived = null
             messengerService?.onDeliveredReceived = null
             messengerService?.onMessageReceived = null
@@ -912,6 +918,18 @@ fun ChatScreen(
                                     },
                                     dismissButton = {
                                         TextButton(onClick = { onBack() }) { Text(s.chatKeyWarningLeave) }
+                                    }
+                                )
+                            }
+                            if (showSendBlockedWarning) {
+                                AlertDialog(
+                                    onDismissRequest = { showSendBlockedWarning = false },
+                                    title = { Text(s.chatSendBlockedTitle) },
+                                    text = { Text(s.chatSendBlockedText) },
+                                    confirmButton = {
+                                        TextButton(onClick = { showSendBlockedWarning = false }) {
+                                            Text(s.chatSendBlockedConfirm)
+                                        }
                                     }
                                 )
                             }
@@ -1673,6 +1691,9 @@ fun ChatScreen(
                                         messengerService?.sendEdit(recipient, editId, text)
                                         isEditMode = false
                                         editingMessageId = null
+                                    } else if (ContactHealthManager.isSendBlocked(context, recipient)) {
+                                        inputText = text
+                                        showSendBlockedWarning = true
                                     } else {
                                         val replyId = replyToMessage?.id
                                         val replyMsg = replyToMessage

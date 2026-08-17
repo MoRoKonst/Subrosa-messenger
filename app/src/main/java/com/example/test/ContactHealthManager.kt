@@ -19,6 +19,15 @@ object ContactHealthManager {
     const val SILENCE_THRESHOLD_MS = 15 * 60 * 1000L
     const val MAILBOX_RETRY_WAIT_MS = 5 * 60 * 1000L
 
+    // Separate from isSilent()'s time-based check above — this is a plain
+    // consecutive-count trigger: 10 of our own messages to a contact in a row
+    // with not one "delivered" landing in between. isSilent() needs 15
+    // minutes of quiet in BOTH directions to fire, which is the right
+    // threshold for the background health-check/reconnect cycle, but too
+    // slow for "stop letting the user shout into the void" — a burst of 10
+    // unconfirmed sends can happen in well under 15 minutes.
+    const val UNCONFIRMED_SEND_BLOCK_THRESHOLD = 10
+
     enum class PingState { NONE, PINGED, MAILBOX_TRIED }
 
     /** Call whenever real traffic (a decrypted message, a session_init, an
@@ -34,17 +43,35 @@ object ContactHealthManager {
     /** Call when a `delivered` ack arrives for one of our own outgoing
      * messages to [contactId]. */
     fun recordDelivered(ctx: Context, contactId: String) {
-        prefs(ctx).edit().putLong("last_delivered_$contactId", System.currentTimeMillis()).apply()
+        prefs(ctx).edit()
+            .putLong("last_delivered_$contactId", System.currentTimeMillis())
+            .putInt("unconfirmed_count_$contactId", 0)
+            .apply()
     }
 
     /** Call whenever we actually attempt to send [contactId] something —
      * distinguishes "never talked to them" (not silence, just never
-     * started) from "used to talk, now quiet". */
+     * started) from "used to talk, now quiet". Also advances the
+     * consecutive-unconfirmed-send counter used by isSendBlocked(). */
     fun recordOutgoingAttempt(ctx: Context, contactId: String) {
-        prefs(ctx).edit().putLong("last_out_$contactId", System.currentTimeMillis()).apply()
+        val count = getInt(ctx, "unconfirmed_count_$contactId") + 1
+        prefs(ctx).edit()
+            .putLong("last_out_$contactId", System.currentTimeMillis())
+            .putInt("unconfirmed_count_$contactId", count)
+            .apply()
     }
 
+    /** True once UNCONFIRMED_SEND_BLOCK_THRESHOLD of our own messages to
+     * [contactId] have gone out in a row with no `delivered` in between —
+     * the UI uses this to stop the user from sending further into a channel
+     * that clearly isn't getting through, rather than silently queuing an
+     * unbounded pile of doomed sends. Cleared the moment one delivered ack
+     * lands (recordDelivered), regardless of which message it was for. */
+    fun isSendBlocked(ctx: Context, contactId: String): Boolean =
+        getInt(ctx, "unconfirmed_count_$contactId") >= UNCONFIRMED_SEND_BLOCK_THRESHOLD
+
     private fun getLong(ctx: Context, key: String): Long = prefs(ctx).getLong(key, 0L)
+    private fun getInt(ctx: Context, key: String): Int = prefs(ctx).getInt(key, 0)
 
     /** True once both directions have gone quiet for SILENCE_THRESHOLD_MS —
      * the spec's trigger condition ("входящие сообщения прекратились И
@@ -91,6 +118,7 @@ object ContactHealthManager {
             .remove("last_out_$contactId")
             .remove("state_$contactId")
             .remove("state_at_$contactId")
+            .remove("unconfirmed_count_$contactId")
             .apply()
     }
 }
