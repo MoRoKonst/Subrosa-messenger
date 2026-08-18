@@ -26,7 +26,15 @@ object PanicNotificationManager {
             .setSmallIcon(android.R.drawable.ic_menu_delete)
             .setContentTitle(s.panicNotifTitle)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            // PRIORITY_HIGH (pre-O) / IMPORTANCE_HIGH channel (O+, see ensureChannel)
+            // — below high, Android collapses the action button until the
+            // notification is manually expanded, which defeats the point of a
+            // panic button. setOnlyAlertOnce(true) keeps this from re-alerting
+            // (sound/vibrate/heads-up) on every re-notify() — this fires on
+            // every successful reconnect (MessengerService's handshake_ok),
+            // which would otherwise mean a heads-up popup every reconnect.
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setAutoCancel(false)
             .addAction(0, s.panicNotifButton, makeWipePendingIntent(context))
@@ -59,7 +67,7 @@ object PanicNotificationManager {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 s.panicNotifTitle,
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = s.panicNotifText
                 lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
