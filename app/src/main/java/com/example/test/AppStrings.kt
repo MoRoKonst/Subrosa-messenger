@@ -814,8 +814,8 @@ private val ru9 = object : IStr9 {
     override val wipeLevelLabel = "Уровень уничтожения"
     override val wipeLevelHard = "Жёсткий (HARD)"
     override val wipeLevelNuclear = "Ядерный (NUCLEAR)"
-    override val wipeHardDesc = "Удаляет все ключи, файлы и данные приложения"
-    override val wipeNuclearDesc = "HARD + полный сброс приложения (системный уровень)"
+    override val wipeHardDesc = "Удаляет все ключи, файлы и данные приложения — но специально сохраняет хеш пароля в скрытом месте, чтобы после уничтожения приложение всё ещё узнавало владельца (нужно для сценария с decoy-паролем)"
+    override val wipeNuclearDesc = "То же самое, что Hard, но без всяких исключений — системный вызов Android «Очистить данные», гарантированно стирающий вообще всё, включая ту служебную запись, которую Hard специально оставляет. Восстановить доступ через decoy-пароль после этого будет уже нельзя"
     override val wipeSettingsWarning = "Эти настройки необратимы. После срабатывания все данные будут уничтожены без возможности восстановления."
     override val panicButtonLabel = "Кнопка паники на экране блокировки"
     override val panicButtonSubtitle = "Показывает уведомление с кнопкой вайпа, доступной без разблокировки. Нажимайте быстро, не считая нажатий — каждое засчитывается мгновенно. Минимум 5 нажатий."
@@ -892,7 +892,7 @@ private val ru10 = object : IStr10 {
     override val guidePanicButtonTitle = "Кнопка паники в уведомлении"
     override val guidePanicButtonDesc = "Третий, отдельный способ экстренного удаления (помимо пароля под принуждением и кнопок громкости) — постоянное уведомление с кнопкой «Удалить всё» в один тап. Быстрее, чем набирать пароль, но требует доступа к шторке уведомлений. Можно включить тот же фейковый экран вместо мгновенного закрытия приложения — настраивается отдельно."
     override val guideWipeLevelsTitle = "Уровни уничтожения (Hard / Nuclear)"
-    override val guideWipeLevelsDesc = "Hard — удаляет все ключи, файлы и данные приложения. Nuclear — то же самое плюс полный сброс приложения на системном уровне. Разные функции экстренного удаления используют разные уровни по умолчанию (например, «мёртвая рука» всегда бьёт максимально жёстко — Nuclear)."
+    override val guideWipeLevelsDesc = "Hard удаляет все ключи, файлы и данные приложения, но намеренно сохраняет в скрытом месте хеш пароля — это нужно, чтобы после удаления приложение всё ещё могло узнать владельца по decoy-паролю. Nuclear делает то же самое без единого исключения: это системный вызов Android «Очистить данные», который гарантированно стирает вообще всё, включая ту запись, которую Hard оставляет — после Nuclear восстановить доступ через decoy-пароль уже нельзя. Разные функции экстренного удаления используют разные уровни по умолчанию (например, «мёртвая рука» всегда бьёт максимально жёстко — Nuclear, ей компромисс с decoy-восстановлением не нужен)."
 }
 
 val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9, ru10)
@@ -1386,8 +1386,8 @@ private val en9 = object : IStr9 {
     override val wipeLevelLabel = "Destruction level"
     override val wipeLevelHard = "Hard (HARD)"
     override val wipeLevelNuclear = "Nuclear (NUCLEAR)"
-    override val wipeHardDesc = "Deletes all keys, files and app data"
-    override val wipeNuclearDesc = "HARD + full app reset (system-level)"
+    override val wipeHardDesc = "Deletes all keys, files and app data — but deliberately keeps a hidden password hash so the app can still recognize its owner afterward (needed for the decoy-password scenario)"
+    override val wipeNuclearDesc = "Same as Hard, but with no exceptions — the Android system's own \"clear data\" call, guaranteed to erase absolutely everything, including the one record Hard deliberately keeps. Recovering access via the decoy password won't be possible after this"
     override val wipeSettingsWarning = "These settings are irreversible. Once triggered, all data will be permanently destroyed with no recovery possible."
     override val panicButtonLabel = "Panic button on lock screen"
     override val panicButtonSubtitle = "Shows a notification with a wipe button accessible without unlocking. Tap quickly without counting — each press registers immediately."
@@ -1464,7 +1464,7 @@ private val en10 = object : IStr10 {
     override val guidePanicButtonTitle = "Panic button notification"
     override val guidePanicButtonDesc = "A third, separate emergency-deletion method (besides the duress password and the volume buttons) — a persistent notification with a one-tap \"Delete everything\" action. Faster than typing a password, but needs access to the notification shade. Can be set to show the same fake screen instead of just closing the app — configured separately."
     override val guideWipeLevelsTitle = "Destruction levels (Hard / Nuclear)"
-    override val guideWipeLevelsDesc = "Hard deletes all keys, files, and app data. Nuclear does the same plus a full system-level app reset. Different emergency-deletion features default to different levels (the dead man's switch, for example, always goes straight to Nuclear)."
+    override val guideWipeLevelsDesc = "Hard deletes all keys, files, and app data, but deliberately keeps a hidden password hash — needed so the app can still recognize its owner via the decoy password afterward. Nuclear does the same with no exceptions at all: it's the Android system's own \"clear data\" call, guaranteed to erase absolutely everything, including the one record Hard keeps — recovering access via the decoy password won't be possible after Nuclear. Different emergency-deletion features default to different levels (the dead man's switch, for example, always goes straight to Nuclear, since it doesn't need the decoy-recovery trade-off)."
 }
 
 val enStrings = AppStrings("en", en1, en2, en3, en4, en5, en6, en7, en8, en9, en10)
