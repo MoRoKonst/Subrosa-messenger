@@ -3283,18 +3283,24 @@ class MessengerService : Service() {
                         }
                         val sent = sendWs(addPadding(anonPacket).toString())
                         Log.d(TAG, "DEBUG-TOKENLIFE sendWithForwardSecrecy: to=$to id=$id isFirst=$isFirst token=…${anonToken.takeLast(6)} bootstrap=${bootstrapToken != null} sendWs=$sent")
-                        // Same token-loss bug as sendAnonOrDirect() — consumeNextContactToken()
-                        // above already permanently removed this single-use
-                        // token from the local pool before we knew whether the
-                        // send would actually leave the device. A definite
-                        // failure (socket already closed) needs the token back,
-                        // otherwise it's gone with no server-side trace and no
-                        // way to retry with it. Doesn't apply to bootstrapToken —
-                        // that's a one-off server-supplied value, not drawn from
-                        // the persistent per-contact pool, nothing to restore.
-                        if (!sent && bootstrapToken == null) {
-                            AnonTokenManager.restoreContactToken(this@MessengerService, to, anonToken)
-                        }
+                        // Restore-on-failure DISABLED — found live 2026-08-18: sendWs()
+                        // returning false is not a reliable signal that the frame never
+                        // left the device (under real network stress — e.g. mid video
+                        // call — a "failed" send can still land server-side moments
+                        // later). Restoring the token back into the pool in that case
+                        // let it be reused for a second, unrelated message while the
+                        // server had already delivered-and-invalidated it from the
+                        // first use — token …9bc2b4 confirmed delivered once, then
+                        // handed out again ~12 minutes later, "офлайн" on the second
+                        // use since the server had already cleared its routing entry.
+                        // A double-spent single-use token is worse than a lost one — an
+                        // occasional restore-denied token is an acceptable trade for
+                        // never silently routing a message into the void with the
+                        // sender believing it succeeded. See
+                        // docs/ISSUE_backup_identity_hijack.md.
+                        // if (!sent && bootstrapToken == null) {
+                        //     AnonTokenManager.restoreContactToken(this@MessengerService, to, anonToken)
+                        // }
 
                         if (AnonTokenManager.needsRefill(this@MessengerService, to) && shouldResupplyTokens(to)) {
                             scope.launch(Dispatchers.IO) { sendAnonTokensTo(to) }
@@ -3593,10 +3599,14 @@ class MessengerService : Service() {
             val sent = sendWs(addPadding(anonPacket).toString())
             Log.d(TAG, "DEBUG-TOKENLIFE sendAnonOrDirect: to=$to type=${packet.optString("type")} id=${packet.optString("id").ifBlank { packet.optString("message_id") }} token=…${token.takeLast(6)} sendWs=$sent")
             if (!sent) {
-                // Definite failure, not just unconfirmed — the socket was
-                // already closed when we tried. Give the token back rather
-                // than losing both it and the message.
-                AnonTokenManager.restoreContactToken(this, to, token)
+                // Token restore DISABLED — see sendWithForwardSecrecy()'s
+                // matching comment, docs/ISSUE_backup_identity_hijack.md,
+                // 2026-08-18: sendWs()==false isn't a reliable enough signal
+                // that the frame never reached the server to safely reuse
+                // the token — a token confirmed delivered once and then
+                // handed out again is worse than one that's simply lost.
+                // The message itself is still queued and retried normally.
+                // AnonTokenManager.restoreContactToken(this, to, token)
                 queuePendingAnon(to, packet)
                 return
             }
@@ -4526,12 +4536,10 @@ class MessengerService : Service() {
             put("token", anonToken)
             put("payload", payload)
         }
-        // Same restore-on-definite-failure as sendAnonOrDirect()/
-        // sendWithForwardSecrecy() — this one was consumed from the reserve
-        // tier specifically (allowReserve=true), worth not losing it to a
-        // send that never left the device either.
+        // Restore-on-failure DISABLED here too — see sendAnonOrDirect()'s
+        // matching comment, docs/ISSUE_backup_identity_hijack.md, 2026-08-18.
         if (!sendWs(addPadding(anonPacket).toString())) {
-            AnonTokenManager.restoreContactToken(this@MessengerService, contact, anonToken)
+            // AnonTokenManager.restoreContactToken(this@MessengerService, contact, anonToken)
         }
 
         val allMyTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
