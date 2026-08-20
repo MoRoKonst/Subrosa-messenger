@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
@@ -39,7 +39,7 @@ fun ActiveCallScreen(
     isGroup: Boolean,
     onHangUp: () -> Unit
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val context = LocalContext.current
     val s = LocalStrings.current
 
@@ -389,7 +389,7 @@ private fun SmallCallButton(
     activeColor: Color = Color(0xFF444466),
     onClick: () -> Unit
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.width(64.dp)
@@ -427,7 +427,7 @@ private fun SmallCallButton(
 
 @Composable
 private fun HangUpButton(label: String, onClick: () -> Unit) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val haptic = LocalHapticFeedback.current
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
@@ -459,7 +459,7 @@ private fun HangUpButton(label: String, onClick: () -> Unit) {
 
 @Composable
 private fun RemoteVideoView(track: VideoTrack, label: String, modifier: Modifier) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     Box(modifier = modifier.background(c.callBg)) {
         AndroidView(
             factory = { ctx ->

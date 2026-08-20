@@ -7,4 +7,4 @@
     android:canRequestFilterKeyEvents="true"
     android:description="@string/emergency_service_description"
     android:notificationTimeout="0"
-    android:packageNames="com.bcon.messenger" />
+    android:packageNames="com.subrosa.messenger" />

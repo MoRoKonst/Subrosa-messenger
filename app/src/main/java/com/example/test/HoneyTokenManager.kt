@@ -35,7 +35,7 @@ object HoneyTokenManager {
         val fakeIv = ByteArray(16).also { rng.nextBytes(it) }
         val fakeMac = ByteArray(32).also { rng.nextBytes(it) }
         val payload = buildString {
-            appendLine("BCON_SESSION_CACHE_V1")
+            appendLine("SUBROSA_SESSION_CACHE_V1")
             appendLine("key=${Base64.encodeToString(fakeKey, Base64.NO_WRAP)}")
             appendLine("iv=${Base64.encodeToString(fakeIv, Base64.NO_WRAP)}")
             appendLine("mac=${Base64.encodeToString(fakeMac, Base64.NO_WRAP)}")

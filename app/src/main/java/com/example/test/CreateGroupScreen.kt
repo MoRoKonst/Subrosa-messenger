@@ -81,21 +81,21 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back, tint = Color.White)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF091a66))
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF4A151A))
             )
         }
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(Color(0xFF141e4a), Color(0xFF0d1238))))
+                .background(Brush.verticalGradient(listOf(Color(0xFF2B0F14), Color(0xFF180A0C))))
                 .padding(padding)
                 .padding(16.dp)
         ) {
 
             Surface(
                 shape = CircleShape,
-                color = Color(0xFF2481CC),
+                color = Color(0xFFC77B4F),
                 modifier = Modifier
                     .size(100.dp)
                     .align(Alignment.CenterHorizontally)
@@ -123,13 +123,13 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF00E5FF),
+                    focusedBorderColor = Color(0xFFD9A566),
                     unfocusedBorderColor = Color(0xFFE0E6FF).copy(alpha = 0.3f),
-                    focusedLabelColor = Color(0xFF00E5FF),
+                    focusedLabelColor = Color(0xFFD9A566),
                     unfocusedLabelColor = Color(0xFFE0E6FF).copy(alpha = 0.6f),
                     focusedTextColor = Color.White,
                     unfocusedTextColor = Color.White,
-                    cursorColor = Color(0xFF00E5FF)
+                    cursorColor = Color(0xFFD9A566)
                 )
             )
 
@@ -164,7 +164,7 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                                 }
                             },
                         shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) Color(0xFF2481CC).copy(alpha = 0.3f) else Color(0xFF1F2B5E)
+                        color = if (isSelected) Color(0xFFC77B4F).copy(alpha = 0.3f) else Color(0xFF3A1216)
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
@@ -172,7 +172,7 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                         ) {
                             val avatarColor = remember(contactName) {
                                 val colors = listOf(
-                                    Color(0xFF2481CC), Color(0xFFE74C3C), Color(0xFF27AE60),
+                                    Color(0xFFC77B4F), Color(0xFFE74C3C), Color(0xFF27AE60),
                                     Color(0xFFF39C12), Color(0xFF9B59B6), Color(0xFF1ABC9C)
                                 )
                                 colors[contactName.hashCode().absoluteValue % colors.size]
@@ -204,7 +204,7 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                             )
 
                             if (isSelected) {
-                                Text("✓", fontSize = 24.sp, color = Color(0xFF00E5FF))
+                                Text("✓", fontSize = 24.sp, color = Color(0xFFD9A566))
                             }
                         }
                     }
@@ -246,7 +246,7 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                 },
                 enabled = groupName.isNotBlank() && selectedMembers.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth().height(50.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2481CC))
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC77B4F))
             ) {
                 Text(
                     s.createGroupButton,
@@ -285,7 +285,7 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                 }
             },
             confirmButton = {},
-            containerColor = Color(0xFF091a66)
+            containerColor = Color(0xFF4A151A)
         )
     }
 }

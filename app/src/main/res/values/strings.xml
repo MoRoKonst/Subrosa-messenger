@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Subrosa</string>
+    <string name="emergency_service_label">Subrosa Emergency Wipe</string>
     <string name="emergency_service_description">Emergency data deletion on 5 volume down button presses</string>
 </resources>

@@ -72,6 +72,7 @@ object StorageKeyManager {
             val decrypted = decryptWithPassword(blob, password, salt)
             smk?.fill(0)
             smk = decrypted
+            SessionKeyManager.reloadSessionsIfNeeded()
             true
         } catch (_: Exception) {
             false
@@ -86,6 +87,7 @@ object StorageKeyManager {
             smk?.fill(0)
             smk = decrypted
             migrateKsKeyIfNeeded(context, decrypted)
+            SessionKeyManager.reloadSessionsIfNeeded()
             true
         } catch (_: Exception) {
             false

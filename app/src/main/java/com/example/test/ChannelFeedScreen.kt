@@ -38,7 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.tween
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,7 +54,7 @@ fun ChannelFeedScreen(
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     val scope = rememberCoroutineScope()
 
@@ -740,7 +740,7 @@ fun ChannelPostCard(
     isAdmin: Boolean = false,
     onLongClick: (() -> Unit)? = null
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val dateFormat = remember { SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()) }
     val postBitmap = remember(post.id) {
         if (post.imageData.isNotEmpty()) ImageHelper.decodeBase64ToBitmap(post.imageData) else null
@@ -807,7 +807,7 @@ fun ChannelSubscribeDialog(
     onDismiss: () -> Unit
 ) {
     val s = LocalStrings.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = c.card,

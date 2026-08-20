@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.sp
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 
 @Composable
 fun IncomingCallScreen(
@@ -31,7 +31,7 @@ fun IncomingCallScreen(
     onAccept: () -> Unit,
     onDecline: () -> Unit
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val context = LocalContext.current
     val s = LocalStrings.current
     val haptic = LocalHapticFeedback.current

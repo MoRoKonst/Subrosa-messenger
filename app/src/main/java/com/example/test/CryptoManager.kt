@@ -765,7 +765,7 @@ object CryptoManager {
         val report = StringBuilder()
         fun emit(line: String = "") { report.append(line).append('\n'); onLine?.invoke(line) }
         emit("═══════════════════════════════════════")
-        emit(tr("🔐 ДИАГНОСТИКА БЕЗОПАСНОСТИ KEYSTORE", "🔐 KEYSTORE SECURITY DIAGNOSTICS"))
+        emit(tr("ДИАГНОСТИКА БЕЗОПАСНОСТИ KEYSTORE", "KEYSTORE SECURITY DIAGNOSTICS"))
         emit("═══════════════════════════════════════\n")
 
         if (!hasKeys()) {
@@ -1008,7 +1008,7 @@ object CryptoManager {
         emit()
 
         emit("═══════════════════════════════════════")
-        emit(tr("📊 ИТОГОВЫЙ СТАТУС", "📊 SUMMARY"))
+        emit(tr("ИТОГОВЫЙ СТАТУС", "SUMMARY"))
         emit("═══════════════════════════════════════")
         emit(tr("Публичный ключ (fingerprint):", "Public key (fingerprint):"))
         emit(getFingerprintEmoji())
@@ -1048,7 +1048,7 @@ object CryptoManager {
         val report = StringBuilder()
         fun emit(line: String = "") { report.append(line).append('\n'); onLine?.invoke(line) }
         emit("═══════════════════════════════════════")
-        emit(tr("💣 СТРЕСС-ТЕСТЫ (ДОЛЖНЫ ПРОВАЛИТЬСЯ)", "💣 STRESS TESTS (SHOULD FAIL)"))
+        emit(tr("СТРЕСС-ТЕСТЫ (ДОЛЖНЫ ПРОВАЛИТЬСЯ)", "STRESS TESTS (SHOULD FAIL)"))
         emit("═══════════════════════════════════════\n")
 
         emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 1: Расшифровка мусора", "📋 NEGATIVE TEST 1: Decrypting garbage"))
@@ -1264,7 +1264,7 @@ object CryptoManager {
         emit()
 
         emit("═══════════════════════════════════════")
-        emit(tr("📊 ИТОГ СТРЕСС-ТЕСТОВ", "📊 STRESS TEST SUMMARY"))
+        emit(tr("ИТОГ СТРЕСС-ТЕСТОВ", "STRESS TEST SUMMARY"))
         emit("═══════════════════════════════════════")
         emit(tr("Все негативные тесты ДОЛЖНЫ быть отклонены.", "All negative tests SHOULD be rejected."))
         emit(tr("Если видишь ❌ БАГ - это критическая проблема!", "If you see ❌ BUG — that's a critical problem!"))
@@ -1279,7 +1279,7 @@ object CryptoManager {
         val report = StringBuilder()
         fun emit(line: String = "") { report.append(line).append('\n'); onLine?.invoke(line) }
         emit("═══════════════════════════════════════")
-        emit(tr("🔬 РАСШИРЕННЫЕ ТЕСТЫ (SESSION + GROUP)", "🔬 ADVANCED TESTS (SESSION + GROUP)"))
+        emit(tr("РАСШИРЕННЫЕ ТЕСТЫ (SESSION + GROUP)", "ADVANCED TESTS (SESSION + GROUP)"))
         emit("═══════════════════════════════════════\n")
 
         emit(tr("📋 ТЕСТ 9: HKDF (KDF-деривация)", "📋 TEST 9: HKDF (KDF derivation)"))
@@ -1582,7 +1582,7 @@ object CryptoManager {
         emit()
 
         emit("═══════════════════════════════════════")
-        emit(tr("📊 ИТОГ РАСШИРЕННЫХ ТЕСТОВ", "📊 ADVANCED TEST SUMMARY"))
+        emit(tr("ИТОГ РАСШИРЕННЫХ ТЕСТОВ", "TEST SUMMARY"))
         emit("═══════════════════════════════════════")
         emit(tr("Покрыто: HKDF · AES-GCM · GroupManager · X3DH · Ratchet · Out-of-order · ML-KEM", "Covered: HKDF · AES-GCM · GroupManager · X3DH · Ratchet · Out-of-order · ML-KEM"))
         emit(tr("Если видишь ❌ ПРОВАЛ — это критическая проблема!", "If you see ❌ FAIL — that's a critical problem!"))
