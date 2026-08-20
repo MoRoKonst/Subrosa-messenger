@@ -277,14 +277,14 @@ On login, the stored hash is compared to the freshly derived hash. Auto-migratio
 
 ### Backup Encryption
 
-Backup files use the same pattern with a user-supplied backup password:
+Backup files use a deliberately different, memory-hard KDF from the password hash above — Argon2id, not PBKDF2 — since a backup file is something an attacker who obtains a copy can brute-force offline indefinitely, with no rate limiting and no device involved at all:
 
 ```
-salt    = SecureRandom().nextBytes(16)
-key     = PBKDF2-SHA256(backupPassword, salt, 100_000, 256)
+salt    = SecureRandom().nextBytes(32)
+key     = Argon2id(backupPassword, salt, memoryKB=65_536, iterations=3, parallelism=1, keyLen=32)
 iv      = SecureRandom().nextBytes(12)
-payload = AES-256-GCM(serialized_data, key, iv)
-file    = salt[16] || iv[12] || payload
+payload = AES-256-GCM(serialized_data, key, iv)   // 128-bit tag
+file    = base64(salt[32] || iv[12] || payload)
 ```
 
 ---
