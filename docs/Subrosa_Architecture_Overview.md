@@ -22,13 +22,13 @@ For a law firm, metadata held by a third party is an **unmanaged liability**.
 
 ## 2. What Subrosa Does Differently
 
-Subrosa is a **self-hosted** messenger. Your firm runs the server. No third party — including us — ever holds your data or metadata.
+Subrosa is a **self-hosted** messenger. Your firm runs the server, and message content and the vast majority of routing metadata never leave it. The one narrow, optional exception is covered in [3.2](#32-metadata-protection--anonymous-routing) below.
 
 | Property | Signal / WhatsApp | Subrosa |
 |---|---|---|
 | Message content encrypted (E2EE) | ✅ | ✅ |
 | Server operator | Third party | **Your firm** |
-| Metadata (who↔whom) visible to server | ✅ Yes | ❌ **No — anonymously routed** |
+| Metadata (who↔whom) visible to server | ✅ Yes | ⚠️ **Anonymously routed for nearly everything — documented exceptions below** |
 | Data at rest on a seized device | Single-layer | **Double-encrypted** |
 | Duress / panic protection | ❌ | ✅ **Silent wipe** |
 | Auditable source | Partial | ✅ **Fully open-source** |
@@ -49,9 +49,22 @@ This is a peer-reviewed, industry-standard construction. It is not a homegrown s
 
 ### 3.2 Metadata Protection — Anonymous Routing
 
-The server routes messages using **anonymous tokens**, not sender→recipient pairs. It never sees a mapping of who a message is *for*. The sender's identity is still visible per connection — sending requires an authenticated session, same as with any server-mediated messenger, Signal included — but that identity can no longer be tied to a specific recipient, so the firm's communication graph (who talks to whom) can't be reconstructed from server logs or routing tables alone.
+The server routes messages using **anonymous tokens**, not sender→recipient pairs, for 1:1 text, calls, reactions, edits, and file/voice/video transfer. It doesn't see a mapping of who a message is *for* on that traffic. The sender's identity is still visible per connection — sending requires an authenticated session, same as with any server-mediated messenger, Signal included — but that identity can no longer be tied to a specific recipient for the traffic types above, so the firm's communication graph (who talks to whom) can't be reconstructed from server logs or routing tables for most day-to-day use.
 
-### 3.3 Data at Rest — Double Encryption
+Two documented, narrow exceptions, disclosed here rather than left for an audit to find:
+
+- **Group calls** are always routed directly (fingerprint-addressed), not anonymized — a deliberate trade-off, not an oversight, made after anonymized group-call signaling proved unreliable in testing. 1:1 calls do not have this exception.
+- **Contact-list padding cost**: when a client needs to fetch someone's prekey bundle to start (or resume) a session, it disguises the real request among decoy requests drawn from its own contact list, so the server can't tell which one is real. That protection has a cost: the server sees the requester's *full contact list* as padding during that fetch. This is a real, structural property of the anonymization scheme, not a bug — full technical detail and residual gaps are in `SECURITY.md`, item 11.
+
+### 3.3 Push Notifications — Optional, Third-Party (Firebase Cloud Messaging)
+
+Android kills background services without a system-level wake mechanism, so reliable delivery while the app isn't in the foreground needs a push provider — Subrosa uses Firebase Cloud Messaging (FCM), the same mechanism nearly every Android app relies on for this. This is genuinely a third party (Google) in the data path, and worth being explicit about rather than glossing over:
+
+- FCM carries **no message content** — pushes are silent wake-up signals (or, for missed-call and session-conflict alerts, minimal operational metadata), never plaintext or ciphertext of a conversation.
+- Google does see, at minimum, a recipient's FCM token and the timing of a push to that device — a limited signal, but a real one, and it is a third party your firm does not control.
+- **FCM is optional at the server level**: if `GOOGLE_APPLICATION_CREDENTIALS` isn't configured on your deployment, the server's FCM code path is inert and no push is ever sent — background delivery then depends entirely on the app's own reconnect behavior instead. This is a real deployment choice with a real reliability trade-off, not a toggle we'd recommend blindly flipping off for a working desk phone replacement, but it exists for firms whose policy requires it.
+
+### 3.4 Data at Rest — Double Encryption
 
 Local data on each device is protected by **two independent encryption layers**:
 
@@ -60,11 +73,11 @@ Local data on each device is protected by **two independent encryption layers**:
 
 A device seized in an unlocked state still does not surrender message history without the second factor. Keys are held in memory only and zeroed on lock.
 
-### 3.4 Duress Protection — Panic Password
+### 3.5 Duress Protection — Panic Password
 
 A user under coercion can enter a **duress password**. Instead of unlocking, it silently and irreversibly wipes all sensitive data in the background while showing a plausible decoy — with no visible indication that a wipe occurred.
 
-### 3.5 Threat Detection
+### 3.6 Threat Detection
 
 The client detects and warns on a compromised environment — rooted device, active debugger, injection frameworks (Frida/Xposed), or emulator — before sensitive data is exposed.
 
@@ -74,8 +87,7 @@ The client detects and warns on a compromised environment — rooted device, act
 
 Subrosa is designed to be deployed by your own IT team, on your own infrastructure, with no dependency on us.
 
-- **Server:** Python asyncio WebSocket server, containerized
-- **Setup:** `docker compose up` — approximately **15 minutes** for a standard deployment
+- **Server:** a single Python asyncio WebSocket process. Docker is the documented quick-start path (`docker compose up`, roughly **15 minutes** for a standard deployment); a plain `systemd`-managed process behind `nginx` works identically and is what our own reference deployment runs.
 - **Requirements:** A Linux host and a TLS certificate. Optional TURN server for voice/video calls.
 - **Clients:** Android (full-featured). A desktop companion client is in development.
 
