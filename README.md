@@ -69,7 +69,7 @@ The server never has access to plaintext messages, user identities, keys, or cal
 - Biometric unlock
 - Panic password (triggers silent wipe on login attempt)
 - Panic button notification (wipe accessible from locked screen)
-- Three-level wipe: SOFT / HARD / NUCLEAR
+- Two-level wipe: HARD / NUCLEAR (a third, SOFT, existed early on and was removed — see `ARCHITECTURE.md`)
 - Decoy mode (post-wipe fake account)
 - Dead Man's Switch with configurable check-in interval
 - Paranoid Mode (logcat suppression, remote alert HTTP POST)
@@ -100,6 +100,8 @@ Subrosa:    { "type": "anon_message", "token": "e39f0134...", "payload": "<encry
 ```
 
 The server sees an anonymous blob — not a `from → to` pair. Note this hides the *recipient* side of the graph edge, not the sender: the server always knows which authenticated connection (i.e. which fingerprint) sent a given `anon_message`, since sending requires an authenticated WebSocket session. What it can no longer determine is who that message was *for*.
+
+Two documented exceptions: **group call signaling** always goes out directly (fingerprint-addressed), not through anon-token routing — a deliberate reliability trade-off, 1:1 calls don't have this exception. And the anti-fingerprinting mechanism used to fetch a contact's prekey bundle (padding the real request with decoys drawn from the requester's own contact list, since the server can't tell decoys from a real target otherwise) has a cost: the server sees the requester's full contact list during that fetch. See `SECURITY.md` items 11 and 18 for the full detail.
 
 ### 2. Anonymous Mailbox (First Contact)
 
@@ -290,7 +292,7 @@ signingConfigs {
 | Key agreement | Hybrid X3DH + ML-KEM-768 (post-quantum, harvest-now-decrypt-later resistant) |
 | Message E2EE | Double Ratchet v3 — DH Ratchet + Symmetric Ratchet, AES-256-GCM |
 | Forward secrecy | Per-message keys; break-in recovery on every DH step |
-| Social graph | Anonymous token routing — server sees no `from → to` pairs |
+| Social graph | Anonymous token routing — server sees no `from → to` pairs, for 1:1 messages/calls/reactions/edits/files (group calls are a documented exception, see [above](#1-anonymous-token-routing)) |
 | Timing | Constant-rate cover traffic (optional) |
 | IP address | Tor hidden service — via Orbot (Android) or a local SOCKS5 proxy (Desktop), both optional |
 | At-rest (L1) | EncryptedSharedPreferences + AndroidKeyStore |

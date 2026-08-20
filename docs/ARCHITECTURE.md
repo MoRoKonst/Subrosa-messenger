@@ -239,9 +239,11 @@ Generates and verifies ECDSA-signed contact invitations as a binary blob, prefix
 
 #### `BackupManager.kt`
 Exports all user data to an encrypted binary blob:
-- Key derivation: PBKDF2-SHA256, 100 000 iterations
+- Key derivation: **Argon2id** (BouncyCastle `Argon2BytesGenerator`) — 64 MB memory, 3 iterations, parallelism 1
 - Encryption: AES-256-GCM
 - Includes: messages, contacts, group keys, channel subscriptions, settings
+
+> Not to be confused with `UserStorage`'s login password hash (PBKDF2-SHA256, 100 000 iterations) or `StorageKeyManager`'s SMK wrapping (PBKDF2-SHA256, 300 000 iterations) below — three different KDFs for three different purposes. Backup export specifically uses Argon2id, chosen for its memory-hardness against GPU/ASIC brute-force on a file an attacker could copy and attack offline indefinitely.
 
 #### `CallManager.kt`
 WebRTC wrapper around `stream-webrtc-android:1.3.10`:
