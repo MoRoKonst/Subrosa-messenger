@@ -345,7 +345,7 @@ This means the PKCS12 file cannot be decrypted if copied to a different machine 
 ### State Model
 
 **This section previously said the server keeps no database and loses all
-state on restart — that was wrong.** `ForEXP/server.py` uses a SQLite
+state on restart — that was wrong.** `Server/server.py` uses a SQLite
 file (`DB_PATH`, `messages.db` by default) for anything that needs to
 survive a restart, and plain in-memory dicts/sets for everything that's
 inherently tied to a live connection.

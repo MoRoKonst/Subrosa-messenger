@@ -6,10 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     miniupnpc=2.2.3-1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ForEXP/requirements.txt .
+COPY Server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ForEXP/server.py .
+COPY Server/server.py .
 
 ENV SUBROSA_HOST=0.0.0.0
 ENV SUBROSA_PORT=9000

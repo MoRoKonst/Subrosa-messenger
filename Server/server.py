@@ -164,7 +164,7 @@ def _totp_decrypt_from_storage(stored: str) -> str:
 # required again afterward (checked against `registered_fingerprints`, not the
 # in-memory `clients` dict, so it survives restarts and reconnects). Codes are
 # generated at startup (SERVER_ACCESS_CODE_COUNT) or any time later via
-# ForEXP/admin_gen_codes.py, which writes straight into the same SQLite file —
+# Server/admin_gen_codes.py, which writes straight into the same SQLite file —
 # register() always reads the DB live, so no server restart is needed to add
 # more. All code validity/consumption logic lives here, server-side, on
 # purpose — the client only ever passes through whatever it scanned, it never
@@ -2739,7 +2739,7 @@ async def handle_client(websocket):
             # mailbox bootstrap (docs/ISSUE_backup_identity_hijack.md, "5-минутный
             # ретрай"). Deliberately carries no target/contact info — just a
             # clearly-tagged log line for the operator to find via
-            # ForEXP/admin_logs.py while investigating, not an automated report
+            # Server/admin_logs.py while investigating, not an automated report
             # to anyone.
             if msg_type == "bootstrap_diagnostic":
                 if not username or not rate_limit_check(username, "bootstrap_diagnostic"):
@@ -3055,10 +3055,10 @@ def start_server():
                     print("[ACCESS] QR-картинки не сгенерированы — пакет qrcode[pil] не установлен "
                           "(офлайн, ничего никуда не уходит — см. requirements.txt).")
                 print("[ACCESS] Раздай ссылки/QR пользователям. Ещё коды позже — без рестарта: "
-                      "python3 ForEXP/admin_gen_codes.py <N>")
+                      "python3 Server/admin_gen_codes.py <N>")
             else:
                 print("[ACCESS] SERVER_ACCESS_PROTECTED включён, но кодов нет и SERVER_ACCESS_CODE_COUNT не задан — "
-                      "никто новый не сможет зарегистрироваться. Запусти: python3 ForEXP/admin_gen_codes.py <N>")
+                      "никто новый не сможет зарегистрироваться. Запусти: python3 Server/admin_gen_codes.py <N>")
         else:
             print(f"[ACCESS] SERVER_ACCESS_PROTECTED включён, неиспользованных кодов: {unused_codes}/{total_codes}")
 

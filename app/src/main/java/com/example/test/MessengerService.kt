@@ -4381,7 +4381,7 @@ class MessengerService : Service() {
      *  automated report *to the developer directly* — deliberately not
      *  hardcoded contact info for that, per the decision this was built
      *  from — just a clearly-tagged server log line the operator can find
-     *  later via ForEXP/admin_logs.py while investigating. */
+     *  later via Server/admin_logs.py while investigating. */
     fun bootstrapChannelFor(contact: String) {
         if (isChannelReady(contact)) return
         scope.launch(Dispatchers.IO) { attemptChannelBootstrap(contact) }

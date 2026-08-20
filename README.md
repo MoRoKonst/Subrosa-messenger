@@ -206,7 +206,7 @@ You can run your own Subrosa server and connect the app to it — no recompilati
 **Without Docker:**
 
 ```bash
-cd ForEXP
+cd Server
 pip install websockets cryptography
 python server.py --dev
 ```

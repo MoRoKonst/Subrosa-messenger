@@ -1416,7 +1416,7 @@ not the victim's.
 
 ## Server-side cleanup still pending (from the rebrand/domain session)
 
-- `ForEXP/server.py`'s `[DEBUG-MAILBOX]` `print()` statements were removed
+- `Server/server.py`'s `[DEBUG-MAILBOX]` `print()` statements were removed
   from the repo (Tier 1 item 1, above) — **not yet confirmed redeployed**
   to the live server, since this repo has no way to check that from here.
 - ~~Cloudflare WebSocket-proxying is still broken~~ — **fixed** (commit
@@ -1942,7 +1942,7 @@ file.
     normal use once an account exists. Codes: `server_access_codes` SQLite
     table, one-time (consumed on first successful use), generated at
     startup (`SERVER_ACCESS_CODE_COUNT`) or any time later via new
-    **`ForEXP/admin_gen_codes.py`** — writes straight into the same DB
+    **`Server/admin_gen_codes.py`** — writes straight into the same DB
     file, `register()` always reads it live, so no restart needed to add
     more (same "separate admin script" pattern as `admin_logs.py`). Both
     the startup printout and the script build a ready `subrosa://server?
@@ -2228,7 +2228,7 @@ file.
     `device_id`".
 
     **Побочно найдено и исправлено**: `git checkout ce007a7 --
-    ForEXP/server.py`, которым в одной из прошлых сессий откатывались
+    Server/server.py`, которым в одной из прошлых сессий откатывались
     неверные попытки TOTP, случайно уничтожил **другую**, не связанную
     с TOTP и никогда не закоммиченную фичу — видимый FCM-пуш при
     `session_conflict` (`send_fcm_session_conflict`, `ts` в пейлоаде),
@@ -2259,7 +2259,7 @@ file.
     не автосвязь с разработчиком (пользователь прямо сказал, что
     хардкодить это плохая идея), а просто чётко помеченная строка в логе
     сервера (`[TICKET] ...`), которую разработчик (он же оператор
-    сервера) найдёт сам через уже готовый `ForEXP/admin_logs.py`, когда
+    сервера) найдёт сам через уже готовый `Server/admin_logs.py`, когда
     будет разбираться. Пакет `bootstrap_diagnostic` намеренно не несёт
     ни контакта, ни любого таргет-идентификатора — только сам факт "у
     этого аккаунта завис первый контакт", иначе тикет стал бы утечкой
@@ -2421,7 +2421,7 @@ file.
        весь функционал должен жить **вне мессенджера полностью** — ни в
        клиенте, ни в `server.py`/WebSocket-протоколе.
     3. **Финальная, реализованная версия**: отдельный, ничем не связанный с
-       мессенджером инструмент **`ForEXP/admin_logs.py`** — админ заходит
+       мессенджером инструмент **`Server/admin_logs.py`** — админ заходит
        на VPS как обычно (SSH/консоль, это НЕ защищено этим инструментом,
        см. отдельный, ещё не выполненный Tier 3 п.7 про SSH), и вместо
        `docker-compose logs` напрямую запускает этот скрипт, который
@@ -2446,7 +2446,7 @@ file.
     вообще** — это отдельная, уже согласованная защита, никак не связана
     с этой находкой.
 
-    Финальная реализация (`ForEXP/admin_logs.py`, ~200 строк, без внешних
+    Финальная реализация (`Server/admin_logs.py`, ~200 строк, без внешних
     зависимостей — тот же ручной RFC 6238, что уже был в `TotpManager.kt`/
     `server.py`, просто на этот раз в отдельном скрипте):
     - `setup` — генерирует секрет, печатает его + `otpauth://` URI,

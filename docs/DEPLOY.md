@@ -170,16 +170,16 @@ docker-compose logs -f nginx
 
 ### Reading logs with a TOTP gate
 
-`ForEXP/admin_logs.py` is a standalone script (no dependency on the
+`Server/admin_logs.py` is a standalone script (no dependency on the
 messenger app or protocol) that wraps log reading behind a TOTP code, so
 that even someone with shell access to the box can't read logs without
 also having the authenticator. One-time setup, then use it instead of
 `docker-compose logs` directly:
 
 ```bash
-python3 ForEXP/admin_logs.py setup                 # once, prints the secret — save it offline
-python3 ForEXP/admin_logs.py logs                    # prompts for the current code, then runs docker-compose logs
-python3 ForEXP/admin_logs.py logs --source file --log-file /var/log/subrosa/server.log
+python3 Server/admin_logs.py setup                 # once, prints the secret — save it offline
+python3 Server/admin_logs.py logs                    # prompts for the current code, then runs docker-compose logs
+python3 Server/admin_logs.py logs --source file --log-file /var/log/subrosa/server.log
 ```
 
 The secret lives in `~/.subrosa_admin_totp` (600 perms, override with
