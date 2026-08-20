@@ -76,3 +76,6 @@ meminfo_watch.log
 
 # Desktop client — не публикуется пока не готов
 /desktop/
+
+# Рабочие файлы генерации иконки — не исходники приложения
+icon_work/
