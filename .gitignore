@@ -21,8 +21,8 @@ local.properties
 *.jks
 *.keystore
 *firebase-adminsdk*.json
-ForEXP/valid_invites.json
-ForEXP/*.json
+Server/valid_invites.json
+Server/*.json
 
 # База данных аналитики
 *.db
@@ -34,7 +34,7 @@ ForEXP/*.json
 
 # QR-картинки/секреты кодов доступа сервера — генерируются локально, не для репозитория
 access_codes_qr/
-ForEXP/access_codes_qr/
+Server/access_codes_qr/
 .env.*
 !.env.example
 !**/.env.example
@@ -48,7 +48,7 @@ app/release/
 # TLS-сертификаты и приватные ключи сервера
 *.pem
 *.key
-ForEXP/.key
+Server/.key
 certs/
 nginx-cache/
 beacon-data/
@@ -57,11 +57,19 @@ beacon-data/
 *.exe
 *.exe.*
 *.part
-ForEXP/gradle-*/
-ForEXP/android-studio*/
+Server/gradle-*/
+Server/android-studio*/
 
 # Папка биля
 папка биля/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Runtime logs / scratch output
+*.log
+meminfo_watch.log
 
 # Статья (черновик, публикуется отдельно)
 Статья.md

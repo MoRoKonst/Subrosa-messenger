@@ -109,7 +109,7 @@ For real-world use, follow [DEPLOY.md](DEPLOY.md):
 ├── .env.example            # Template for .env
 ├── generate-certs.sh       # TLS certificate generator
 ├── DEPLOY.md               # Production deployment guide
-└── ForEXP/
+└── Server/
     ├── server.py           # Subrosa WebSocket server
     └── requirements.txt    # Python dependencies
 ```
