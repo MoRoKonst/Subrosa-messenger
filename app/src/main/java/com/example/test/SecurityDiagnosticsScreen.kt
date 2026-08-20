@@ -63,7 +63,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
         return t.isEmpty() ||
             '✅' in t || '❌' in t || '⚠' in t ||
             t.startsWith("📋") ||
-            t.startsWith("🔐") || t.startsWith("💣") || t.startsWith("🔬") || t.startsWith("📊") ||
+            t.startsWith("🔐") || t.startsWith("💣") || t.startsWith("🔬") || t.startsWith("") ||
             (t.length > 4 && t.all { it == '═' || it == ' ' }) ||
             "Если видишь" in t || "Покрыто:" in t
     }
@@ -337,7 +337,7 @@ private fun TestLine(line: String, c: SubrosaColors) {
 
     val isSep = t.length > 6 && t.all { it == '═' || it == ' ' }
     val isTitle = t.startsWith("🔐") || t.startsWith("💣") || t.startsWith("🔬") ||
-            t.startsWith("📊")
+            t.startsWith("")
     val isTestHeader = t.startsWith("📋")
     val isOk  = '✅' in t
     val isFail = '❌' in t

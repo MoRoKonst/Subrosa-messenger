@@ -12,7 +12,7 @@ import javax.net.ssl.SSLSocketFactory
 
 object TorManager {
 
-    private const val TAG = "TorManager"
+    private const val TAG = "TORManager"
     const val SOCKS_HOST = "127.0.0.1"
     const val SOCKS_PORT = 9050
     private const val TOR_TIMEOUT_MS = 12_000L

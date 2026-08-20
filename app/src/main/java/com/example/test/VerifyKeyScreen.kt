@@ -18,7 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 
@@ -27,7 +27,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val s = LocalStrings.current
     val contactName = ChatStorage.getContactName(context, contactId)
 

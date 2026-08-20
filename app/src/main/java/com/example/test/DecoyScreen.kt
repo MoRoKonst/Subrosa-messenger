@@ -37,7 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import kotlin.math.absoluteValue
 
 private data class FakeMsg(val text: String, val fromMe: Boolean, val time: String)
@@ -50,7 +50,7 @@ private data class ChatTemplate(
 )
 
 private val decoyAvatarPalette = listOf(
-    Color(0xFF2481CC), Color(0xFFE74C3C), Color(0xFF27AE60),
+    Color(0xFFC77B4F), Color(0xFFE74C3C), Color(0xFF27AE60),
     Color(0xFFF39C12), Color(0xFF9B59B6), Color(0xFF1ABC9C)
 )
 private fun avatarColorFor(name: String) =
@@ -307,7 +307,7 @@ private fun DecoyListScreen(
     onOpenChat: (ChatTemplate) -> Unit
 ) {
     val context = LocalContext.current
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
     val myDisplayName = remember { UserStorage.getUserDisplayName(context) }
@@ -321,7 +321,7 @@ private fun DecoyListScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "B-CON",
+                        text = "Subrosa",
                         color = Color.White,
                         fontFamily = JetBrainsMono,
                         fontWeight = FontWeight.Bold,
@@ -426,7 +426,7 @@ private fun DecoyChatScreen(
     chat: ChatTemplate,
     onBack: () -> Unit
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
     val avatarColor = avatarColorFor(chat.name)
 

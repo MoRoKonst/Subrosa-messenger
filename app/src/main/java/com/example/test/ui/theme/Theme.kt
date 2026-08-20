@@ -14,7 +14,7 @@ import androidx.core.view.WindowCompat
 
 @Composable
 fun TESTTheme(
-    subrosaColors: subrosaColors = NavysubrosaColors,
+    subrosaColors: SubrosaColors = NavySubrosaColors,
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (subrosaColors.isDark) {
@@ -52,7 +52,7 @@ fun TESTTheme(
         }
     }
 
-    CompositionLocalProvider(LocalsubrosaColors provides subrosaColors) {
+    CompositionLocalProvider(LocalSubrosaColors provides subrosaColors) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography  = Typography,

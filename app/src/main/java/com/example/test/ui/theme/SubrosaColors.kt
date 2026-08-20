@@ -1,11 +1,11 @@
-package com.subrosa.messenger.ui.theme
+﻿package com.subrosa.messenger.ui.theme
 
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 enum class SubrosaTheme { NAVY, DARK, LIGHT }
 
-data class subrosaColors(
+data class SubrosaColors(
     val gradientStart: Color,
     val gradientEnd: Color,
     val topBar: Color,
@@ -27,76 +27,76 @@ data class subrosaColors(
     val isDark: Boolean
 )
 
-val NavysubrosaColors = subrosaColors(
-    gradientStart    = Color(0xFF141e4a),
-    gradientEnd      = Color(0xFF0d1238),
-    topBar           = Color(0xFF091a66),
-    dialog           = Color(0xFF091a66),
-    accent           = Color(0xFF00E5FF),
-    textPrimary      = Color(0xFFE0E6FF),
-    card             = Color(0xFF1F2B5E),
-    cardAlt          = Color(0xFF1A2550),
-    fieldBorder      = Color(0xFF2A3B8F),
-    bubbleOwn        = Color(0xFF2A3B8F),
-    bubbleOther      = Color(0xFF1F2B5E),
-    bubbleSystem     = Color(0xFF1A2550),
+val NavySubrosaColors = SubrosaColors(
+    gradientStart    = Color(0xFF2B0F14),
+    gradientEnd      = Color(0xFF180A0C),
+    topBar           = Color(0xFF4A151A),
+    dialog           = Color(0xFF4A151A),
+    accent           = Color(0xFFD9A566),
+    textPrimary      = Color(0xFFF3E6DC),
+    card             = Color(0xFF3A1216),
+    cardAlt          = Color(0xFF2F0F13),
+    fieldBorder      = Color(0xFF6B2A2A),
+    bubbleOwn        = Color(0xFF7A2430),
+    bubbleOther      = Color(0xFF3A1216),
+    bubbleSystem     = Color(0xFF2F0F13),
     dangerCard       = Color(0xFF2A1F1F),
     error            = Color(0xFFFF4444),
-    primaryBlue      = Color(0xFF2481CC),
-    inputBg          = Color(0xFF0d1238),
-    callBg           = Color(0xFF050d26),
-    callGradientEdge = Color(0xFF0a1040),
+    primaryBlue      = Color(0xFFC77B4F),
+    inputBg          = Color(0xFF180A0C),
+    callBg           = Color(0xFF120608),
+    callGradientEdge = Color(0xFF200B0D),
     isDark           = true
 )
 
-val DarksubrosaColors = subrosaColors(
-    gradientStart    = Color(0xFF1C1C1C),
-    gradientEnd      = Color(0xFF0D0D0D),
-    topBar           = Color(0xFF242424),
-    dialog           = Color(0xFF2A2A2A),
-    accent           = Color(0xFF00E5FF),
+val DarkSubrosaColors = SubrosaColors(
+    gradientStart    = Color(0xFF1C1414),
+    gradientEnd      = Color(0xFF100A0A),
+    topBar           = Color(0xFF2A1A1A),
+    dialog           = Color(0xFF2E1C1C),
+    accent           = Color(0xFFD9A566),
     textPrimary      = Color(0xFFFFFFFF),
-    card             = Color(0xFF2A2A2A),
-    cardAlt          = Color(0xFF222222),
-    fieldBorder      = Color(0xFF444444),
-    bubbleOwn        = Color(0xFF1A5FA8),
-    bubbleOther      = Color(0xFF303030),
-    bubbleSystem     = Color(0xFF1E1E1E),
+    card             = Color(0xFF2A1A1A),
+    cardAlt          = Color(0xFF201414),
+    fieldBorder      = Color(0xFF4A3030),
+    bubbleOwn        = Color(0xFF7A2430),
+    bubbleOther      = Color(0xFF302020),
+    bubbleSystem     = Color(0xFF1E1414),
     dangerCard       = Color(0xFF3A1A1A),
     error            = Color(0xFFFF4444),
-    primaryBlue      = Color(0xFF2481CC),
-    inputBg          = Color(0xFF1A1A1A),
-    callBg           = Color(0xFF0A0A0A),
-    callGradientEdge = Color(0xFF111111),
+    primaryBlue      = Color(0xFFC77B4F),
+    inputBg          = Color(0xFF1A1414),
+    callBg           = Color(0xFF0A0808),
+    callGradientEdge = Color(0xFF150E0E),
     isDark           = true
 )
 
-val LightsubrosaColors = subrosaColors(
-    gradientStart    = Color(0xFFF0F4FF),
-    gradientEnd      = Color(0xFFE4EDFF),
-    topBar           = Color(0xFF2481CC),
+val LightSubrosaColors = SubrosaColors(
+    gradientStart    = Color(0xFFFAF3EC),
+    gradientEnd      = Color(0xFFF2E6DA),
+    topBar           = Color(0xFF641D17),
     dialog           = Color(0xFFFFFFFF),
-    accent           = Color(0xFF2481CC),
-    textPrimary      = Color(0xFF1A1A2E),
+    accent           = Color(0xFF8A2A2A),
+    textPrimary      = Color(0xFF2A1414),
     card             = Color(0xFFFFFFFF),
-    cardAlt          = Color(0xFFF5F7FF),
-    fieldBorder      = Color(0xFFAEC6EF),
-    bubbleOwn        = Color(0xFF2481CC),
+    cardAlt          = Color(0xFFF7EFE6),
+    fieldBorder      = Color(0xFFD9C2AE),
+    bubbleOwn        = Color(0xFF8A2A2A),
     bubbleOther      = Color(0xFFFFFFFF),
-    bubbleSystem     = Color(0xFFF0F0F5),
+    bubbleSystem     = Color(0xFFF0E5DA),
     dangerCard       = Color(0xFFFFF0F0),
     error            = Color(0xFFCC2222),
-    primaryBlue      = Color(0xFF2481CC),
-    inputBg          = Color(0xFFF5F8FF),
-    callBg           = Color(0xFFEEF3FF),
-    callGradientEdge = Color(0xFFD0E0FF),
+    primaryBlue      = Color(0xFF8A2A2A),
+    inputBg          = Color(0xFFF7EFE6),
+    callBg           = Color(0xFFF2E6DA),
+    callGradientEdge = Color(0xFFE8D5C0),
     isDark           = false
 )
 
-val LocalsubrosaColors = compositionLocalOf<subrosaColors> { NavysubrosaColors }
+val LocalSubrosaColors = compositionLocalOf<SubrosaColors> { NavySubrosaColors }
 
-fun subrosaColorsFor(theme: SubrosaTheme): subrosaColors = when (theme) {
-    SubrosaTheme.NAVY  -> NavysubrosaColors
-    SubrosaTheme.DARK  -> DarksubrosaColors
-    SubrosaTheme.LIGHT -> LightsubrosaColors
+fun subrosaColorsFor(theme: SubrosaTheme): SubrosaColors = when (theme) {
+    SubrosaTheme.NAVY  -> NavySubrosaColors
+    SubrosaTheme.DARK  -> DarkSubrosaColors
+    SubrosaTheme.LIGHT -> LightSubrosaColors
 }

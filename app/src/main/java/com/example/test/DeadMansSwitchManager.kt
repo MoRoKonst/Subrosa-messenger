@@ -24,8 +24,18 @@ object DeadMansSwitchManager {
     const val GRACE_PERIOD_MS           = 15 * 60 * 1000L
 
     fun enable(context: Context, intervalHours: Int) {
+        enableMinutes(context, intervalHours * 60)
+    }
+
+    /** Same as [enable] but with minute granularity — needed for the
+     *  sub-1-hour timer tiers (15/30 min) added alongside the original
+     *  hour-based options. See UserStorage.getDmsIntervalMinutes for why
+     *  this is a separate stored value rather than reinterpreting the
+     *  hours-based one. */
+    fun enableMinutes(context: Context, intervalMinutes: Int) {
         UserStorage.setDmsEnabled(context, true)
-        UserStorage.setDmsIntervalHours(context, intervalHours)
+        UserStorage.setDmsIntervalMinutes(context, intervalMinutes)
+        UserStorage.setDmsIntervalHours(context, (intervalMinutes / 60).coerceAtLeast(1))
         checkIn(context)
     }
 
@@ -39,10 +49,12 @@ object DeadMansSwitchManager {
 
     fun getIntervalHours(context: Context): Int = UserStorage.getDmsIntervalHours(context)
 
+    fun getIntervalMinutes(context: Context): Int = UserStorage.getDmsIntervalMinutes(context)
+
     fun getTimeRemainingMs(context: Context): Long {
         val lastCheckin = UserStorage.getDmsLastCheckin(context)
         if (lastCheckin == 0L) return 0L
-        val intervalMs = UserStorage.getDmsIntervalHours(context) * 3_600_000L
+        val intervalMs = UserStorage.getDmsIntervalMinutes(context) * 60_000L
         val elapsed = System.currentTimeMillis() - lastCheckin
         return (intervalMs - elapsed).coerceAtLeast(0L)
     }
@@ -64,7 +76,7 @@ object DeadMansSwitchManager {
 
     fun scheduleFireAlarm(context: Context) {
         val triggerAt = UserStorage.getDmsLastCheckin(context) +
-                UserStorage.getDmsIntervalHours(context) * 3_600_000L
+                UserStorage.getDmsIntervalMinutes(context) * 60_000L
         val intent = makePendingIntent(context, ACTION_DMS_FIRE, REQ_FIRE)
         scheduleExact(context, triggerAt, intent)
     }

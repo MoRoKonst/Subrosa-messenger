@@ -130,7 +130,7 @@ fun MapDialog(
                         android.util.Log.e("MapDialog", "Не удалось открыть карты: ${e.message}")
                     }
                 }) {
-                    Text("В картах", color = Color(0xFF00E5FF), fontFamily = JetBrainsMono, fontSize = 14.sp)
+                    Text("В картах", color = Color(0xFFD9A566), fontFamily = JetBrainsMono, fontSize = 14.sp)
                 }
             }
         }

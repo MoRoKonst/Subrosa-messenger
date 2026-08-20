@@ -10,6 +10,16 @@ object SecureFileStorage {
     private fun masterKeyAlias(): String =
         MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
 
+    /** Opaque on-disk path for a received/sent attachment blob — a flat
+     *  `blobs/` directory with no type-revealing prefix (`image_`, `voice_`,
+     *  `videos/`) or fake original extension (`.jpg`, `.3gp`, `.mp4`), so
+     *  browsing the app's private storage (e.g. an ADB backup or a rooted
+     *  device before the EncryptedFile key is compromised) doesn't reveal
+     *  attachment type by filename alone. The real filename is already
+     *  tracked separately as message metadata (`ChatStorage.fileName`), so
+     *  nothing is lost by making the path itself meaningless. */
+    fun blobFile(baseDir: File, id: String): File = File(baseDir, "blobs/$id.enc")
+
     fun write(context: Context, file: File, bytes: ByteArray) {
         file.parentFile?.mkdirs()
         if (file.exists()) file.delete()

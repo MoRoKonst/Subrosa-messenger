@@ -50,7 +50,7 @@ object AudioHelper {
 
     fun decodeAndSave(context: Context, base64: String, voiceId: String): File {
         val bytes = Base64.decode(base64, Base64.NO_WRAP)
-        val encFile = File(context.filesDir, "voice_$voiceId.3gp.enc")
+        val encFile = SecureFileStorage.blobFile(context.filesDir, voiceId)
         SecureFileStorage.write(context, encFile, bytes)
         return encFile
     }

@@ -24,7 +24,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import com.subrosa.messenger.ui.theme.LocalsubrosaColors
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import kotlinx.coroutines.launch
 
 @Composable
@@ -34,7 +34,7 @@ fun PortholeSendButton(
     modifier: Modifier = Modifier,
     size: Int = 44
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val scope = rememberCoroutineScope()
     val scale = remember { Animatable(1f) }
 
@@ -91,7 +91,7 @@ fun CombinedMediaButton(
     modifier: Modifier = Modifier,
     size: Int = 44
 ) {
-    val c = LocalsubrosaColors.current
+    val c = LocalSubrosaColors.current
     val scope = rememberCoroutineScope()
     val scale = remember { Animatable(1f) }
 
