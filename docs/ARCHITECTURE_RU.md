@@ -341,20 +341,47 @@ Android выходит в Tor через Orbot — системный VPN, пр�
 
 ### Модель состояния
 
-Сервер хранит состояние в памяти (без базы данных). Всё состояние теряется при перезапуске.
+**Этот раздел раньше утверждал, что у сервера нет базы данных и всё
+состояние теряется при перезапуске — это было неверно.** `ForEXP/server.py`
+использует файл SQLite (`DB_PATH`, по умолчанию `messages.db`) для всего,
+что должно пережить перезапуск, и обычные словари/множества в памяти —
+для всего, что неразрывно привязано к живому соединению.
+
+**Постоянное (SQLite)** — переживает перезапуск сервера:
+
+```
+pending_messages:        офлайн-очередь для прямых (не анонимных) сообщений, TTL 30 дней
+prekey_bundles_db:       опубликованные prekey-бандлы (пулы OPK)
+registered_fingerprints: каждая когда-либо зарегистрированная identity — на этом
+                         держится проверка кода доступа и (опциональный) лимит
+                         MAX_REGISTERED_USERS
+revoked_fingerprints:    identity, отозванные через «Я скомпрометирован»/мёртвую руку —
+                         register() отклоняет совпадение отсюда независимо от
+                         валидного challenge-response
+user_totp:               TOTP-секреты аккаунтов (device-gated регистрация)
+totp_recovery_codes:     одноразовые коды восстановления к ним
+server_access_codes:     инвайт-подобные коды для деплоев с SERVER_ACCESS_PROTECTED
+```
+
+**Только в памяти** — теряется при перезапуске, осознанно (привязано к
+живому соединению или намеренно недолговечно):
 
 ```
 authenticated_users: {ws → username}
 clients:            {username → {ws, name, public_key}}
-prekey_bundles:     {username → [OPK-пакеты]}
-active_calls:       {username → {peer, call_id}}
-pending_messages:   {username → [сообщения]}
-rate_limits:        {username → {message, reaction, typing, prekey_fetch, ...}}
-banned_users:       {username → ban_info}
-banned_ips:         {ip → ban_info}
-channels:           {channel_id → {name, avatar, admin_id, posts: [...]}}
-channel_subscribers: {channel_id → {username}}
+token_to_ws:         {анон_токен → ws}                — таблица анонимной маршрутизации
+token_pending:       {анон_токен → [очередь anon_delivery]} — TTL 24ч, чистится watchdog'ом
+known_tokens:        {анон_токен}                     — зарегистрирован, но ещё не смаршрутизирован
+active_calls:        {username → {peer, call_id}}
+rate_limits:         {username → {message, reaction, typing, prekey_fetch, ...}}
+banned_ips:          {ip → срок бана}
 ```
+
+Перезапуск сервера, соответственно, **не** стирает identity, TOTP-защиту,
+отзывы и список кодов доступа — но действительно рвёт живые WebSocket-
+соединения (клиенты переподключаются автоматически) и любое состояние
+анонимной маршрутизации в полёте (ещё не подтверждённые доставки
+`anon_message`, что ограничено 24 часами через watchdog, а не бессрочно).
 
 ### Протокол сообщений
 
@@ -378,22 +405,31 @@ channel_subscribers: {channel_id → {username}}
 | `typing` | Индикатор набора текста |
 | `reaction` | Реакция на сообщение |
 | `checkin` | Отметка о присутствии (Dead Man's Switch) |
+| `subscribe_tokens` | Регистрация пула из ~50 анонимных одноразовых токенов клиента за этим соединением |
+| `anon_message` | Всё, что маршрутизируется анонимно (1:1 текст, тайпинг, read receipts, реакции, правки, удаления, чанки файлов/голосовых/видео, сигналинг звонков), завёрнутое в `{token, payload}` вместо адресации по fingerprint'у — это фактический носитель большей части трафика клиент↔клиент, не строки `message`/`typing`/`reaction` выше (те — для групповых сообщений и случаев, где анонимный путь недоступен) |
+| `anon_delivery_ack` | Получатель подтверждает, что реально обработал payload из `anon_delivery` — только после этого сервер удаляет свою резервную копию; см. [SECURITY_RU.md](SECURITY_RU.md), пункт 18 |
+| `revoke_identity` | Аутентифицированный клиент просит сервер пометить свой же fingerprint отозванным (сохраняется, переживает перезапуск) |
 
 **Сервер → Клиент (выборочно):**
 
 | Тип | Описание |
 |---|---|
 | `challenge` | Случайные байты для ECDSA-handshake |
-| `auth_ok` | Аутентификация подтверждена |
-| `auth_fail` | Аутентификация отклонена |
+| `handshake_ok` | Подпись проверена — клиент может отправлять `register` |
+| *(нет отдельного типа)* | Неверная подпись в `challenge_response` не сопровождается отдельным типом отказа — сервер просто разрывает соединение |
+| `totp_required` / `access_code_required` | `register` отклонён — не пройден device-gated TOTP или allowlist кодов доступа |
 | `message` | Ретранслированное зашифрованное сообщение |
 | `group_message` | Ретранслированное групповое сообщение |
 | `channel_update` | Новый пост в канале |
-| `call_invite` | Входящий звонок от пира |
+| `call_request_audio` / `call_request_video` | Входящий пинг звонка от пира (двухфазная схема звонков) |
 | `turn_config` | TURN-учётные данные (после аутентификации) |
 | `session_conflict` | Вход с другого устройства |
-| `prekey_bundle` | OPK-пакет для X3DH |
-| `opk_low` | Напоминание загрузить новые OPK |
+| `prekey_bundle_response` / `prekey_bundles_batch_response` | Prekey-пакет(ы) для X3DH |
+| `prekey_bundle_request` | Сервер просит клиента republish пул OPK (заканчивается) |
+| `anon_delivery` | Обратная сторона `anon_message` — payload доставляется тому соединению, которое сейчас владеет токеном, без раскрытия fingerprint'а отправителя |
+| `registration_full` | `register` отклонён — достигнут лимит `MAX_REGISTERED_USERS` (опционально, выключено по умолчанию) |
+| `pow_required` | `register` отклонён — первая-в-жизни регистрация этого fingerprint'а требует `pow_nonce`, решённый относительно challenge из handshake'а (опционально, выключено по умолчанию) |
+| `identity_revoked` | `register` отклонён — этот fingerprint был отозван (через `revoke_identity` или мёртвую руку) |
 
 ### Ограничение частоты запросов
 
@@ -427,11 +463,19 @@ channel_subscribers: {channel_id → {username}}
   │  4. Генерация OPK-пакета          │
   │  5. StorageKeyManager.setup()     │
   │                                   │
-  │──── register {username, pubkey,   │
-  │              signature, opks} ───►│
-  │◄─── auth_ok ──────────────────────│
+  │──── challenge_response            │
+  │      {public_key, signature} ───► │
+  │◄─── handshake_ok ─────────────────│
+  │                                   │
+  │──── register {name, public_key,   │
+  │      device_id, totp_code?,       │
+  │      access_code?} ─────────────► │
   │◄─── turn_config ──────────────────│
 ```
+
+`public_key` в `register` должен побайтово совпадать с ключом, только что доказанным в `challenge_response` — иначе отклоняется. `totp_code`/`access_code` опциональны, сервер проверяет их только при условиях из [SECURITY_RU.md](SECURITY_RU.md#device-gated-totp--recovery-codes) (новый device_id у аккаунта с включённым TOTP; приватный/корпоративный сервер с включённым allowlist кодов доступа).
+
+Для самой первой в жизни регистрации fingerprint'а могут применяться ещё две (опциональные, выключенные по умолчанию) проверки перед всем вышеперечисленным: `MAX_REGISTERED_USERS` (жёсткий лимит на общее число когда-либо зарегистрированных identity — отказ с `registration_full` при превышении) и `POW_DIFFICULTY_BITS` (proof-of-work — отказ с `pow_required`, клиент решает его относительно challenge из handshake'а и повторяет `register` с `pow_nonce`). Ни одна из проверок не применяется к реконнекту уже известного fingerprint'а. См. [SECURITY_RU.md](SECURITY_RU.md), пункт 25.
 
 ### Переписка один-на-один
 
@@ -523,18 +567,21 @@ TURN-учётные данные доставляются сервером по�
   │  ECDSA.sign(challenge,        │
   │             privateKey)       │
   │                               │
-  │── register/login {username,   │
-  │     pubKey, signature} ──────►│
+  │── challenge_response          │
+  │   {public_key, signature} ───►│
   │                               │
   │                    ECDSA.verify(
   │                      signature,
   │                      challenge,
-  │                      pubKey)
+  │                      public_key)
   │                               │
-  │◄── auth_ok ───────────────────│
+  │◄── handshake_ok ──────────────│
+  │                               │
+  │── register {name, public_key, │
+  │   device_id, ...} ───────────►│
 ```
 
-Таймаут: 15 секунд. Если аутентификация не завершена вовремя, сервер закрывает соединение.
+Таймаут: 15 секунд. Если аутентификация не завершена вовремя (или подпись не прошла проверку) — сервер закрывает соединение без отдельного сообщения об отказе. `register` — отдельный шаг после `challenge_response`, см. поток "Регистрация" выше (device-gating, allowlist кодов доступа, `session_conflict`).
 
 ---
 

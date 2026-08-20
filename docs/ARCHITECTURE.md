@@ -342,20 +342,46 @@ This means the PKCS12 file cannot be decrypted if copied to a different machine 
 
 ### State Model
 
-The server maintains in-memory state (no database). All state is lost on restart.
+**This section previously said the server keeps no database and loses all
+state on restart — that was wrong.** `ForEXP/server.py` uses a SQLite
+file (`DB_PATH`, `messages.db` by default) for anything that needs to
+survive a restart, and plain in-memory dicts/sets for everything that's
+inherently tied to a live connection.
+
+**Persistent (SQLite)** — survives a server restart:
+
+```
+pending_messages:        offline-queue fallback for direct (non-anon) messages, 30-day TTL
+prekey_bundles_db:       published prekey bundles (OPK pools)
+registered_fingerprints: every identity ever registered — backs the access-code
+                         gate and the (optional) MAX_REGISTERED_USERS cap
+revoked_fingerprints:    identities revoked via "I've been compromised" / DMS —
+                         register() rejects a match here regardless of a valid
+                         challenge-response
+user_totp:               per-account TOTP secrets (device-gated registration)
+totp_recovery_codes:     one-time recovery codes for the above
+server_access_codes:     invite-style codes for SERVER_ACCESS_PROTECTED deployments
+```
+
+**In-memory only** — lost on restart, by design (tied to a live connection
+or deliberately short-lived):
 
 ```
 authenticated_users: {ws → username}
 clients:            {username → {ws, name, public_key}}
-prekey_bundles:     {username → [OPK bundles]}
-active_calls:       {username → {peer, call_id}}
-pending_messages:   {username → [message]}
-rate_limits:        {username → {message, reaction, typing, prekey_fetch, ...}}
-banned_users:       {username → ban_info}
-banned_ips:         {ip → ban_info}
-channels:           {channel_id → {name, avatar, admin_id, posts: [...]}}
-channel_subscribers: {channel_id → {username}}
+token_to_ws:         {anon_token → ws}                 — anonymous routing table
+token_pending:       {anon_token → [queued anon_delivery]} — TTL 24h, watchdog-swept
+known_tokens:        {anon_token}                      — registered-but-not-yet-routed
+active_calls:        {username → {peer, call_id}}
+rate_limits:         {username → {message, reaction, typing, prekey_fetch, ...}}
+banned_ips:          {ip → ban_expiry}
 ```
+
+A server restart therefore does **not** wipe identities, TOTP protection,
+revocations, or the access-code allowlist — but it does drop live
+WebSocket connections (clients reconnect automatically) and any
+anonymous-routing state in flight (queued `anon_message` deliveries not
+yet acknowledged, which is bounded to 24h by a watchdog, not indefinite).
 
 ### Message Protocol
 
@@ -379,6 +405,10 @@ All messages are JSON objects over WebSocket. Every message has a `type` field.
 | `typing` | Typing indicator |
 | `reaction` | Message reaction |
 | `checkin` | Dead Man's Switch check-in |
+| `subscribe_tokens` | Register the client's pool of ~50 anonymous single-use tokens against this connection |
+| `anon_message` | Anything routed anonymously (1:1 text, typing, read receipts, reactions, edits, deletes, file/voice/video chunks, call signaling) wrapped in `{token, payload}` instead of being fingerprint-addressed — this is the actual carrier for most client→client traffic, not the `message`/`typing`/`reaction` rows above (those apply when a message is sent to a group or otherwise can't go anonymous) |
+| `anon_delivery_ack` | Recipient confirms it actually processed an `anon_delivery` payload — only after this does the server drop its fallback copy; see [SECURITY.md](SECURITY.md) item 18 |
+| `revoke_identity` | Authenticated client asks the server to mark its own fingerprint as revoked (persisted, survives restart) |
 
 **Server → Client (selected types):**
 
@@ -396,6 +426,10 @@ All messages are JSON objects over WebSocket. Every message has a `type` field.
 | `session_conflict` | New login from another device |
 | `prekey_bundle_response` / `prekey_bundles_batch_response` | Prekey bundle(s) for X3DH |
 | `prekey_bundle_request` | Server asks this client to republish its OPK pool (running low) |
+| `anon_delivery` | The other side of `anon_message` — payload delivered to whichever connection currently owns the token, without the sender's fingerprint ever appearing |
+| `registration_full` | `register` rejected — `MAX_REGISTERED_USERS` cap reached (optional, off by default) |
+| `pow_required` | `register` rejected — this fingerprint's first-ever registration needs a `pow_nonce` solved against the handshake challenge (optional, off by default) |
+| `identity_revoked` | `register` rejected — this fingerprint was revoked (via `revoke_identity` or Dead Man's Switch) |
 
 ### Rate Limiting
 
@@ -439,6 +473,8 @@ Client                              Server
 ```
 
 `register`'s `public_key` must match exactly the key just proven in `challenge_response` — mismatches are rejected. `totp_code`/`access_code` are optional, only checked by the server under the conditions in [SECURITY.md](SECURITY.md#device-gated-totp--recovery-codes) (new device_id on an account with TOTP enabled; a private/business server with the access-code allowlist on).
+
+For a fingerprint's very first-ever registration, two more (optional, off by default) checks can apply before any of the above: `MAX_REGISTERED_USERS` (a hard cap on total identities ever registered — rejects with `registration_full` above the cap) and `POW_DIFFICULTY_BITS` (proof-of-work — rejects with `pow_required`, client solves it against the handshake challenge and resends `register` with a `pow_nonce`). Neither ever applies to a reconnect of an already-known fingerprint. See [SECURITY.md](SECURITY.md) item 26.
 
 ### One-to-One Messaging
 
