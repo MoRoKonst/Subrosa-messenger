@@ -1,5 +1,6 @@
 import secrets
 import json
+import os
 
 # Алфавит без двусмысленных символов: нет 0, O, I, 1, l
 CHARSET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -10,23 +11,24 @@ def generate_invite_token():
         return "".join(secrets.choice(CHARSET) for _ in range(4))
     return f"{group()}-{group()}-{group()}"
 
-def save_token(token, filename="valid_invites.json"):
+def save_token(token, filename="secrets/valid_invites.json"):
     """Сохраняет токен в файл"""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     try:
         with open(filename, 'r') as f:
             tokens = json.load(f)
     except FileNotFoundError:
         tokens = []
-    
+
     tokens.append({
         "token": token,
         "used": False,
         "created_at": __import__('time').time()
     })
-    
+
     with open(filename, 'w') as f:
         json.dump(tokens, f, indent=2)
-    
+
     return token
 
 if __name__ == "__main__":
@@ -34,4 +36,4 @@ if __name__ == "__main__":
     save_token(token)
     print(f"Новый invite-токен создан:")
     print(f"beacon-invite://{token}")
-    print(f"\nТокен сохранён в valid_invites.json")
+    print(f"\nТокен сохранён в secrets/valid_invites.json")

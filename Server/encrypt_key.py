@@ -4,7 +4,7 @@ from cryptography.hazmat.backends import default_backend
 import getpass
 
 # Читаем незашифрованный ключ
-with open('key.pem', 'rb') as f:
+with open('secrets/key.pem', 'rb') as f:
     private_key = serialization.load_pem_private_key(
         f.read(),
         password=None,
@@ -26,7 +26,7 @@ encrypted_pem = private_key.private_bytes(
     encryption_algorithm=serialization.BestAvailableEncryption(password.encode())
 )
 
-with open('key_encrypted.pem', 'wb') as f:
+with open('secrets/key_encrypted.pem', 'wb') as f:
     f.write(encrypted_pem)
 
-print("✅ Ключ зашифрован и сохранён в key_encrypted.pem")
+print("✅ Ключ зашифрован и сохранён в secrets/key_encrypted.pem")
