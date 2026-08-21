@@ -5,6 +5,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 import datetime
 import ipaddress
+import os
+
+os.makedirs("secrets", exist_ok=True)
 
 # Генерируем приватный ключ
 private_key = rsa.generate_private_key(
@@ -40,7 +43,7 @@ cert = x509.CertificateBuilder().subject_name(
 ).sign(private_key, hashes.SHA256())
 
 # Сохраняем ключ
-with open("key.pem", "wb") as f:
+with open("secrets/key.pem", "wb") as f:
     f.write(private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.TraditionalOpenSSL,
@@ -48,7 +51,7 @@ with open("key.pem", "wb") as f:
     ))
 
 # Сохраняем сертификат
-with open("cert.pem", "wb") as f:
+with open("secrets/cert.pem", "wb") as f:
     f.write(cert.public_bytes(serialization.Encoding.PEM))
 
-print("Сертификат создан: cert.pem, key.pem")
+print("Сертификат создан: secrets/cert.pem, secrets/key.pem")

@@ -16,6 +16,11 @@ RestartSec=5
 Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/beacon/firebase-adminsdk.json
 # При необходимости добавь другие переменные:
 # Environment=BEACON_PORT=8765
+#
+# Остальные секреты (DB_ENCRYPTION_KEY_HEX, TOTP_SECRET_ENCRYPTION_KEY и т.д.) —
+# держи в отдельном файле вне git (например /opt/beacon/.env, права 600) и
+# подключай так, а не через Environment= в этом юните:
+# EnvironmentFile=/opt/beacon/.env
 
 # Логи
 StandardOutput=journal

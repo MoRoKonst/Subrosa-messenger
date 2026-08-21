@@ -23,6 +23,12 @@ try:
 except ImportError:
     HAS_QRCODE = False
 
+try:
+    from sqlcipher3 import dbapi2 as sqlcipher
+    HAS_SQLCIPHER = True
+except ImportError:
+    HAS_SQLCIPHER = False
+
 if hasattr(sys.stdout, 'buffer'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
 if hasattr(sys.stderr, 'buffer'):
@@ -239,9 +245,36 @@ fed_bundle_banned  = {}    # ip → ban_until timestamp
 DB_PATH     = os.environ.get("DB_PATH", "messages.db")
 MSG_TTL_SEC = int(os.environ.get("MSG_TTL_DAYS", "30")) * 86400
 
+# Опционально — шифрование БД at-rest через SQLCipher (защита от кражи файла/бэкапа,
+# НЕ от root-доступа к живому процессу, который всё равно держит ключ в памяти).
+# Сгенерировать ключ: python3 -c "import secrets; print(secrets.token_hex(32))"
+DB_ENCRYPTION_KEY_HEX = os.environ.get("DB_ENCRYPTION_KEY_HEX", "").strip()
+if DB_ENCRYPTION_KEY_HEX:
+    if not HAS_SQLCIPHER:
+        print("[FATAL] DB_ENCRYPTION_KEY_HEX задан, но пакет sqlcipher3-binary не установлен "
+              "(pip install sqlcipher3-binary) — отказ запуска, чтобы не молча работать "
+              "с незашифрованной БД.", flush=True)
+        sys.exit(1)
+    try:
+        bytes.fromhex(DB_ENCRYPTION_KEY_HEX)
+    except ValueError:
+        print("[FATAL] DB_ENCRYPTION_KEY_HEX должен быть hex-строкой (см. команду генерации выше).",
+              flush=True)
+        sys.exit(1)
+
+
+def db_connect():
+    """Единая точка подключения к БД. Если задан DB_ENCRYPTION_KEY_HEX — прозрачно
+    открывает файл через SQLCipher, иначе обычный sqlite3 (обратная совместимость)."""
+    if DB_ENCRYPTION_KEY_HEX:
+        conn = sqlcipher.connect(DB_PATH)
+        conn.execute(f"PRAGMA key = \"x'{DB_ENCRYPTION_KEY_HEX}'\"")
+        return conn
+    return db_connect()
+
 
 def _db_setup_sync():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS pending_messages (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -374,7 +407,7 @@ def _db_setup_sync():
 
 def _db_load_channels_sync():
     """Load all channels from SQLite into memory on startup."""
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         rows = conn.execute(
             "SELECT channel_id, name, avatar, description, admin, admin_name FROM channels"
         ).fetchall()
@@ -401,7 +434,7 @@ def _db_load_channels_sync():
 
 
 def _db_save_channel_sync(channel_id, ch):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute("""
             INSERT OR REPLACE INTO channels
             (channel_id, name, avatar, description, admin, admin_name, created_at)
@@ -412,7 +445,7 @@ def _db_save_channel_sync(channel_id, ch):
 
 
 def _db_save_subscriber_sync(channel_id, username):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO channel_subscribers (channel_id, username) VALUES (?, ?)",
             (channel_id, username)
@@ -421,7 +454,7 @@ def _db_save_subscriber_sync(channel_id, username):
 
 
 def _db_remove_subscriber_sync(channel_id, username):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute(
             "DELETE FROM channel_subscribers WHERE channel_id=? AND username=?",
             (channel_id, username)
@@ -430,7 +463,7 @@ def _db_remove_subscriber_sync(channel_id, username):
 
 
 def _db_save_post_sync(channel_id, post):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute("""
             INSERT OR IGNORE INTO channel_posts
             (channel_id, post_id, text, timestamp, author_id, author_name, image_data)
@@ -441,7 +474,7 @@ def _db_save_post_sync(channel_id, post):
 
 
 def _db_store_sync(recipient, payload_json, msg_id=None):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         try:
             conn.execute(
                 "INSERT OR IGNORE INTO pending_messages "
@@ -454,7 +487,7 @@ def _db_store_sync(recipient, payload_json, msg_id=None):
 
 
 def _db_flush_sync(recipient):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         rows = conn.execute(
             "SELECT id, payload FROM pending_messages WHERE recipient = ? ORDER BY id",
             (recipient,)
@@ -469,13 +502,13 @@ def _db_flush_sync(recipient):
 
 
 def _db_load_avatars_sync():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         rows = conn.execute("SELECT username, avatar_b64 FROM user_avatars").fetchall()
     return {row[0]: row[1] for row in rows}
 
 
 def _db_save_avatar_sync(username, avatar_b64):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO user_avatars (username, avatar_b64, updated_at) VALUES (?, ?, ?)",
             (username, avatar_b64, time.time())
@@ -489,7 +522,7 @@ async def db_save_avatar(username, avatar_b64):
 
 
 def _db_load_totp_sync():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         rows = conn.execute("SELECT username, secret FROM user_totp").fetchall()
     result = {}
     for username, stored in rows:
@@ -500,7 +533,7 @@ def _db_load_totp_sync():
 
 
 def _db_save_totp_sync(username, secret):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO user_totp (username, secret, created_at) VALUES (?, ?, ?)",
             (username, _totp_encrypt_for_storage(secret), time.time())
@@ -509,7 +542,7 @@ def _db_save_totp_sync(username, secret):
 
 
 def _db_delete_totp_sync(username):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute("DELETE FROM user_totp WHERE username = ?", (username,))
         conn.commit()
 
@@ -526,7 +559,7 @@ async def db_delete_totp(username):
 
 def _db_gen_access_codes_sync(count):
     codes = [secrets.token_hex(4).upper() for _ in range(count)]
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         now = time.time()
         for c in codes:
             conn.execute(
@@ -538,14 +571,14 @@ def _db_gen_access_codes_sync(count):
 
 
 def _db_count_access_codes_sync():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         total = conn.execute("SELECT COUNT(*) FROM server_access_codes").fetchone()[0]
         unused = conn.execute("SELECT COUNT(*) FROM server_access_codes WHERE used = 0").fetchone()[0]
     return total, unused
 
 
 def _db_check_and_consume_access_code_sync(code, fingerprint):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         row = conn.execute("SELECT used FROM server_access_codes WHERE code = ?", (code,)).fetchone()
         if row is None or row[0]:
             return False
@@ -558,7 +591,7 @@ def _db_check_and_consume_access_code_sync(code, fingerprint):
 
 
 def _db_is_fingerprint_registered_sync(fingerprint):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         row = conn.execute(
             "SELECT 1 FROM registered_fingerprints WHERE fingerprint = ?", (fingerprint,)
         ).fetchone()
@@ -566,7 +599,7 @@ def _db_is_fingerprint_registered_sync(fingerprint):
 
 
 def _db_mark_fingerprint_registered_sync(fingerprint):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO registered_fingerprints (fingerprint, first_registered_at) VALUES (?, ?)",
             (fingerprint, time.time())
@@ -590,7 +623,7 @@ async def db_mark_fingerprint_registered(fingerprint):
 
 
 def _db_count_registered_fingerprints_sync():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         row = conn.execute("SELECT COUNT(*) FROM registered_fingerprints").fetchone()
     return row[0] if row else 0
 
@@ -601,7 +634,7 @@ async def db_count_registered_fingerprints():
 
 
 def _db_revoke_fingerprint_sync(fingerprint):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO revoked_fingerprints (fingerprint, revoked_at) VALUES (?, ?)",
             (fingerprint, time.time())
@@ -610,7 +643,7 @@ def _db_revoke_fingerprint_sync(fingerprint):
 
 
 def _db_is_fingerprint_revoked_sync(fingerprint):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         row = conn.execute(
             "SELECT 1 FROM revoked_fingerprints WHERE fingerprint = ?", (fingerprint,)
         ).fetchone()
@@ -721,7 +754,7 @@ def generate_recovery_codes(count: int = 8) -> list:
 
 
 def _db_save_recovery_codes_sync(username: str, codes: list):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute("DELETE FROM totp_recovery_codes WHERE username = ?", (username,))
         now = time.time()
         for code in codes:
@@ -733,7 +766,7 @@ def _db_save_recovery_codes_sync(username: str, codes: list):
 
 
 def _db_delete_recovery_codes_sync(username: str):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute("DELETE FROM totp_recovery_codes WHERE username = ?", (username,))
         conn.commit()
 
@@ -742,7 +775,7 @@ def _db_check_and_consume_recovery_code_sync(username: str, code: str) -> bool:
     """One-shot: marks the code used in the same statement it checks it, so
     two concurrent redemption attempts (same code) can't both succeed."""
     code_hash = _hash_recovery_code(code)
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         cur = conn.execute(
             "UPDATE totp_recovery_codes SET used = 1 "
             "WHERE username = ? AND code_hash = ? AND used = 0",
@@ -780,7 +813,7 @@ async def db_flush(recipient):
 def _db_save_bundle_sync(username, bundle_data):
     """Persist prekey bundle to SQLite so it survives server restarts."""
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with db_connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO prekey_bundles_db (username, bundle, updated_at) VALUES (?, ?, ?)",
                 (username, json.dumps(bundle_data), time.time())
@@ -794,7 +827,7 @@ def _db_load_bundles_sync():
     """Load all prekey bundles from SQLite into memory on startup."""
     result = {}
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with db_connect() as conn:
             rows = conn.execute(
                 "SELECT username, bundle FROM prekey_bundles_db"
             ).fetchall()
@@ -3028,7 +3061,8 @@ def start_server():
     user_avatars.update(loaded_avatars)
     loaded_totp = _db_load_totp_sync()
     user_totp_secrets.update(loaded_totp)
-    print(f"[DB] Хранилище сообщений: {DB_PATH}")
+    print(f"[DB] Хранилище сообщений: {DB_PATH} "
+          f"({'зашифровано, SQLCipher' if DB_ENCRYPTION_KEY_HEX else 'НЕ зашифровано'})")
     print(f"[DB] Каналов загружено из БД: {len(channels)}")
     print(f"[DB] Prekey bundles загружено: {len(loaded_bundles)}")
     print(f"[DB] Аватаров загружено: {len(loaded_avatars)}")
@@ -3095,7 +3129,7 @@ def start_server():
         key_password = input("Пароль: ").strip()
 
     try:
-        with open('key_encrypted.pem', 'rb') as f:
+        with open('secrets/key_encrypted.pem', 'rb') as f:
             private_key = serialization.load_pem_private_key(
                 f.read(), password=key_password.encode(), backend=default_backend()
             )
@@ -3117,7 +3151,7 @@ def start_server():
 
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ssl_context.minimum_version = ssl.TLSVersion.TLSv1_3
-        ssl_context.load_cert_chain('cert.pem', temp_key_path)
+        ssl_context.load_cert_chain('secrets/cert.pem', temp_key_path)
 
         try:
             os.remove(temp_key_path)
