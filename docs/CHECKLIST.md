@@ -6,9 +6,10 @@ Use this checklist before deploying Subrosa to production.
 
 - [ ] Clone repository: `git clone https://github.com/MoRoKonst/Subrosa-messenger`
 - [ ] Enter directory: `cd Subrosa-messenger`
+- [ ] Copy environment (repo root): `cp .env.example .env`
+- [ ] Enter deploy directory: `cd deploy` (all commands below run from here)
 - [ ] Verify Docker installed: `docker --version && docker compose version`
 - [ ] Generate certificates: `./generate-certs.sh`
-- [ ] Copy environment: `cp .env.example .env`
 - [ ] Test locally: `docker compose up -d`
 - [ ] Verify running: `docker compose ps`
 - [ ] Check logs: `docker compose logs Subrosa-server`

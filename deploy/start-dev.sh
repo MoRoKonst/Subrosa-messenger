@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+cd "$(dirname "$0")"
+
 echo ""
 echo "========================================"
 echo "Subrosa Messenger Docker Quick Start"
@@ -28,11 +30,11 @@ if [ ! -d "certs" ] || [ ! -f "certs/cert.pem" ]; then
     ./generate-certs.sh
 fi
 
-# Create .env if missing
-if [ ! -f ".env" ]; then
+# Create .env if missing (lives at repo root, one level up from deploy/)
+if [ ! -f "../.env" ]; then
     echo ""
     echo "Creating .env from template..."
-    cp .env.example .env
+    cp ../.env.example ../.env
     echo ""
     read -p "Press Enter to continue or Ctrl+C to edit .env first..."
 fi

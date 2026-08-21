@@ -3,11 +3,13 @@ version: '3.8'
 services:
   subrosa-server:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: deploy/Dockerfile
     container_name: subrosa-messenger-server
     ports:
       - "9000:9000"
+    env_file:
+      - ../.env
     environment:
       SUBROSA_HOST: "0.0.0.0"
       SUBROSA_PORT: 9000

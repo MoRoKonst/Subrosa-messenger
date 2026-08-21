@@ -166,16 +166,19 @@ The easiest way to self-host Subrosa is with Docker and Docker Compose.
 git clone https://github.com/MoRoKonst/Subrosa-messenger
 cd Subrosa-messenger
 
-# 2. Generate TLS certificates (development)
-./generate-certs.sh
-
-# 3. Configure environment
+# 2. Configure environment (template lives at repo root)
 cp .env.example .env
 
-# 4. Start server
+# 3. All deployment files (Dockerfile, compose, nginx, certs) live in deploy/
+cd deploy
+
+# 4. Generate TLS certificates (development)
+./generate-certs.sh
+
+# 5. Start server
 docker compose up -d
 
-# 5. Access at wss://your-domain/ws
+# 6. Access at wss://your-domain/ws
 ```
 
 **Features:**
