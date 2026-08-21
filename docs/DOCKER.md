@@ -11,6 +11,8 @@ Subrosa is an end-to-end encrypted messenger with metadata protection. This depl
 
 See [README.md](../README.md) for full feature list and [SECURITY.md](../SECURITY.md) for threat model.
 
+All commands below (except `.env` setup) are run from the `deploy/` directory: `cd deploy`.
+
 ## Installation & Quick Start
 
 ### Step 1: Prerequisites
@@ -39,6 +41,7 @@ newgrp docker
 ### Step 2: Generate Certificates
 
 ```bash
+cd deploy
 chmod +x generate-certs.sh
 ./generate-certs.sh
 ```
@@ -52,9 +55,10 @@ You'll see:
 ### Step 3: Configure
 
 ```bash
-cp .env.example .env
+# .env.example lives at the repo root, not in deploy/
+cp ../.env.example ../.env
 # Edit .env in your favorite editor
-nano .env
+nano ../.env
 ```
 
 ### Step 4: Start Server
@@ -102,15 +106,19 @@ For real-world use, follow [DEPLOY.md](DEPLOY.md):
 
 ```
 .
-├── docker-compose.yml      # Service definitions
-├── Dockerfile              # Python app image
-├── nginx.conf              # Reverse proxy config
 ├── .env                    # Configuration (secrets)
 ├── .env.example            # Template for .env
-├── generate-certs.sh       # TLS certificate generator
-├── DEPLOY.md               # Production deployment guide
+├── deploy/
+│   ├── docker-compose.yml  # Service definitions
+│   ├── Dockerfile          # Python app image
+│   ├── nginx.conf          # Reverse proxy config
+│   ├── generate-certs.sh   # TLS certificate generator
+│   └── certs/              # Generated TLS cert/key (gitignored)
+├── docs/
+│   └── DEPLOY.md           # Production deployment guide
 └── Server/
     ├── server.py           # Subrosa WebSocket server
+    ├── secrets/            # cert.pem/key.pem/valid_invites.json etc. (gitignored)
     └── requirements.txt    # Python dependencies
 ```
 

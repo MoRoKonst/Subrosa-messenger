@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+cd "$(dirname "$0")"
+
 CERT_DIR="./certs"
 DAYS_VALID=365
 

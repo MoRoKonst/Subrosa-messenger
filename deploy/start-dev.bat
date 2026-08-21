@@ -1,5 +1,6 @@
 @echo off
 REM Quick start script for Subrosa Messenger on Windows
+cd /d "%~dp0"
 
 echo.
 echo ========================================
@@ -36,11 +37,11 @@ if not exist "certs" (
     )
 )
 
-REM Check .env exists
-if not exist ".env" (
+REM Check .env exists (lives at repo root, one level up from deploy\)
+if not exist "..\.env" (
     echo.
     echo Creating .env from template...
-    copy .env.example .env
+    copy ..\.env.example ..\.env
 )
 
 REM Start services

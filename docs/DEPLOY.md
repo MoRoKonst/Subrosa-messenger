@@ -12,19 +12,22 @@ This guide walks you through deploying Subrosa Messenger server using Docker and
 
 ## Quick Start (Development)
 
+All deployment files live in `deploy/`: `cd deploy`.
+
 ### 1. Generate Self-Signed Certificate
 
 ```bash
 ./generate-certs.sh
 ```
 
-This creates `certs/cert.pem` and `certs/key.pem` for local testing.
+This creates `certs/cert.pem` and `certs/key.pem` (inside `deploy/`) for local testing.
 
 ### 2. Configure Environment
 
 ```bash
-cp .env.example .env
-nano .env
+# .env.example lives at the repo root, one level up from deploy/
+cp ../.env.example ../.env
+nano ../.env
 ```
 
 ### 3. Build and Start Server

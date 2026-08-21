@@ -23,6 +23,7 @@ local.properties
 *firebase-adminsdk*.json
 Server/valid_invites.json
 Server/*.json
+Server/secrets/
 
 # База данных аналитики
 *.db
@@ -80,3 +81,6 @@ meminfo_watch.log
 # Рабочие файлы генерации иконки — не исходники приложения
 icon_work/
 Сургуч_Иконка.png
+
+# Локальная свалка временных/сгенерированных файлов, не для репозитория
+/_scratch/
