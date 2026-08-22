@@ -468,6 +468,17 @@ fun ChatScreen(
                     if (contact == recipient) channelReady = true
                 }
 
+                // sendRead() in the recipient-keyed LaunchedEffect below can race ahead
+                // of this binding (both LaunchedEffects launch on first composition, no
+                // ordering guarantee between them) — if it loses the race, messengerService
+                // is still null there and the safe-call silently drops the read receipt for
+                // the whole chat-open session, with no retry. Re-send it here too now that
+                // binding is guaranteed; resending the same watermark id is harmless.
+                scope.launch(Dispatchers.IO) {
+                    val history = ChatStorage.loadMessages(context, userId, recipient)
+                    history.lastOrNull { !it.isOwn }?.let { service.sendRead(recipient, it.id) }
+                }
+
                 service.onTypingReceived = { from ->
                     if (from == recipient) {
                         isTyping = true

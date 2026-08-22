@@ -61,7 +61,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
     fun shouldShow(line: String): Boolean {
         val t = line.trim()
         return t.isEmpty() ||
-            '✅' in t || '❌' in t || '⚠' in t ||
+            "[OK]" in t || "[FAIL]" in t || "[WARN]" in t ||
             t.startsWith("📋") ||
             t.startsWith("🔐") || t.startsWith("💣") || t.startsWith("🔬") || t.startsWith("") ||
             (t.length > 4 && t.all { it == '═' || it == ' ' }) ||
@@ -339,9 +339,9 @@ private fun TestLine(line: String, c: SubrosaColors) {
     val isTitle = t.startsWith("🔐") || t.startsWith("💣") || t.startsWith("🔬") ||
             t.startsWith("")
     val isTestHeader = t.startsWith("📋")
-    val isOk  = '✅' in t
-    val isFail = '❌' in t
-    val isWarn = '⚠' in t
+    val isOk  = "[OK]" in t
+    val isFail = "[FAIL]" in t
+    val isWarn = "[WARN]" in t
     val isInfo = 'ℹ' in t
 
     val color = when {
