@@ -348,7 +348,10 @@ This means the PKCS12 file cannot be decrypted if copied to a different machine 
 state on restart — that was wrong.** `Server/server.py` uses a SQLite
 file (`DB_PATH`, `messages.db` by default) for anything that needs to
 survive a restart, and plain in-memory dicts/sets for everything that's
-inherently tied to a live connection.
+inherently tied to a live connection. The database file can optionally be
+encrypted at rest via SQLCipher (`DB_ENCRYPTION_KEY_HEX` env var, off by
+default) — see `SECURITY.md`, Known Limitations item 27, for what that
+does and doesn't protect against.
 
 **Persistent (SQLite)** — survives a server restart:
 
