@@ -237,6 +237,23 @@ object UserStorage {
             .getBoolean("calculator_disguise", false)
     }
 
+    // The number the calculator's "=" result must match to unlock the messenger.
+    // Configurable per user, not hardcoded — a hardcoded equation would be a known
+    // constant readable in the (open-source) app, not a real secret for a
+    // general-audience deployment. No fallback default on purpose: the settings
+    // screen requires a real code to be saved before it ever flips the disguise
+    // on, so by the time this is read for real, a value is always present.
+    fun getCalculatorUnlockResult(context: Context): Double? {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        if (!prefs.contains("calculator_unlock_result")) return null
+        return prefs.getFloat("calculator_unlock_result", 0f).toDouble()
+    }
+
+    fun setCalculatorUnlockResult(context: Context, result: Double) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putFloat("calculator_unlock_result", result.toFloat()).apply()
+    }
+
     fun setCalculatorDisguise(context: Context, enabled: Boolean) {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .edit().putBoolean("calculator_disguise", enabled).apply()
@@ -456,7 +473,13 @@ object UserStorage {
     fun migrateDecoyState(context: Context) {
         val recovery = context.getSharedPreferences("beacon_recovery", Context.MODE_PRIVATE)
 
-        if (recovery.getBoolean("calculator_disguise", false)) {
+        // Only re-enable the disguise if its unlock code survived the wipe alongside
+        // it (see WipeManager.hardWipe()/wipeForDecoyKeepAlive() and
+        // MessengerService.performEmergencyWipe(), which now capture both together).
+        // Restoring the flag without a code would permanently lock the user out of
+        // their own restored profile — better to just leave the disguise off.
+        if (recovery.getBoolean("calculator_disguise", false) && recovery.contains("calculator_unlock_result")) {
+            setCalculatorUnlockResult(context, recovery.getFloat("calculator_unlock_result", 0f).toDouble())
             setCalculatorDisguise(context, true)
 
             context.getSharedPreferences("beacon_ui_state", Context.MODE_PRIVATE)

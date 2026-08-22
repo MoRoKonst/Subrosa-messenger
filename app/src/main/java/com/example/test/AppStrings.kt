@@ -268,6 +268,7 @@ interface IStr9 {
     val panicButtonDecoyLabel: String; val panicButtonDecoySubtitle: String
     val panicNotifTitle: String; val panicNotifText: String; val panicNotifButton: String
     val calcDisguiseLabel: String; val calcDisguiseSubtitle: String
+    val calcUnlockCodeLabel: String; val calcUnlockCodeHint: String; val calcUnlockCodeSave: String
     val profileTotp: String
     val totpTitle: String; val totpDescription: String
     val totpStatusEnabled: String; val totpStatusDisabled: String
@@ -413,7 +414,7 @@ private val ru3 = object : IStr3 {
     override val profileSectionGeneral  = "Основное"
     override val profileSecurityGuide = "Гид по защите"
     override val profileSecurityGuideSub = "Что делает каждая функция безопасности"
-    override val profileInviteCodeOneTimeWarning = "Код одноразовый — после первого использования перестаёт работать. Для каждого нового человека жмите «Копировать» или «Поделиться» заново, чтобы сгенерировать свежий."
+    override val profileInviteCodeOneTimeWarning = "После отправки этого кода НЕ нажимайте «Копировать»/«Поделиться»/QR повторно, пока собеседник не подключится — это молча аннулирует ещё не использованный код без ошибки с любой из сторон. Для следующего человека нажимайте заново только после того, как этот уже подключился."
     override val profileHideNotif = "Скрывать текст в уведомлениях"
     override val profileHideNotifSub = "Показывать только «Новое сообщение»"
     override val profileAutoLock = "Автоблокировка"
@@ -584,7 +585,7 @@ private val ru5 = object : IStr5 {
     override val diagInitText = "Нажмите кнопку для запуска диагностики..."
     override val diagRunning = "Выполняется..."
     override val diagBasic = "Базовая диагностика"
-    override val diagStress = "Стресс-тесты (должны провалиться)"
+    override val diagStress = "Стресс-тесты (попытка сломать защиту)"
     override val diagAdvanced = "Расширенные тесты (сессии + группы)"
 }
 
@@ -825,7 +826,10 @@ private val ru9 = object : IStr9 {
     override val panicNotifText = "Нажмите «УНИЧТОЖИТЬ» для немедленного стирания всех данных"
     override val panicNotifButton = "УНИЧТОЖИТЬ"
     override val calcDisguiseLabel = "Маскировка под калькулятор"
-    override val calcDisguiseSubtitle = "Иконка и название заменяются на «Калькулятор». Для входа в мессенджер введите 4 + 20 ="
+    override val calcDisguiseSubtitle = "Иконка и название заменяются на «Калькулятор». Задай ниже свой код разблокировки — результат любого выражения, равный этому числу, открывает мессенджер"
+    override val calcUnlockCodeLabel = "Код разблокировки (число-результат)"
+    override val calcUnlockCodeHint = "Например: 42"
+    override val calcUnlockCodeSave = "Сохранить и включить"
     override val profileTotp = "Двухфакторная защита бэкапа"
     override val totpTitle = "TOTP-защита бэкапа"
     override val totpDescription = "Дополнительный фактор защиты аккаунта: код потребуется и при восстановлении бэкапа на новом устройстве, и при попытке зайти под этим же fingerprint'ом с нового устройства (device_id), которое сервер раньше не видел — это перекрывает риск, что кто-то с украденным бэкапом или ключом просто зарегистрируется от вашего имени. Секрет нужно сохранить отдельно (например, в KeePass) — он не хранится внутри самого бэкапа, поэтому одного файла бэкапа и пароля к нему будет недостаточно, чтобы угнать identity."
@@ -862,7 +866,7 @@ private val ru9 = object : IStr9 {
 private val ru10 = object : IStr10 {
     override val guideTitle = "Гид по защите"
     override val guideInviteTitle = "Invite-код"
-    override val guideInviteDesc = "Способ анонимно познакомиться с человеком, не раскрывая серверу пару отправитель-получатель. Код одноразовый: после того как кто-то его отсканирует, зашитый в нём тег «умирает» и перестаёт работать. Дал код одному человеку — сработает только для него. Нужно добавить нескольких — жмите «Копировать»/«Поделиться» заново для каждого, это сгенерирует свежий код."
+    override val guideInviteDesc = "Способ анонимно познакомиться с человеком, не раскрывая серверу пару отправитель-получатель. Код одноразовый: после того как кто-то его отсканирует, зашитый в нём тег «умирает» и перестаёт работать. На устройстве в любой момент активен только один такой тег — повторное нажатие «Копировать»/«Поделиться»/QR тоже его меняет, даже если предыдущий получатель ещё не подключился, и молча ломает его код. Добавляешь нескольких людей — дожидайся подключения текущего, прежде чем генерировать код для следующего."
     override val guideKeyVerifyTitle = "Верификация пользователя"
     override val guideKeyVerifyDesc = "Последовательность из 5 эмодзи, полученная из хэша публичного ключа собеседника. Сверьте её с собеседником лично или по другому каналу — если совпадает, вы точно говорите с ним, а не с кем-то, кто подменил ключ (атака «человек посередине»)."
     override val guideTotpTitle = "Двухфакторная защита (TOTP)"
@@ -985,7 +989,7 @@ private val en3 = object : IStr3 {
     override val profileSectionGeneral  = "General"
     override val profileSecurityGuide = "Security guide"
     override val profileSecurityGuideSub = "What each security feature actually does"
-    override val profileInviteCodeOneTimeWarning = "This code is single-use — it stops working after the first redemption. For each new person, tap Copy or Share again to generate a fresh one."
+    override val profileInviteCodeOneTimeWarning = "After sending this code, do NOT tap Copy/Share/QR again until the other person has connected — doing so silently invalidates their not-yet-used code, with no error on either side. Only generate a new one for the next person after this one has connected."
     override val profileHideNotif = "Hide text in notifications"
     override val profileHideNotifSub = "Show only \"New message\""
     override val profileAutoLock = "Auto-lock"
@@ -1156,7 +1160,7 @@ private val en5 = object : IStr5 {
     override val diagInitText = "Press the button to run diagnostics..."
     override val diagRunning = "Running..."
     override val diagBasic = "Basic diagnostics"
-    override val diagStress = "Stress tests (should fail)"
+    override val diagStress = "Stress tests (attempting to break the protections)"
     override val diagAdvanced = "Advanced tests (sessions + groups)"
 }
 
@@ -1397,7 +1401,10 @@ private val en9 = object : IStr9 {
     override val panicNotifText = "Tap DESTROY to immediately erase all data"
     override val panicNotifButton = "DESTROY"
     override val calcDisguiseLabel = "Calculator disguise"
-    override val calcDisguiseSubtitle = "Replaces the icon and name with «Calculator». Enter 4 + 20 = to access the messenger"
+    override val calcDisguiseSubtitle = "Replaces the icon and name with «Calculator». Set your own unlock code below — any expression whose result equals that number opens the messenger"
+    override val calcUnlockCodeLabel = "Unlock code (result number)"
+    override val calcUnlockCodeHint = "e.g. 42"
+    override val calcUnlockCodeSave = "Save & enable"
     override val profileTotp = "Backup two-factor protection"
     override val totpTitle = "TOTP backup protection"
     override val totpDescription = "An extra layer of account protection: a code is required both when restoring a backup on a new device and when this fingerprint tries to log in from a new device (device_id) the server hasn't seen before — closing the gap where someone with a stolen backup or key could just register as you. Save the secret separately (e.g. in KeePass) — it isn't stored inside the backup itself, so the backup file and its password alone won't be enough to hijack the identity."
@@ -1434,7 +1441,7 @@ private val en9 = object : IStr9 {
 private val en10 = object : IStr10 {
     override val guideTitle = "Security guide"
     override val guideInviteTitle = "Invite code"
-    override val guideInviteDesc = "A way to anonymously meet someone without the server ever seeing the sender-recipient pair. The code is single-use: once someone scans it, the tag embedded inside it dies and stops working. Gave the code to one person — it only works for them. Need to add several people — tap Copy/Share again for each one, that generates a fresh code."
+    override val guideInviteDesc = "A way to anonymously meet someone without the server ever seeing the sender-recipient pair. The code is single-use: once someone scans it, the tag embedded inside it dies and stops working. Only one such tag is ever active on your device — tapping Copy/Share/QR again also replaces it, even if the previous recipient hasn't connected yet, silently breaking their code. Adding several people — wait for the current one to connect before generating a code for the next."
     override val guideKeyVerifyTitle = "Key verification"
     override val guideKeyVerifyDesc = "A sequence of 5 emoji derived from a hash of your contact's public key. Compare it with them in person or over another channel — if it matches, you're really talking to them, not someone who swapped in a different key (man-in-the-middle attack)."
     override val guideTotpTitle = "Two-factor protection (TOTP)"

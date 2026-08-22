@@ -49,6 +49,18 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
 
     var panicButtonEnabled by remember { mutableStateOf(UserStorage.getPanicButtonEnabled(context)) }
     var panicButtonDecoy   by remember { mutableStateOf(UserStorage.getPanicButtonDecoy(context)) }
+    var calculatorDisguise by remember { mutableStateOf(UserStorage.getCalculatorDisguise(context)) }
+    // Local-only "toggle flipped on, not yet saved" state — flipping the switch
+    // must not by itself flip UserStorage.calculatorDisguise, since that triggers
+    // an immediate PackageManager component swap that kills the app process. Only
+    // pressing Save (with a valid code) does that; a bare toggle flip just reveals
+    // the code field. Found live: with the old always-on-toggle-applies-immediately
+    // behavior plus a default unlock number, enabling the switch force-exited to
+    // the calculator screen before the user ever got to type their own code.
+    var calculatorShowCodeEntry by remember { mutableStateOf(false) }
+    var calculatorUnlockText by remember {
+        mutableStateOf(UserStorage.getCalculatorUnlockResult(context)?.let { CalculatorScreenDefaults.formatUnlockResult(it) } ?: "")
+    }
 
     var wipeOnBreach by remember { mutableStateOf(UserStorage.getWipeOnBreach(context)) }
     var breachLevel by remember { mutableStateOf(
@@ -322,13 +334,72 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                // Calculator-disguise toggle intentionally hidden from the public build:
-                // it was built for a specific custom deployment that never shipped, and
-                // its unlock code is a hardcoded equation (not user-configurable), which
-                // is fine for a one-off private deployment but not a real protection in
-                // a general-audience app. The underlying mechanism (UserStorage.get/setCalculatorDisguise,
-                // CalculatorScreen.kt, MainActivity routing) is left in place for a future
-                // deployment where the unlock code is made user-configurable.
+                SectionHeader(s.calcDisguiseLabel, c.textPrimary.copy(alpha = 0.6f))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = c.card),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(s.calcDisguiseSubtitle, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
+
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(s.calcDisguiseLabel, color = c.textPrimary, fontSize = 14.sp)
+                            Switch(
+                                checked = calculatorDisguise || calculatorShowCodeEntry,
+                                onCheckedChange = { enabled ->
+                                    if (enabled) {
+                                        // Just reveal the code field — does NOT touch
+                                        // UserStorage/PackageManager yet, that only
+                                        // happens on Save below.
+                                        calculatorShowCodeEntry = true
+                                    } else {
+                                        calculatorShowCodeEntry = false
+                                        calculatorDisguise = false
+                                        UserStorage.setCalculatorDisguise(context, false)
+                                    }
+                                }
+                            )
+                        }
+
+                        if (calculatorDisguise || calculatorShowCodeEntry) {
+                            HorizontalDivider(color = c.textPrimary.copy(alpha = 0.1f))
+                            OutlinedTextField(
+                                value = calculatorUnlockText,
+                                onValueChange = { calculatorUnlockText = it },
+                                label = { Text(s.calcUnlockCodeLabel, fontSize = 12.sp) },
+                                placeholder = { Text(s.calcUnlockCodeHint, fontSize = 12.sp) },
+                                singleLine = true,
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Button(
+                                onClick = {
+                                    // The only place that actually flips the disguise on —
+                                    // requires a valid saved code first, and this is the
+                                    // point where the app process gets killed by the
+                                    // launcher-component swap, which the user expects
+                                    // since they just tapped Save.
+                                    calculatorUnlockText.toDoubleOrNull()?.let {
+                                        UserStorage.setCalculatorUnlockResult(context, it)
+                                        UserStorage.setCalculatorDisguise(context, true)
+                                        calculatorDisguise = true
+                                        calculatorShowCodeEntry = false
+                                    }
+                                },
+                                enabled = calculatorUnlockText.toDoubleOrNull() != null,
+                                colors = ButtonDefaults.buttonColors(containerColor = c.accent)
+                            ) {
+                                Text(s.calcUnlockCodeSave, color = Color.White)
+                            }
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(16.dp))
             }

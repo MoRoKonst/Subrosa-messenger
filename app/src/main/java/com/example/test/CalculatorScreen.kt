@@ -16,8 +16,19 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+object CalculatorScreenDefaults {
+    // Shared with WipeSettingsScreen's unlock-code editor so both sides format/parse
+    // the stored Double the same way (e.g. 24.0 -> "24", not "24.0").
+    fun formatUnlockResult(v: Double): String =
+        if (v == v.toLong().toDouble()) v.toLong().toString()
+        else v.toBigDecimal().stripTrailingZeros().toPlainString()
+}
+
 @Composable
 fun CalculatorScreen(onUnlock: () -> Unit) {
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val unlockResult = remember { UserStorage.getCalculatorUnlockResult(context) }
 
     var display      by remember { mutableStateOf("0") }
     var pendingOp    by remember { mutableStateOf<String?>(null) }
@@ -74,12 +85,19 @@ fun CalculatorScreen(onUnlock: () -> Unit) {
     fun onEquals() {
         if (pendingOp == null) return
 
-        if (pendingStr == "4" && pendingOp == "+" && display == "20") {
+        val result = compute()
+
+        // Unlock on the computed result matching the user-configured number, not a
+        // fixed keystroke sequence — any expression that evaluates to it works
+        // (7+15=, 21×2=, etc.), which both is easier to remember and doesn't hardcode
+        // a single known unlock sequence into the (open-source) app. No fallback
+        // number: if the disguise is somehow on without a saved code, it just never
+        // unlocks via the calculator rather than accepting a known default.
+        if (unlockResult != null && kotlin.math.abs(result - unlockResult) < 0.0001) {
             onUnlock()
             return
         }
 
-        val result = compute()
         display = fmt(result)
         pendingOp = null; pendingStr = ""; isNewInput = true
     }

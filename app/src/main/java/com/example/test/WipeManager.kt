@@ -25,9 +25,17 @@ object WipeManager {
         var savedUsername: String? = null
         var savedUserId: String? = null
         var savedCalcDisguise = false
+        var savedCalcUnlockResult: Float? = null
         try {
             val enc = EncryptedStorage.getEncryptedPrefs(context, "user_prefs")
-            savedCalcDisguise = enc.getBoolean("calculator_disguise", false)
+            // Only carry the disguise forward if its unlock code survives with it —
+            // the code lives in this same (about-to-be-wiped) encrypted prefs file,
+            // so without capturing it here too, restoring disguise=true with no code
+            // would permanently lock the user out of their own restored profile.
+            if (enc.getBoolean("calculator_disguise", false) && enc.contains("calculator_unlock_result")) {
+                savedCalcDisguise = true
+                savedCalcUnlockResult = enc.getFloat("calculator_unlock_result", 0f)
+            }
             if (withDecoy) {
                 savedPasswordHash = enc.getString("password_hash", null)
                 savedUsername     = enc.getString("username",      null)
@@ -75,7 +83,10 @@ object WipeManager {
                             .putString("user_id",       savedUserId ?: "")
                             .putString("password_hash", savedPasswordHash)
                     }
-                    if (savedCalcDisguise) ed.putBoolean("calculator_disguise", true)
+                    if (savedCalcDisguise) {
+                        ed.putBoolean("calculator_disguise", true)
+                        savedCalcUnlockResult?.let { ed.putFloat("calculator_unlock_result", it) }
+                    }
                     ed.commit()
                 } catch (_: Exception) {}
             }
@@ -97,12 +108,17 @@ object WipeManager {
             var savedUsername: String? = null
             var savedUserId: String? = null
             var savedCalcDisguise = false
+            var savedCalcUnlockResult: Float? = null
             try {
                 val enc = EncryptedStorage.getEncryptedPrefs(context, "user_prefs")
                 savedPasswordHash = enc.getString("password_hash", null)
                 savedUsername     = enc.getString("username",      null)
                 savedUserId       = enc.getString("user_id",       null)
-                savedCalcDisguise = enc.getBoolean("calculator_disguise", false)
+                // See hardWipe() for why the code must travel with the disguise flag.
+                if (enc.getBoolean("calculator_disguise", false) && enc.contains("calculator_unlock_result")) {
+                    savedCalcDisguise = true
+                    savedCalcUnlockResult = enc.getFloat("calculator_unlock_result", 0f)
+                }
             } catch (_: Exception) {}
 
             try {
@@ -132,7 +148,10 @@ object WipeManager {
                         .putString("user_id",       savedUserId ?: "")
                         .putString("password_hash", savedPasswordHash)
                 }
-                if (savedCalcDisguise) ed.putBoolean("calculator_disguise", true)
+                if (savedCalcDisguise) {
+                    ed.putBoolean("calculator_disguise", true)
+                    savedCalcUnlockResult?.let { ed.putFloat("calculator_unlock_result", it) }
+                }
                 ed.commit()
             }
 
