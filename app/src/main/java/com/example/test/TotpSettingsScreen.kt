@@ -3,6 +3,8 @@ package com.subrosa.messenger
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -12,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -24,7 +27,7 @@ import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun TotpSettingsScreen(
     onBack: () -> Unit,
@@ -247,12 +250,18 @@ fun TotpSettingsScreen(
                         )
 
                         if (enabled) {
+                            val disableCodeBringIntoView = remember { BringIntoViewRequester() }
                             OutlinedTextField(
                                 value = disableCodeInput,
                                 onValueChange = { disableCodeInput = it },
                                 label = { Text(s.totpCodeLabel) },
                                 singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .bringIntoViewRequester(disableCodeBringIntoView)
+                                    .onFocusEvent {
+                                        if (it.isFocused) scope.launch { disableCodeBringIntoView.bringIntoView() }
+                                    }
                             )
                             Button(
                                 onClick = {
@@ -334,12 +343,18 @@ fun TotpSettingsScreen(
                             }
                             Text(s.totpSecretLabel, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.6f))
 
+                            val codeInputBringIntoView = remember { BringIntoViewRequester() }
                             OutlinedTextField(
                                 value = codeInput,
                                 onValueChange = { codeInput = it },
                                 label = { Text(s.totpCodeLabel) },
                                 singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .bringIntoViewRequester(codeInputBringIntoView)
+                                    .onFocusEvent {
+                                        if (it.isFocused) scope.launch { codeInputBringIntoView.bringIntoView() }
+                                    }
                             )
 
                             Button(

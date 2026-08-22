@@ -526,12 +526,17 @@ class MessengerService : Service() {
         var savedUsername: String? = null
         var savedUserId: String? = null
         var savedCalcDisguise = false
+        var savedCalcUnlockResult: Float? = null
         try {
             val enc = EncryptedStorage.getEncryptedPrefs(this, "user_prefs")
             savedPasswordHash  = enc.getString("password_hash", null)
             savedUsername      = enc.getString("username",      null)
             savedUserId        = enc.getString("user_id",       null)
-            savedCalcDisguise  = enc.getBoolean("calculator_disguise", false)
+            // See WipeManager.hardWipe() for why the code must travel with the flag.
+            if (enc.getBoolean("calculator_disguise", false) && enc.contains("calculator_unlock_result")) {
+                savedCalcDisguise = true
+                savedCalcUnlockResult = enc.getFloat("calculator_unlock_result", 0f)
+            }
         } catch (_: Exception) {}
 
         try {
@@ -565,7 +570,10 @@ class MessengerService : Service() {
                           .putString("user_id",       savedUserId ?: "")
                           .putString("password_hash", savedPasswordHash)
                     }
-                    if (savedCalcDisguise) ed.putBoolean("calculator_disguise", true)
+                    if (savedCalcDisguise) {
+                        ed.putBoolean("calculator_disguise", true)
+                        savedCalcUnlockResult?.let { ed.putFloat("calculator_unlock_result", it) }
+                    }
                     ed.commit()
                 } catch (_: Exception) {}
             }
@@ -1635,7 +1643,7 @@ class MessengerService : Service() {
             "mailbox_result" -> handleMailboxResult(json)
 
             "session_conflict" -> {
-                Log.w(TAG, "⚠️ session_conflict: аккаунт подключён с другого устройства")
+                Log.w(TAG, "session_conflict: аккаунт подключён с другого устройства")
                 isConnected = false
                 handshakeDone = false
                 webSocket?.cancel()
@@ -1959,13 +1967,13 @@ class MessengerService : Service() {
                         }
 
                     if (senderKey == null) {
-                        Log.e(TAG, "⚠️ File chunk без ключа от $from — запрашиваем")
+                        Log.e(TAG, "File chunk без ключа от $from — запрашиваем")
                         requestPrekeyBundle(from)
                         return
                     }
 
                     if (signature == null || !CryptoManager.verifyChunk(chunkData, signature, senderKey, fileId, chunkIndex)) {
-                        Log.e(TAG, "⚠️ Неверная подпись file chunk от $from")
+                        Log.e(TAG, "Неверная подпись file chunk от $from")
                         return
                     }
 
@@ -2023,14 +2031,14 @@ class MessengerService : Service() {
                                 val file = SecureFileStorage.blobFile(filesDir, fileId)
                                 SecureFileStorage.write(this@MessengerService, file, decryptedBytes)
 
-                                Log.d(TAG, "✅ Файл $fileName расшифрован и сохранен зашифрованным: ${file.absolutePath}")
+                                Log.d(TAG, "Файл $fileName расшифрован и сохранен зашифрованным: ${file.absolutePath}")
 
                                 withContext(Dispatchers.Main) {
                                     onFileReceived?.invoke(fileId, file, fileName)
                                 }
 
                             } catch (e: Exception) {
-                                Log.e(TAG, "❌ Ошибка расшифровки файла: ${e.message}", e)
+                                Log.e(TAG, "Ошибка расшифровки файла: ${e.message}", e)
                             }
 
                         } else {
@@ -2040,7 +2048,7 @@ class MessengerService : Service() {
                             val file = SecureFileStorage.blobFile(filesDir, fileId)
                             SecureFileStorage.write(this@MessengerService, file, fileBytes)
 
-                            Log.d(TAG, "✅ Legacy файл сохранен зашифрованным: ${file.absolutePath}")
+                            Log.d(TAG, "Legacy файл сохранен зашифрованным: ${file.absolutePath}")
 
                             withContext(Dispatchers.Main) {
                                 onFileReceived?.invoke(fileId, file, fileName)
@@ -2051,7 +2059,7 @@ class MessengerService : Service() {
                     }
 
                 } catch (e: Exception) {
-                    Log.e(TAG, "❌ file_chunk error: ${e.message}", e)
+                    Log.e(TAG, "file_chunk error: ${e.message}", e)
                 }
             }
 
@@ -2088,7 +2096,7 @@ class MessengerService : Service() {
                         val chunkData = c.getString("data")
                         val signature = c.optString("signature", null)
                         if (signature == null || !CryptoManager.verifyChunk(chunkData, signature, senderKey, imageId, chunkIndex)) {
-                            Log.e(TAG, "⚠️ Неверная подпись group_image chunk от $from")
+                            Log.e(TAG, "Неверная подпись group_image chunk от $from")
                             continue
                         }
                         chunks[chunkIndex] = chunkData
@@ -2152,7 +2160,7 @@ class MessengerService : Service() {
                         val chunkData = c.getString("data")
                         val signature = c.optString("signature", null)
                         if (signature == null || !CryptoManager.verifyChunk(chunkData, signature, senderKey, fileId, chunkIndex)) {
-                            Log.e(TAG, "⚠️ Неверная подпись group_file chunk от $from")
+                            Log.e(TAG, "Неверная подпись group_file chunk от $from")
                             continue
                         }
                         fileChunks[transferKey]?.chunks?.add(chunkIndex to chunkData)
@@ -2245,7 +2253,7 @@ class MessengerService : Service() {
                     val senderKey = publicKeys[from] ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also { publicKeys[from] = it }
 
                     if (signature == null || senderKey == null) {
-                        Log.e(TAG, "⚠️ Voice без ключа от $from — запрашиваем")
+                        Log.e(TAG, "Voice без ключа от $from — запрашиваем")
                         requestPrekeyBundle(from)
                         return
                     }
@@ -2253,7 +2261,7 @@ class MessengerService : Service() {
                     val fixedKey = senderKey.replace('-', '+').replace('_', '/')
 
                     if (!CryptoManager.verify(encryptedData, signature, fixedKey)) {
-                        Log.e(TAG, "⚠️ Неверная подпись голосового от $from")
+                        Log.e(TAG, "Неверная подпись голосового от $from")
                         return
                     }
 
@@ -3812,7 +3820,7 @@ class MessengerService : Service() {
                     delay(30)
                 }
 
-                Log.d(TAG, "✅ Изображение отправлено")
+                Log.d(TAG, "Изображение отправлено")
 
             } catch (e: Exception) {
                 Log.e(TAG, "sendImage error: ${e.message}", e)
@@ -3896,10 +3904,10 @@ class MessengerService : Service() {
                     delay(30)
                 }
 
-                Log.d(TAG, "✅ Файл $fileName успешно отправлен")
+                Log.d(TAG, "Файл $fileName успешно отправлен")
 
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Ошибка отправки файла: ${e.message}", e)
+                Log.e(TAG, "Ошибка отправки файла: ${e.message}", e)
             } finally {
                 fileChunkAcks.remove(fileId)
                 cancelledTransfers.remove(fileId)
@@ -3919,7 +3927,7 @@ class MessengerService : Service() {
 
         if (signature == null || senderKey == null ||
             !CryptoManager.verifyChunk(chunkData, signature, senderKey, videoId, chunkIndex)) {
-            Log.e(TAG, "⚠️ video_chunk неверная подпись от $from")
+            Log.e(TAG, "video_chunk неверная подпись от $from")
             return
         }
 
@@ -4058,7 +4066,7 @@ class MessengerService : Service() {
                         Log.w(TAG, "sendVideoCircle: соединение упало посреди отправки, нет encFilePath — $videoId потерян")
                     }
                 } else {
-                    Log.d(TAG, "✅ Видеокружок $videoId отправлен: ${encryptedChunks.size} чанков")
+                    Log.d(TAG, "Видеокружок $videoId отправлен: ${encryptedChunks.size} чанков")
                 }
 
             } catch (e: Exception) {
@@ -4190,7 +4198,7 @@ class MessengerService : Service() {
             // messages that should have fallen back to legacy encryption.
             val queued = pendingSessionMessages.remove(from)
             if (bundleJsonRaw.optBoolean("revoked", false)) {
-                Log.w(TAG, "⚠️ prekey bundle от $from помечен сервером как revoked")
+                Log.w(TAG, "prekey bundle от $from помечен сервером как revoked")
                 withContext(Dispatchers.Main) { onContactRevoked?.invoke(from) }
             }
             try {
@@ -4215,7 +4223,7 @@ class MessengerService : Service() {
                 ChatStorage.saveContactPqPublicKey(this@MessengerService, from, publicKeysPq[from]!!)
                 ChatStorage.saveContactPublicKey(this@MessengerService, from, bundle.identityKey)
                 if (KeyHistoryManager.checkKeyChange(this@MessengerService, from, bundle.identityKey)) {
-                    Log.w(TAG, "⚠️ TOFU: ключ контакта $from изменился при получении bundle!")
+                    Log.w(TAG, "TOFU: ключ контакта $from изменился при получении bundle!")
                     withContext(Dispatchers.Main) { onKeyChanged?.invoke(from) }
                 }
                 Log.d(TAG, "Публичный ключ из bundle сохранён: $from")
@@ -4768,7 +4776,7 @@ class MessengerService : Service() {
             publicKeys[from] = fixedSenderIk
             ChatStorage.saveContactPublicKey(this@MessengerService, from, fixedSenderIk)
             if (KeyHistoryManager.checkKeyChange(this@MessengerService, from, fixedSenderIk)) {
-                Log.w(TAG, "⚠️ TOFU: ключ контакта $from изменился в session_init!")
+                Log.w(TAG, "TOFU: ключ контакта $from изменился в session_init!")
                 withContext(Dispatchers.Main) { onKeyChanged?.invoke(from) }
             }
             Log.d(TAG, "Публичный ключ из session_init сохранён: $from")
@@ -5373,7 +5381,7 @@ class MessengerService : Service() {
                     delay(30)
                 }
 
-                Log.d(TAG, "✅ Групповое изображение отправлено")
+                Log.d(TAG, "Групповое изображение отправлено")
             } catch (e: Exception) {
                 Log.e(TAG, "sendGroupImage error: ${e.message}", e)
             }
@@ -5425,7 +5433,7 @@ class MessengerService : Service() {
                     delay(30)
                 }
 
-                Log.d(TAG, "✅ Групповой файл отправлен")
+                Log.d(TAG, "Групповой файл отправлен")
             } catch (e: Exception) {
                 Log.e(TAG, "sendGroupFile error: ${e.message}", e)
             }
