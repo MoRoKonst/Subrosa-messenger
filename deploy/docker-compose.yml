@@ -13,6 +13,11 @@ services:
     environment:
       SUBROSA_HOST: "0.0.0.0"
       SUBROSA_PORT: 9000
+      # Without this, DB_PATH defaults to the relative "messages.db", which
+      # resolves against WORKDIR /app -- outside the subrosa-data volume
+      # mounted below at /app/data. The DB would live in the container's
+      # writable layer and be lost on every recreate. Found live.
+      DB_PATH: /app/data/messages.db
     volumes:
       - subrosa-data:/app/data
     restart: unless-stopped
