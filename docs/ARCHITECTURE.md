@@ -1,6 +1,6 @@
 # Architecture
 
-*Last verified against commit: `aeb1ddf` (2026-08-23). This project changes quickly — if you're reading this much later than that date, treat specific claims as needing a fresh code check, not as guaranteed-current.*
+*Last verified against commit: `4486682` (2026-08-23). This project changes quickly — if you're reading this much later than that date, treat specific claims as needing a fresh code check, not as guaranteed-current.*
 
 This document describes the system design, module structure, and data flows of Subrosa Messenger.
 
