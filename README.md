@@ -24,7 +24,7 @@ A self-hosted end-to-end encrypted messenger for Android with metadata protectio
 
 Subrosa is a self-hosted encrypted messenger built for adversarial environments. Unlike most messengers that protect only message content, Subrosa also protects **who talks to whom** — the social graph — through anonymous token routing, cover traffic, and Tor hidden service support.
 
-The server never has access to plaintext messages, user identities, keys, or call content. All cryptographic operations happen on the client.
+The server never has access to plaintext messages, private keys, or call content — all cryptographic operations happen on the client, and it doesn't learn who a given message is *for* (see [Privacy Architecture](#privacy-architecture) below for exactly what routing metadata it does and doesn't see). It does see each connection's authenticated public key/fingerprint at login, and persists which fingerprints have ever registered — that's not a civil identity, but it isn't nothing either; see [SECURITY.md](docs/SECURITY.md) for the precise threat model.
 
 **Min Android:** 8.0 (API 26)  
 **Target SDK:** 34  
@@ -63,7 +63,7 @@ The server never has access to plaintext messages, user identities, keys, or cal
 - Contact avatar (128×128 JPEG)
 
 ### Security
-- Full Signal Protocol: X3DH key agreement + Double Ratchet v3 (DH + Symmetric Ratchet)
+- X3DH key agreement + Double Ratchet v3 (DH + Symmetric Ratchet), extended with a hybrid post-quantum key exchange (ML-KEM-768) following the same reasoning as Signal's own published PQXDH design, plus anonymous token routing/mailbox on top. The ratchet and the PQ-hybrid *design* both trace back to Signal's own specifications; this project's own from-scratch *implementation* of the PQ hybrid (BouncyCastle-based, not libsignal) and the anonymous-routing/mailbox layer (an original protocol design, not from Signal) have not themselves been independently audited (see [SECURITY.md](docs/SECURITY.md))
 - Forward secrecy and break-in recovery on every message exchange
 - Double encryption at rest: AndroidKeyStore + Storage Master Key (AES-256)
 - Biometric unlock
@@ -131,7 +131,7 @@ The server exposes a `.onion` address. Traffic travels entirely within the Tor n
 | Observer | Without Subrosa | With Subrosa |
 |---|---|---|
 | Server / leaked logs | `from → to` graph, content | Sender identity per connection still visible; recipient side hidden (anonymous blobs and tokens) |
-| Malicious server operator | `from → to` graph, content | Token routing table (mitigated by self-hosting) |
+| Malicious server operator | `from → to` graph, content | Token routing table, not `from → to` pairs or content — but this is not a cryptographic guarantee against the operator, it's a metadata-scope reduction. Self-hosting doesn't eliminate this risk, it changes *who* the operator is: run your own server and your firm holds that residual visibility instead of a third party, which is a real control benefit for a firm's own compliance posture, but the same server-side visibility exists whoever runs it |
 | Sender's ISP | Server IP, timing, volume | Encrypted Tor traffic |
 | Recipient's ISP | Server IP, timing, volume | Encrypted Tor traffic |
 | Both ISPs simultaneously | Timing correlation | Statistically much harder (constant-rate) |
@@ -279,7 +279,7 @@ signingConfigs {
 
 1. Install the APK from [Releases](https://github.com/MoRoKonst/Subrosa-messenger/releases).
 2. Open the app and register a username and password.
-3. Share your invite code with a contact (`beacon://invite?...`).
+3. Share your invite code with a contact (`bc:<base64url-encoded>`).
 4. Verify your contact's fingerprint out-of-band (optional but recommended).
 5. Start messaging.
 

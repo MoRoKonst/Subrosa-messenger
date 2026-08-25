@@ -4,6 +4,8 @@
 
 *A concise technical overview for IT and security teams evaluating Subrosa for privileged communication.*
 
+*Last verified against commit: `aeb1ddf` (2026-08-23) — cross-checked against `SECURITY.md`, the source of truth for this project's actual security posture. If claims here and in `SECURITY.md` ever disagree, `SECURITY.md` is correct.*
+
 ---
 
 ## 1. The Problem: Encryption Is Solved, Metadata Is Not
@@ -31,21 +33,21 @@ Subrosa is a **self-hosted** messenger. Your firm runs the server, and message c
 | Metadata (who↔whom) visible to server | ✅ Yes | ⚠️ **Anonymously routed for nearly everything — documented exceptions below** |
 | Data at rest on a seized device | Single-layer | **Double-encrypted** |
 | Duress / panic protection | ❌ | ✅ **Silent wipe** |
-| Auditable source | Partial | ✅ **Fully open-source** |
+| Auditable source | Partial | ✅ **Open-source Android client and server** (a feature-complete desktop client exists but isn't published yet) |
 
 ---
 
 ## 3. Security Architecture
 
-### 3.1 Message Encryption — Double Ratchet (Signal Protocol)
+### 3.1 Message Encryption — Double Ratchet, Extended
 
-Subrosa uses the **Double Ratchet algorithm** with X3DH key agreement — the same proven cryptography that underpins Signal. This provides:
+Subrosa uses **X3DH key agreement and the Double Ratchet algorithm** — the same peer-reviewed, industry-standard construction that underpins Signal, not a homegrown replacement. This provides:
 
 - **End-to-end encryption** — only the participating devices can read messages
 - **Forward secrecy** — a compromised key cannot decrypt past messages
 - **Break-in recovery** — the protocol self-heals after a key compromise
 
-This is a peer-reviewed, industry-standard construction. It is not a homegrown scheme.
+Around that standard core, Subrosa adds two extensions. The first, a hybrid post-quantum key exchange (ML-KEM-768 alongside the classical exchange), follows the same design reasoning as Signal's own published PQXDH — it isn't an invented approach, though this project's specific implementation of it (built independently, not using Signal's own libsignal code) hasn't itself been independently audited. The second, the anonymous token-routing/mailbox layer in 3.2, *is* original protocol-design work by this project, not derived from Signal or another peer-reviewed anonymity standard, and likewise unaudited — see `SECURITY.md` for the exact scope of what has and hasn't been reviewed.
 
 ### 3.2 Metadata Protection — Anonymous Routing
 
@@ -71,7 +73,7 @@ Local data on each device is protected by **two independent encryption layers**:
 1. The OS-backed encrypted store (Android Keystore / hardware-backed)
 2. A separate **Storage Master Key** derived from the user's password (PBKDF2, 300,000 iterations) and independently wrapped in hardware
 
-A device seized in an unlocked state still does not surrender message history without the second factor. Keys are held in memory only and zeroed on lock.
+The Storage Master Key is held in memory only while the app is actively unlocked, and is zeroed the moment either the phone's own screen lock or the app's separate auto-lock timer fires — a device seized after either of those has triggered (including simply having been screen-locked at some point since last use) does not surrender message history without the password. A device seized *mid-use*, with the app still actively open and unlocked at that exact moment, is a narrower and honestly-acknowledged exception: the key is genuinely resident in RAM until lock triggers, and extracting it in that window requires a further compromise (root or an exploit capable of a memory dump) — see `SECURITY.md`, Known Limitations item 2, for the precise scope of that gap.
 
 ### 3.5 Duress Protection — Panic Password
 
@@ -89,7 +91,7 @@ Subrosa is designed to be deployed by your own IT team, on your own infrastructu
 
 - **Server:** a single Python asyncio WebSocket process. Docker is the documented quick-start path (`docker compose up`, roughly **15 minutes** for a standard deployment); a plain `systemd`-managed process behind `nginx` works identically and is what our own reference deployment runs.
 - **Requirements:** A Linux host and a TLS certificate. Optional TURN server for voice/video calls.
-- **Clients:** Android (full-featured). A desktop companion client is in development.
+- **Clients:** Android (full-featured, published, open-source). A desktop client (Windows/macOS/Linux) exists and is feature-complete internally — including its own set of hardening beyond what Android needs (on-screen keyboard against hardware keyloggers, clipboard history/cloud-sync exclusion, secure temp-file deletion) — but is **not yet published**; treat it as unavailable until it ships.
 
 Because the server is yours, there is no per-message dependency on a vendor, no data residency question, and no third-party outage that can take your firm's communication down.
 
@@ -97,11 +99,13 @@ Because the server is yours, there is no per-message dependency on a vendor, no 
 
 ## 5. Open Source & Auditability
 
-The core is **fully open-source**. Your IT or security team can:
+The **Android client and server are open-source today**. Your IT or security team can:
 
-- Read every line of the client and server code
+- Read every line of the Android client and server code
 - Verify there is no backdoor, telemetry, or hidden data exfiltration
 - Build and deploy from source if firm policy requires it
+
+The desktop client is feature-complete internally but not yet published to the repository — treat it as closed-source until it ships; this overview will be updated the day it's public.
 
 Repository: **https://github.com/MoRoKonst/Subrosa-messenger**
 

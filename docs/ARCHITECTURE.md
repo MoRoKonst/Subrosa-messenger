@@ -1,5 +1,7 @@
 # Architecture
 
+*Last verified against commit: `aeb1ddf` (2026-08-23). This project changes quickly — if you're reading this much later than that date, treat specific claims as needing a fresh code check, not as guaranteed-current.*
+
 This document describes the system design, module structure, and data flows of Subrosa Messenger.
 
 > **Note:** The Channels feature (broadcast channels: `ChannelManager`, `ChannelFeedScreen`, `channel_*` message types and DB tables referenced below) is currently **disabled at the UI layer** on both clients — it didn't fit the product's purpose as a resilient private communication tool rather than a broadcast/social tool, and its metadata wasn't anonymized. The underlying code is left in place, unreachable, in case it's revisited later.
@@ -130,7 +132,7 @@ Navigation is managed entirely in `MainActivity` via a single Compose `mutableSt
 "decoy"          → DecoyScreen
 ```
 
-Deep links (`beacon://invite`, `beacon://channel`) are processed in `handleDeepLink()` before routing.
+The manifest still registers intent filters for `beacon://invite` and `beacon://channel`, but neither is currently functional: there is no `beacon://invite` handling code anywhere (the invite exchange flow is the `bc:<base64url>` blob, pasted/scanned into a dedicated add-contact screen, not a URI intent), and `handleChannelDeepLink()` (`MainActivity.kt`) is entirely commented out, consistent with Channels being disabled at the UI layer (see `SECURITY.md`, Known Limitations item 12). Treat both deep link schemes as vestigial until either is re-wired.
 
 ---
 
@@ -169,7 +171,7 @@ Manages per-contact Double Ratchet session states. Initialized at app start (bef
 - Session state serialization
 - Publishing an anonymous **bootstrap token** (from `AnonTokenManager`'s pool) alongside the prekey bundle, letting a fetcher's `session_init` reply be delivered via `anon_message` instead of direct fingerprint addressing (see [SECURITY.md](SECURITY.md) item 11)
 
-> SPK, OPK, and the PQ (ML-KEM) prekey pair are intentionally **not** wrapped by the SMK layer because they are needed at cold start before the user logs in.
+> SPK, OPK, PQ (ML-KEM) private keys, and Double Ratchet session state are SMK-wrapped (`SessionKeyManager.wrapKeyBytes()`/`saveSession()`, see [SECURITY.md](SECURITY.md)). The cold-start case (background service resumed before the user unlocks) is handled without leaving keys unwrapped: `tryUnwrapKeyBytes()` returns `null` rather than throwing when the SMK isn't available yet, callers treat that as "not available yet" and skip gracefully, and `wrapKeyBytes()` falls back to plain Base64 only for writes made while locked (so incoming-traffic-triggered saves still work) — reads of already-wrapped values while locked stay unavailable until unlock, they aren't silently stored unwrapped.
 
 #### `GroupManager.kt`
 Manages encrypted group state.
@@ -205,7 +207,7 @@ Two-level data destruction (a third, `SOFT`, existed briefly but was removed —
 | `HARD` | Delete all keys, prefs, files, WebView data, databases; optional decoy state creation |
 | `NUCLEAR` | `HARD` + `ActivityManager.clearApplicationUserData()` (atomic system wipe, process killed) |
 
-Decoy mode: before HARD wipe, saves `username`, `password_hash`, `user_id` to a temporary plaintext file. On next launch, the app appears to have a legitimate account with fake chats, providing plausible deniability under coercion.
+Decoy mode: before HARD wipe, saves `username`, `password_hash`, `user_id` to a temporary plaintext file. On next launch, the app appears to have a legitimate account with fake chats — deniability of what's on screen against a coercing party, not undetectability of the wipe itself against a forensic device examination (see `SECURITY.md`, Known Limitations item 7).
 
 #### `IntrusionDetector.kt`
 Scans for active interception at runtime. Called on `onResume()` in Paranoid Mode (off-Main-Thread via `Dispatchers.IO`).
@@ -235,7 +237,7 @@ Tamper detection via canary values. A HMAC of a known set of values is stored at
 Scheduled wipe if the user fails to check in within a configured interval. Uses `AlarmManager.setExactAndAllowWhileIdle`. On alarm fire, `WipeReceiver` triggers `WipeManager.wipe()`.
 
 #### `InviteCodeManager.kt`
-Generates and verifies ECDSA-signed contact invitations as a binary blob, prefixed `bc:` and Base64url-encoded — not a URL with individually encoded fields. See [SECURITY.md](SECURITY.md) "Invite Codes" for the exact byte layout. Signature covers the whole pre-signature payload. TTL: 7 days from `ts`. Backward compatible with the older `0x02` format (no mailbox tag field) generated before the anonymous-mailbox feature existed. Desktop and Android share this exact binary format byte-for-byte.
+Generates and verifies ECDSA-signed contact invitations as a binary blob, prefixed `bc:` and Base64url-encoded — not a URL with individually encoded fields. See [SECURITY.md](SECURITY.md) "Invite Codes" for the exact byte layout. Signature covers the whole pre-signature payload. TTL: 7 days from `ts`. Current format version is `0x03` (adds the mailbox tag field); the older `0x02` format is **rejected outright** on parse (`parseInviteCode` returns `null` for any version mismatch) — it used to fall back to a direct, server-visible lookup, which silently dropped the anonymous-mailbox guarantee with no warning to the user. Desktop and Android share this exact binary format byte-for-byte.
 
 #### `BackupManager.kt`
 Exports all user data to an encrypted binary blob:

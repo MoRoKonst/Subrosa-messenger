@@ -12,7 +12,7 @@ Use this checklist before deploying Subrosa to production.
 - [ ] Generate certificates: `./generate-certs.sh`
 - [ ] Test locally: `docker compose up -d`
 - [ ] Verify running: `docker compose ps`
-- [ ] Check logs: `docker compose logs Subrosa-server`
+- [ ] Check logs: `docker compose logs subrosa-server`
 
 ## Production Deployment
 
@@ -57,8 +57,8 @@ Use this checklist before deploying Subrosa to production.
 
 ### Monitoring & Maintenance
 - [ ] Set up log rotation (optional)
-- [ ] Schedule daily backups: `docker run --rm ... cp /data/Subrosa.db ...`
-- [ ] Monitor disk space: `docker compose exec Subrosa-server df -h`
+- [ ] Schedule daily backups: `docker run --rm ... cp /data/messages.db ...`
+- [ ] Monitor disk space: `docker compose exec subrosa-server df -h`
 - [ ] Set certificate renewal reminder (Let's Encrypt: 30 days before expiry)
 - [ ] Weekly: `docker compose logs | grep -i error`
 - [ ] Monthly: Update Docker images and test in staging
@@ -86,7 +86,7 @@ Use this checklist before deploying Subrosa to production.
 - [ ] Backup certs/ directory
 - [ ] Weekly full database backup
 - [ ] If issues: `docker compose down && docker compose up -d`
-- [ ] To restore from backup: restore Subrosa.db volume
+- [ ] To restore from backup: restore messages.db volume
 
 ## Security Hardening (Optional)
 - [ ] Enable firewall rules: `ufw enable`
@@ -117,7 +117,7 @@ Use this checklist before deploying Subrosa to production.
 | High memory | `docker stats` | Check concurrent connections |
 | Disk full | `df -h` | Backup and clean old messages |
 | Certificate expired | `openssl x509 -dates -noout -in certs/cert.pem` | Renew with certbot |
-| Messages accumulating | `sqlite3 /path/to/Subrosa.db "SELECT COUNT(*) FROM messages"` | Archive old data |
+| Messages accumulating | `sqlite3 /path/to/messages.db "SELECT COUNT(*) FROM messages"` | Archive old data |
 
 ## Support & Documentation
 
