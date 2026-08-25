@@ -1,6 +1,6 @@
 # Subrosa — Pricing
 
-Subrosa's source code is free and open. What a subscription buys is the operational layer a firm handling sensitive matters actually needs: painless deployment, security kept under watch, and an accountable party when something goes wrong.
+Subrosa's source code is free and open. What a subscription buys is the operational layer a firm handling sensitive matters actually needs: painless deployment, security kept under watch, and a named support and security contact when something goes wrong.
 
 Pricing is **per firm, not per user**. You run the server; create as many accounts as you need. What you pay for is the scope of support and operation.
 
@@ -24,7 +24,7 @@ For a law firm, NGO, newsroom, or investigative team.
 - Priority support, response within 24 hours
 - Production setup assistance (TLS, firewall, backups)
 - Help configuring workstations for your whole team
-- Annual security review of your deployment
+- Annual Deployment Security Review (see scope below)
 - Threat-model consultation tailored to your work
 
 ### ⚫ Managed — from $999 / month
@@ -48,8 +48,10 @@ For teams without in-house IT.
 | Service | Price | When |
 |---|---|---|
 | Turnkey setup (one-time) | $200–300 | Solo plan with full "done-for-you" installation |
-| Security review of your deployment | $300–500 | Annual, for compliance peace of mind |
+| Deployment Security Review | $300–500 | Annual, for compliance peace of mind |
 | Team onboarding (async: video + docs) | $150 | When rolling out to a firm |
+
+**What "Deployment Security Review" means** — a review of *your specific deployment's* configuration: TLS setup, firewall rules, server hardening, access controls, backup handling, and whether you're running current, unpatched code. It is not a source-code security audit of the Subrosa codebase itself (the code is open — anyone, including an independent third party your firm hires, can audit that directly) and not a penetration test. If your compliance process requires a formal code audit or pentest, that's a separate, explicitly-scoped engagement.
 
 ---
 
@@ -65,7 +67,7 @@ Pay annually and get roughly two months free (pay for 10, get 12):
 ## Common questions
 
 **Why pay if the code is free?**
-The code is open so you can verify it and trust no one on their word. A subscription is what the code cannot give you: deployment without spending your own time, security updates as new threats emerge, and an accountable party when something goes wrong. You're not paying for software — you're paying to not have to run it yourself.
+The code is open so you can verify it and trust no one on their word. A subscription is what the code cannot give you: deployment without spending your own time, security updates as new threats emerge, and a named support and security contact when something goes wrong. You're not paying for software — you're paying to not have to run it yourself. (See the Support & Maintenance Agreement for exactly what "responsibility" means in scope and liability terms — this page describes the service, that document is the binding one.)
 
 **What if you disappear?**
 The code is open and the server is yours. Even if Subrosa vanished tomorrow, your infrastructure keeps running, and any developer can maintain it. You are never locked in.

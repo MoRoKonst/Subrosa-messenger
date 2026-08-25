@@ -44,7 +44,7 @@ The server will:
 ### 4. Verify It's Running
 
 ```bash
-docker-compose logs -f Subrosa-server
+docker-compose logs -f subrosa-server
 docker-compose ps
 ```
 
@@ -138,15 +138,15 @@ docker-compose logs -f
 
 ### Data Persistence
 
-- **SQLite database**: `/app/data/Subrosa.db` (inside container)
-- **Docker volume**: `Subrosa-data` (persists across restarts)
+- **SQLite database**: `/app/data/messages.db` (inside container)
+- **Docker volume**: `subrosa-data` (persists across restarts)
 
 ### Resource Limits
 
 For small deployments (50-100 users), default settings are fine. For larger:
 
 ```yaml
-# In docker-compose.yml, add to Subrosa-server service:
+# In docker-compose.yml, add to subrosa-server service:
 resources:
   limits:
     cpus: '2'
@@ -167,7 +167,7 @@ resources:
 docker-compose logs -f
 
 # Specific service
-docker-compose logs -f Subrosa-server
+docker-compose logs -f subrosa-server
 docker-compose logs -f nginx
 ```
 
@@ -195,7 +195,7 @@ the backup-import TOTP in `docs/ISSUE_backup_identity_hijack.md`).
 
 ```bash
 docker-compose down
-# Data persists in the Subrosa-data volume
+# Data persists in the subrosa-data volume
 ```
 
 ### Restart Server
@@ -222,10 +222,10 @@ docker-compose up -d
 ```bash
 # Extract database from volume
 docker run --rm \
-  -v Subrosa-data:/data \
+  -v subrosa-data:/data \
   -v $(pwd):/backup \
   alpine:latest \
-  cp /data/Subrosa.db /backup/Subrosa-backup-$(date +%Y%m%d).db
+  cp /data/messages.db /backup/Subrosa-backup-$(date +%Y%m%d).db
 
 # File saved to ./Subrosa-backup-YYYYMMDD.db
 ```
@@ -366,15 +366,15 @@ docker-compose down
 docker-compose logs -f
 
 # Restart specific service
-docker-compose restart Subrosa-server
+docker-compose restart subrosa-server
 
 # Rebuild after code changes
 docker-compose build --no-cache && docker-compose up -d
 
 # Enter server shell (debug)
-docker-compose exec Subrosa-server sh
+docker-compose exec subrosa-server sh
 
 # Backup database
-docker run --rm -v Subrosa-data:/data -v $(pwd):/backup \
-  alpine:latest cp /data/Subrosa.db /backup/backup.db
+docker run --rm -v subrosa-data:/data -v $(pwd):/backup \
+  alpine:latest cp /data/messages.db /backup/backup.db
 ```

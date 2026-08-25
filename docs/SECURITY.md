@@ -1,5 +1,7 @@
 # Security Model
 
+*Last verified against commit: `aeb1ddf` (2026-08-23). This project changes quickly — if you're reading this much later than that date, treat specific claims as needing a fresh code check, not as guaranteed-current.*
+
 This document describes the threat model, cryptographic design, and anti-forensics mechanisms of Subrosa Messenger.
 
 ---
@@ -458,7 +460,7 @@ When `HARD` wipe is triggered with "post-wipe decoy" enabled:
    - Fake chat entries are populated.
    - The app appears normal to a cursory inspection.
 
-The decoy account cannot decrypt any real messages (all keys were destroyed). It provides plausible deniability when a coercing party demands to see the device.
+The decoy account cannot decrypt any real messages (all keys were destroyed). It provides plausible deniability against a cursory inspection or a coercing party demanding to see the device's *contents* — not against a forensic examination of the *device itself*: a sophisticated examiner may still find filesystem timestamps, journal entries, or flash wear-leveling patterns indicating a prior wipe occurred (see Known Limitations item 7). Deniability of what's on screen, not undetectability of the wipe.
 
 ---
 

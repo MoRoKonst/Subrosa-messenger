@@ -145,7 +145,7 @@ The first idea is to send fake messages randomly, once every 30–120 seconds. T
 
 ### Constant-Rate Cover Traffic
 
-The right solution — and this is exactly how the academic Loopix protocol works. The client **always** sends a stream at a fixed interval. When a real message is ready, it takes the place of the next noise packet:
+A better approach, inspired by the constant-rate idea behind the academic Loopix mix-network protocol (though Subrosa implements only this one piece of it, not a mix network — see "Honest About the Limits" below). The client **always** sends a stream at a fixed interval. When a real message is ready, it takes the place of the next noise packet:
 
 ```
 Without protection:  ────M──────────M──M──────────  (M = message, pattern visible)
@@ -244,7 +244,7 @@ Four layers, each closing its own attack vector:
 3. **Constant-rate cover traffic** — timing correlation is significantly harder; the observer sees a uniform stream
 4. **Tor hidden service** — IP address is hidden; no exit nodes, no Cloudflare blocks
 
-This is not a mix network and not absolute anonymity. But for protection against passive mass surveillance and operator log leaks — it's practically sufficient.
+This is not a mix network and not absolute anonymity — it's an original, unaudited protocol design (see `SECURITY.md`), not an implementation of a peer-reviewed anonymity standard. It's designed to reduce what a passive observer or an operator's leaked logs can reconstruct, and to meaningfully raise the cost of timing correlation — not to eliminate it. Treat it as raising the bar against mass passive surveillance, not as a guarantee against a targeted, resourced adversary.
 
 ---
 

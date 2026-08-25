@@ -9,7 +9,7 @@ Subrosa is an end-to-end encrypted messenger with metadata protection. This depl
 - **nginx reverse proxy** with TLS termination
 - **Docker containerization** for easy deployment
 
-See [README.md](../README.md) for full feature list and [SECURITY.md](../SECURITY.md) for threat model.
+See [README.md](../README.md) for full feature list and [SECURITY.md](SECURITY.md) for threat model.
 
 All commands below (except `.env` setup) are run from the `deploy/` directory: `cd deploy`.
 
@@ -131,7 +131,7 @@ For real-world use, follow [DEPLOY.md](DEPLOY.md):
 docker compose up -d
 
 # View logs
-docker compose logs -f Subrosa-server
+docker compose logs -f subrosa-server
 
 # Stop server
 docker compose down
@@ -143,14 +143,19 @@ docker compose restart
 docker compose build --no-cache && docker compose up -d
 
 # Access server shell (debug)
-docker compose exec Subrosa-server sh
+docker compose exec subrosa-server sh
 
 # Export database backup
+# The volume name is prefixed by Compose with the project name, which
+# depends on the directory you run `docker compose` from -- find it first
+# rather than guessing:
+docker volume ls | grep subrosa-data
+# Then, with that exact name (e.g. deploy_subrosa-data):
 docker run --rm \
-  -v Subrosa-data:/data \
+  -v <volume-name-from-above>:/data \
   -v $(pwd):/backup \
   alpine:latest \
-  cp /data/Subrosa.db /backup/Subrosa-$(date +%Y%m%d_%H%M%S).db
+  cp /data/messages.db /backup/messages-$(date +%Y%m%d_%H%M%S).db
 ```
 
 ---
@@ -211,7 +216,7 @@ sudo lsof -i :443
 Container defaults are reasonable. If needed, add to `docker-compose.yml`:
 ```yaml
 services:
-  Subrosa-server:
+  subrosa-server:
     resources:
       limits:
         memory: 1G
@@ -240,12 +245,14 @@ services:
 
 ## Performance
 
-Typical resource usage on `docker-compose up -d`:
+**These are rough, indicative figures, not a measured benchmark** — no formal load test with a defined methodology (concurrent-connection count, message rate, hardware spec) has been run yet. Treat sizing below as a starting point for a small-to-medium deployment, not a capacity-planning guarantee; validate against your own expected usage before committing hardware for a large rollout.
+
+Typical resource usage on `docker-compose up -d`, observed informally during development:
 - **CPU**: < 5% idle, ~20% during messaging
 - **RAM**: 150-300 MB
 - **Storage**: 50 MB base + 1 KB per message + media files
 
-For 100 concurrent users, recommend:
+As a starting point for around 100 concurrent users (not load-tested at that scale):
 - 2 CPU cores minimum
 - 2 GB RAM
 - 20 GB storage
@@ -256,11 +263,11 @@ For 100 concurrent users, recommend:
 
 1. Share `wss://your-domain/ws` with Android app users
 2. Users register with username and password
-3. Users share invite codes (`beacon://invite?...`) for new contacts
+3. Users share invite codes (`bc:<base64url-encoded>`) for new contacts
 4. Messages, calls, and files flow encrypted end-to-end
 
 See [README.md](../README.md) **Quick Start** section for client-side setup.
 
 ---
 
-**Questions?** Check [SECURITY.md](../SECURITY.md) for threat model or [ARCHITECTURE.md](../ARCHITECTURE.md) for technical details.
+**Questions?** Check [SECURITY.md](SECURITY.md) for threat model or [ARCHITECTURE.md](ARCHITECTURE.md) for technical details.
