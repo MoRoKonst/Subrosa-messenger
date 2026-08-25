@@ -121,6 +121,15 @@ object UserStorage {
         return true
     }
 
+    // Updates the login-check hash only. Callers must also call
+    // StorageKeyManager.changePassword() with the same new password in the same
+    // operation — that's the separate password-derived key that wraps the Storage
+    // Master Key, and the two must never fall out of sync (see ChangePasswordScreen).
+    fun updatePassword(context: Context, newPassword: String) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putString(KEY_PASSWORD_HASH, hashPasswordV2(newPassword)).apply()
+    }
+
     fun getUsername(context: Context): String {
         return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getString(KEY_USERNAME, "") ?: ""
@@ -401,6 +410,20 @@ object UserStorage {
     fun setAutoLockTimeout(context: Context, seconds: Int) {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .edit().putInt("auto_lock_timeout", seconds).apply()
+    }
+
+    // Off by default — biometric unlock is convenient but strictly easier to
+    // compel than a memorized password (a finger/face can be forced onto a
+    // sensor; a password has to be extracted). Opt-in only, behind an explicit
+    // warning shown at enable time (see ProfileScreen).
+    fun getBiometricUnlockEnabled(context: Context): Boolean {
+        return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .getBoolean("biometric_unlock_enabled", false)
+    }
+
+    fun setBiometricUnlockEnabled(context: Context, enabled: Boolean) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putBoolean("biometric_unlock_enabled", enabled).apply()
     }
 
     fun getLanguage(context: Context): String {
