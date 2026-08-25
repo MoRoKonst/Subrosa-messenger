@@ -67,8 +67,17 @@ object TotpManager {
     }
 
     fun disable(context: Context) {
+        // Recovery-code hashes cleared here too (external review 2026-08-23):
+        // previously only the secret was removed, so a device that later
+        // restored a different identity's backup and consumed a recovery
+        // code to bypass TOTP could leave this identity's stale recovery
+        // hashes sitting in local storage with nothing referencing them.
+        // Disabling TOTP should reset all of its local state, not just the
+        // secret -- there's no legitimate reason to keep old recovery hashes
+        // around once TOTP itself is off.
         prefs(context).edit()
             .remove(KEY_SECRET)
+            .remove(KEY_RECOVERY_HASHES)
             .putBoolean(KEY_ENABLED, false)
             .apply()
     }

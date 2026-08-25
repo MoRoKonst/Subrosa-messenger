@@ -107,16 +107,22 @@ object AnonTokenManager {
     fun addContactTokens(ctx: Context, fingerprint: String, tokens: List<String>) = synchronized(lock) {
         val existing = getContactTokens(ctx, fingerprint).toMutableList()
         val originalSize = existing.size
-        val valid = tokens.filter { it.isNotBlank() && it.length == 32 }
+        val valid = tokens.filter { it.isNotBlank() && it.length == 32 }.distinct()
         // A duplicate here (a token we already have in this contact's pool
         // arriving again) would explain a token getting reused after it was
         // already legitimately spent once — logged as a warning since it
-        // shouldn't normally happen, not just informational noise.
+        // shouldn't normally happen, not just informational noise. Found
+        // live (external review): this used to log the duplicate and add it
+        // anyway, letting the same token string occupy two slots — two
+        // later, unrelated consumeNextContactToken() calls could then each
+        // pop one slot and hand out the identical token twice, a genuine
+        // local double-spend with no race required. Deduped against both
+        // the existing pool and the incoming batch itself before adding.
         val duplicates = valid.filter { it in existing }
         if (duplicates.isNotEmpty()) {
             Log.w(TAG, "DEBUG-TOKENLIFE addContactTokens($fingerprint): ${duplicates.size} токен(ов) уже были в пуле — ${duplicates.map { short(it) }}")
         }
-        existing.addAll(valid)
+        existing.addAll(valid.filterNot { it in existing })
 
         val capped = if (existing.size > POOL_SIZE) existing.takeLast(POOL_SIZE) else existing
         prefs(ctx).edit()
@@ -163,30 +169,18 @@ object AnonTokenManager {
         token
     }
 
-    /** Undoes consumeNextContactToken() when the send it was consumed for
-     *  turned out to never actually leave the device (sendWs()'s underlying
-     *  webSocket.send() returned false — the socket was already closed).
-     *  Without this, a token spent on a doomed send during a connectivity
-     *  blip was gone for good: not retried locally (already removed from
-     *  the pool) and never reaching the server at all (so it never even
-     *  hit token_pending's offline-queue path either) — silent message
-     *  loss that only "Забота о собеседнике" health-check would eventually
-     *  paper over. Prepended back to the front so it's the next one tried
-     *  again, not appended to the back behind newer tokens. Root-caused
-     *  live 2026-08-16. */
-    fun restoreContactToken(ctx: Context, fingerprint: String, token: String) = synchronized(lock) {
-        val tokens = getContactTokens(ctx, fingerprint).toMutableList()
-        // Should be rare — every occurrence is a send that definitely never
-        // left the device. Warn level, not debug, so it stands out.
-        Log.w(TAG, "DEBUG-TOKENLIFE restoreContactToken($fingerprint): возвращён ${short(token)} — sendWs() вернул false")
-        if (token in tokens) {
-            Log.w(TAG, "DEBUG-TOKENLIFE restoreContactToken($fingerprint): ${short(token)} уже был в пуле — восстанавливаем дубликат!")
-        }
-        tokens.add(0, token)
-        prefs(ctx).edit()
-            .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(tokens).toString())
-            .apply()
-    }
+    // restoreContactToken() (undoes consumeNextContactToken() when a send
+    // never actually left the device) was removed entirely — external
+    // review 2026-08-23 flagged it as concept-level unsafe for a single-use
+    // token: it re-added the token unconditionally even when already
+    // present, a direct double-spend path independent of any race. It was
+    // already dead code by that point — see MessengerService.kt's three
+    // (commented-out) call sites and the "handed out again is worse than
+    // one that's simply lost" reasoning there — so removed rather than
+    // fixed, per the reviewer's own suggestion, to close off a future
+    // caller accidentally reintroducing it. A token lost to a failed send
+    // is a pure availability cost; the message itself is still queued and
+    // retried through the normal path regardless.
 
     private const val PREF_MY_MBOX_TAGS   = "mbox_my_tags"
     private const val PREF_CT_MBOX_PREFIX = "mbox_ct_"

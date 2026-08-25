@@ -438,10 +438,22 @@ object SessionKeyManager {
         return previousPqKem?.privateKey
     }
 
+    // synchronized(this) added (external review 2026-08-23): every other
+    // function that does `sessions[contactId] = state` (nextSendKey,
+    // nextRecvKey, deleteSession, deleteAllSessions) already serializes on
+    // this same monitor -- this one and receiveSession() below didn't,
+    // despite doing the exact same kind of session-replacing write. Two
+    // concurrent handshakes for the same contact (a genuine simultaneous
+    // mutual-X3DH race, or a duplicated/replayed session_init) could each
+    // compute an independent SessionState and both write it, last writer
+    // wins with no coordination -- the two peers could end up on different
+    // session state with no error raised. Matches the reasoning already
+    // documented on deleteSession() for the same class of concurrent-access
+    // bug found live 2026-08-17.
     fun initiateSession(
         contactId: String,
         recipientBundle: PrekeyBundle
-    ): Pair<SessionState, JSONObject> {
+    ): Pair<SessionState, JSONObject> = synchronized(this) {
 
         val isSpkValid = CryptoManager.verify(
             recipientBundle.signedPrekey,
@@ -553,11 +565,12 @@ object SessionKeyManager {
         }
     }
 
+    // synchronized(this) added -- see initiateSession() above for why.
     fun receiveSession(
         contactId: String,
         senderIdentityKey: String,
         x3dhHeader: JSONObject
-    ): SessionState {
+    ): SessionState = synchronized(this) {
 
         val ephemeralPublicB64 = x3dhHeader.getString("ephemeral_key")
         val spkId = x3dhHeader.getInt("spk_id")
@@ -1164,8 +1177,13 @@ object SessionKeyManager {
         }
     }
 
-    private fun loadAllSessions() {
-        val ctx = appContext ?: return
+    // synchronized(this) added (external review 2026-08-23): this writes
+    // sessions[contactId] directly, same as nextSendKey()/nextRecvKey(),
+    // but without their lock -- a disk-loaded (possibly stale) session
+    // arriving concurrently with an in-flight ratchet step could overwrite
+    // the freshly-advanced in-memory state with an older one from storage.
+    private fun loadAllSessions() = synchronized(this) {
+        val ctx = appContext ?: return@synchronized
         try {
             val encPrefs = EncryptedStorage.getEncryptedPrefs(ctx, "${PREFS_NAME}_sessions")
             for ((key, raw) in encPrefs.all) {
@@ -1195,7 +1213,7 @@ object SessionKeyManager {
                     val recvRatchetPub = if (json.has("recvRatchetPub"))
                         Base64.decode(json.getString("recvRatchetPub"), Base64.NO_WRAP) else null
 
-                    sessions[json.getString("contactId")] = SessionState(
+                    val loadedState = SessionState(
                         contactId    = json.getString("contactId"),
                         sendChainKey = Base64.decode(json.getString("sendChainKey"), Base64.NO_WRAP),
                         recvChainKey = Base64.decode(json.getString("recvChainKey"), Base64.NO_WRAP),
@@ -1211,6 +1229,21 @@ object SessionKeyManager {
                         sendRatchetPub  = sendRatchetPub,
                         recvRatchetPub  = recvRatchetPub
                     )
+                    sessions[loadedState.contactId] = loadedState
+
+                    // Self-heal added (external review 2026-08-23), mirroring the
+                    // upgrade-on-reload pattern generateOrRotateSpk()/loadOpkPool()
+                    // already have for SPK/PQ/OPK: a session saved while the SMK was
+                    // locked (saveSession()'s own Base64 fallback) stayed on only
+                    // Keystore-layer protection indefinitely, with no re-wrap unless
+                    // that specific contact's session happened to be used again.
+                    // Re-saving here (now that we know we're unlocked -- unwrapping
+                    // above only succeeds when unlocked or the value was never
+                    // wrapped) closes that gap on every successful load instead of
+                    // leaving it to chance.
+                    if (!rawStr.startsWith(StorageKeyManager.SMK_PREFIX) && StorageKeyManager.isUnlocked) {
+                        saveSession(loadedState)
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "Не удалось восстановить сессию $key: ${e.message}")
                 }
