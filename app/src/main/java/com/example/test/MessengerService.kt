@@ -668,11 +668,25 @@ class MessengerService : Service() {
     }
 
     override fun onDestroy() {
+        // deleteAllSessions() removed from here (external review 2026-08-23):
+        // onDestroy() fires on ANY clean service stop, not just a wipe --
+        // including the "error" message handler's stopSelf() on literally any
+        // server-reported error, benign or not. That path had nothing to do
+        // with a wipe, yet unconditionally erased every Double Ratchet session
+        // for every contact from disk (see SessionKeyManager.deleteAllSessions()'s
+        // own doc comment -- this is not a memory-only clear). Same failure
+        // class as the already-fixed "deleteAllSessions() on every reconnect"
+        // bug (see connect(), 2026-08-17) -- forward secrecy means an erased
+        // ratchet key is never recoverable, so this could have silently and
+        // permanently destroyed every conversation's session state on a
+        // routine, recoverable server hiccup. Wipe scenarios already call
+        // deleteAllSessions() explicitly and intentionally elsewhere
+        // (BackupManager.kt, WipeManager.kt) -- service teardown should not
+        // imply a wipe.
         PanicNotificationManager.dismiss(this)
         stopSilentAudio()
         contentResolver.unregisterContentObserver(a11yObserver)
         unregisterNetworkCallback()
-        SessionKeyManager.deleteAllSessions()
         System.gc()
         webSocket?.close(1000, "service destroyed")
         scope.cancel()
@@ -1803,16 +1817,26 @@ class MessengerService : Service() {
                 val senderPublicKey = publicKeys[from]
                 if (signature != null && senderPublicKey != null &&
                     CryptoManager.verify(encryptedText, signature, senderPublicKey)) {
+                    // Rethrown on decrypt failure (external review 2026-08-23) --
+                    // was catch-and-log-only, so anon_delivery_ack would confirm
+                    // an edit that was never actually applied. Matches the
+                    // "message"/session_init/voice pattern in this same file.
                     try {
                         val decryptedText = CryptoManager.decrypt(encryptedText)
                         withContext(Dispatchers.Main) { onEditReceived?.invoke(messageId, decryptedText) }
                     } catch (e: Exception) {
                         Log.e(TAG, "Ошибка расшифровки edit: ${e.message}")
+                        throw e
                     }
                 }
             }
 
             "reaction" -> {
+                // Rethrown, and the bad-signature check throws instead of a plain
+                // return (external review 2026-08-23) -- both used to let
+                // anon_delivery_ack fire for a reaction that was rejected or
+                // never actually decrypted/applied. Matches the "message"/
+                // session_init/voice/edit pattern in this same file.
                 try {
                     val from = json.getString("from")
                     val messageId = json.getString("message_id")
@@ -1822,12 +1846,13 @@ class MessengerService : Service() {
                         ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also { publicKeys[from] = it }
                     if (signature == null || senderKey == null || !CryptoManager.verify(encryptedEmoji, signature, senderKey)) {
                         Log.e(TAG, "reaction: неверная или отсутствующая подпись от $from")
-                        return
+                        throw SecurityException("reaction: неверная или отсутствующая подпись от $from")
                     }
                     val emoji = CryptoManager.decrypt(encryptedEmoji)
                     withContext(Dispatchers.Main) { onReactionReceived?.invoke(from, messageId, emoji) }
                 } catch (e: Exception) {
                     Log.e(TAG, "reaction error: ${e.message}")
+                    throw e
                 }
             }
 
@@ -1942,7 +1967,10 @@ class MessengerService : Service() {
                             }
                         }
                     } catch (e: Exception) {
+                        // Rethrown (external review 2026-08-23) -- see
+                        // video_chunk_batch above for the same reasoning.
                         Log.e(TAG, "image chunk error: ${e.message}", e)
+                        throw e
                     }
                 }
             }
@@ -1966,15 +1994,22 @@ class MessengerService : Service() {
                             publicKeys[from] = it
                         }
 
+                    // All three early-exit points below now throw instead of a
+                    // plain return (external review 2026-08-23): a silent return
+                    // still let anon_delivery_ack fire even though this chunk was
+                    // never stored -- the transfer would then hang forever
+                    // waiting on a chunk_index that will never arrive again, with
+                    // no error surfaced and no server-side retry (the server
+                    // believes delivery succeeded).
                     if (senderKey == null) {
                         Log.e(TAG, "File chunk без ключа от $from — запрашиваем")
                         requestPrekeyBundle(from)
-                        return
+                        throw SecurityException("File chunk без ключа от $from")
                     }
 
                     if (signature == null || !CryptoManager.verifyChunk(chunkData, signature, senderKey, fileId, chunkIndex)) {
                         Log.e(TAG, "Неверная подпись file chunk от $from")
-                        return
+                        throw SecurityException("Неверная подпись file chunk от $from")
                     }
 
                     sendWs(JSONObject().apply {
@@ -2015,7 +2050,7 @@ class MessengerService : Service() {
                         val sortedChunks = fileChunks[fileTransferKey]?.chunks?.sortedBy { it.first }
                         if (sortedChunks == null) {
                             Log.e(TAG, "fileChunks[$fileTransferKey] исчез до сборки — пропускаем")
-                            return
+                            throw IllegalStateException("fileChunks[$fileTransferKey] исчез до сборки")
                         }
                         val fullPackedData = sortedChunks.joinToString("") { it.second }
 
@@ -2039,6 +2074,7 @@ class MessengerService : Service() {
 
                             } catch (e: Exception) {
                                 Log.e(TAG, "Ошибка расшифровки файла: ${e.message}", e)
+                                throw e
                             }
 
                         } else {
@@ -2059,7 +2095,10 @@ class MessengerService : Service() {
                     }
 
                 } catch (e: Exception) {
+                    // Rethrown (external review 2026-08-23) -- see
+                    // video_chunk_batch above for the same reasoning.
                     Log.e(TAG, "file_chunk error: ${e.message}", e)
+                    throw e
                 }
             }
 
@@ -2238,7 +2277,11 @@ class MessengerService : Service() {
                         )
                     }
                 } catch (e: Exception) {
+                    // Rethrown (external review 2026-08-23) -- was catch-and-log
+                    // only, so anon_delivery_ack could confirm a batch that
+                    // processVideoChunk() actually failed partway through.
                     Log.e(TAG, "video_chunk_batch error: ${e.message}", e)
+                    throw e
                 }
             }
 
@@ -2377,7 +2420,12 @@ class MessengerService : Service() {
                     }
                     handleIncomingDecryptedMessage(from, decryptedText, messageId, json)
 
-                    if (AnonTokenManager.getContactTokens(this@MessengerService, from).isEmpty()) {
+                    // shouldResupplyTokens() gate added (external review 2026-08-23):
+                    // this fires on every incoming message while the pool is empty, so
+                    // without it, several messages arriving in a burst before a resupply
+                    // lands would each queue their own sendAnonTokensTo() call -- unlike
+                    // the other four call sites of this function, which already had it.
+                    if (AnonTokenManager.getContactTokens(this@MessengerService, from).isEmpty() && shouldResupplyTokens(from)) {
                         scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
                     }
                 } catch (e: Exception) {
@@ -3332,8 +3380,21 @@ class MessengerService : Service() {
                         if (mailboxTag != null && recipientKey != null) {
                             depositSessionInitViaMailbox(to, mailboxTag, recipientKey, packet)
                         } else {
-                            Log.w(TAG, "session_init: нет ни анон-токена, ни mailbox-тега для $to — доставка напрямую")
-                            sendWs(addPadding(packet).toString())
+                            // Direct sendWs() fallback removed (external review
+                            // 2026-08-23): despite the comment on the "else" branch
+                            // below claiming "same as sendAnonOrDirect does for
+                            // everything else... see the isFirst branch above", this
+                            // branch never actually got that fix -- it still sent
+                            // fingerprint-addressed session_init directly whenever
+                            // no mailbox tag/key was cached yet, contradicting
+                            // SECURITY.md's "no fingerprint-addressed fallback"
+                            // claim for exactly the first-contact case. Queue and
+                            // retry via requestPrekeyBundle instead, same as the
+                            // no-session branch at the top of this function --
+                            // handleFetchedPrekeyBundle() flushes pendingSessionMessages
+                            // once the bundle (and its bootstrap token) arrives.
+                            pendingSessionMessages.getOrPut(to) { mutableListOf() }.add(Pair(text, id))
+                            requestPrekeyBundle(to)
                         }
                     } else {
                         // Found live: an ordinary (non-first) message with no
@@ -4784,20 +4845,33 @@ class MessengerService : Service() {
             val senderKey = publicKeys[from]!!
 
             if (signature == null) {
+                // Was a silent `return` (external review 2026-08-23): the
+                // caller (anon_delivery handler) only skips anon_delivery_ack
+                // if handleMessage() throws -- a plain return let a session_init
+                // rejected for a missing signature still get ACKed as if
+                // processed, which tells the server to discard its
+                // token_pending fallback copy. A tampered/malformed
+                // session_init would then never get retried. Thrown instead,
+                // matching this function's own catch block below (which
+                // already does session_reset + rethrow for genuine decrypt
+                // failures) and the "message" handler's established pattern.
                 Log.e(TAG, "session_init без подписи от $from")
-                return
+                throw SecurityException("session_init без подписи от $from")
             }
             if (!CryptoManager.verify(encryptedText, signature, senderKey)) {
                 Log.e(TAG, "Неверная подпись session_init от $from")
-                return
+                throw SecurityException("Неверная подпись session_init от $from")
             }
             SessionKeyManager.receiveSession(from, fixedSenderIk, x3dhHeader)
             val sessionHeader = json.getJSONObject("session_header")
             val decryptedText = CryptoManager.decryptWithForwardSecrecy(from, encryptedText, sessionHeader)
             handleIncomingDecryptedMessage(from, decryptedText, messageId, json)
 
+            // shouldResupplyTokens() gate added (external review 2026-08-23) -- see
+            // the matching fix at the "message" handler above for why.
             if (AnonTokenManager.getContactTokens(this@MessengerService, from).isEmpty() &&
-                AnonTokenManager.getMyTokens(this@MessengerService).isNotEmpty()) {
+                AnonTokenManager.getMyTokens(this@MessengerService).isNotEmpty() &&
+                shouldResupplyTokens(from)) {
                 scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
             }
 

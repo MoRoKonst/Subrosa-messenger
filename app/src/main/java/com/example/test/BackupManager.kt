@@ -225,7 +225,17 @@ object BackupManager {
             val backup = JSONObject(String(jsonBytes, Charsets.UTF_8))
             jsonBytes.fill(0)
 
+            // Decision only, no state mutation yet (external review 2026-08-23):
+            // TotpManager.enable()/disable() used to be called right here,
+            // before wipeCurrentIdentityData() and before any of the actual
+            // restore work below. If contacts/messages/EC-key restore then
+            // failed and this function returned Result.failure, the device's
+            // TOTP state had already been changed for an identity restore
+            // that never actually completed. Applied instead only after every
+            // other restore step below has succeeded, right before returning
+            // Result.success.
             var recoveryUsed = false
+            var totpSecretToEnable: String? = null
             if (backup.optBoolean("totp_enabled", false)) {
                 if (!StorageKeyManager.isUnlocked) {
                     return Result.failure(IllegalStateException("Приложение заблокировано — сначала разблокируйте его, чтобы импортировать бэкап"))
@@ -242,12 +252,19 @@ object BackupManager {
                     // afterward rather than silently carrying the old,
                     // now-partially-compromised secret forward — the caller
                     // is expected to prompt the user to set it up fresh.
+                    // NOTE this "exactly once" is only enforced by whatever
+                    // gates re-registration server-side (device_id) -- this
+                    // local check just compares a hash against the backup
+                    // file's own embedded list, so decrypting the same backup
+                    // file with the same code again reproduces the same
+                    // match every time. Not fixable client-side in a way that
+                    // means anything; flagged, not silently claimed as solved.
                     recoveryUsed = true
                 } else if (!totpSecret.isNullOrBlank() && !totpCode.isNullOrBlank()) {
                     if (!TotpManager.verifyCode(totpSecret, totpCode)) {
                         return Result.failure(IllegalStateException("Неверный TOTP-код"))
                     }
-                    TotpManager.enable(context, totpSecret)
+                    totpSecretToEnable = totpSecret
                 } else {
                     return Result.failure(IllegalStateException("Этот бэкап защищён TOTP — введите секрет и текущий код, либо один из резервных кодов"))
                 }
@@ -423,6 +440,18 @@ object BackupManager {
                 }
             }
 
+            // TOTP state applied only now, after everything above succeeded --
+            // see the comment where these were decided, above.
+            if (recoveryUsed) {
+                // Was previously never actually called despite the success
+                // message below already claiming TOTP was reset (external
+                // review 2026-08-23) -- disable() also clears this identity's
+                // stale recovery-code hashes now (see TotpManager.disable()).
+                TotpManager.disable(context)
+            } else if (totpSecretToEnable != null) {
+                TotpManager.enable(context, totpSecretToEnable)
+            }
+
             if (recoveryUsed) {
                 Result.success("Импортировано успешно (версия $version). TOTP-защита сброшена резервным кодом — включите её заново в настройках.")
             } else {
@@ -447,14 +476,18 @@ object BackupManager {
         val salt = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
         val iv   = ByteArray(12).also { java.security.SecureRandom().nextBytes(it) }
         val key  = deriveKey(password, salt)
-
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
-        val encrypted = cipher.doFinal(data)
-        key.fill(0)
-
-        val combined = salt + iv + encrypted
-        return Base64.encodeToString(combined, Base64.NO_WRAP)
+        // Wipe moved into finally (external review 2026-08-23) -- previously
+        // sat after doFinal() unconditionally, so an exception from doFinal()
+        // (or init()) skipped it and left the derived key sitting in the heap.
+        try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+            val encrypted = cipher.doFinal(data)
+            val combined = salt + iv + encrypted
+            return Base64.encodeToString(combined, Base64.NO_WRAP)
+        } finally {
+            key.fill(0)
+        }
     }
 
     private fun decryptBackup(encryptedB64: String, password: String): ByteArray {
@@ -469,11 +502,13 @@ object BackupManager {
         val encrypted = combined.copyOfRange(44, combined.size)
 
         val key = deriveKey(password, salt)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
-        key.fill(0)
-
-        return cipher.doFinal(encrypted)
+        try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+            return cipher.doFinal(encrypted)
+        } finally {
+            key.fill(0)
+        }
     }
 
     private fun deriveKey(password: String, salt: ByteArray): ByteArray {
@@ -485,8 +520,22 @@ object BackupManager {
             .build()
         val gen = Argon2BytesGenerator()
         gen.init(params)
+        // password.toCharArray() captured into a local so it can be wiped --
+        // previously created inline and passed straight to generateBytes(),
+        // meaning there was no reference left to zero afterward (external
+        // review 2026-08-23). The underlying Kotlin/JVM String itself still
+        // can't be reliably wiped from the heap either way -- that would need
+        // the password to never be a String in the first place (CharArray
+        // from the UI layer down), which is a larger change than this file;
+        // this at least stops compounding the exposure with an extra,
+        // unwiped copy on every call.
+        val passwordChars = password.toCharArray()
         val key = ByteArray(32)
-        gen.generateBytes(password.toCharArray(), key)
-        return key
+        try {
+            gen.generateBytes(passwordChars, key)
+            return key
+        } finally {
+            passwordChars.fill(' ')
+        }
     }
 }

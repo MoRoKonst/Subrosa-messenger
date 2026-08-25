@@ -256,8 +256,20 @@ object GroupManager {
         prefs.edit().putString(KEY_GROUPS, json.toString()).apply()
     }
 
-    fun addMember(context: Context, groupId: String, userId: String) {
-        val group = getGroup(context, groupId) ?: return
+    // All three below wrapped in synchronized(lock) (external review 2026-08-23):
+    // each did getGroup() (its own brief lock, released) -> build an updated
+    // list outside any lock -> saveGroup() (a separate lock acquisition). Two
+    // concurrent calls (e.g. removing two different members at once) could
+    // both read the same pre-mutation roster and the later save would
+    // silently undo the earlier one's change -- a classic lost update.
+    // saveGroup()'s own synchronized block didn't help, since the race window
+    // was the read-decide part, before saveGroup() was ever called. Wrapping
+    // the whole read-modify-write here in the same lock object closes it --
+    // Kotlin's synchronized is a reentrant monitor, so the nested
+    // getGroup()/saveGroup() calls re-entering the same lock is safe, not a
+    // deadlock.
+    fun addMember(context: Context, groupId: String, userId: String) = synchronized(lock) {
+        val group = getGroup(context, groupId) ?: return@synchronized
         val updatedMembers = group.members.toMutableList()
 
         if (!updatedMembers.contains(userId)) {
@@ -266,8 +278,8 @@ object GroupManager {
         }
     }
 
-    fun removeMember(context: Context, groupId: String, userId: String) {
-        val group = getGroup(context, groupId) ?: return
+    fun removeMember(context: Context, groupId: String, userId: String) = synchronized(lock) {
+        val group = getGroup(context, groupId) ?: return@synchronized
         val updatedMembers = group.members.toMutableList()
         val updatedAdmins = group.admins.toMutableList()
 
@@ -280,8 +292,8 @@ object GroupManager {
         ))
     }
 
-    fun promoteToAdmin(context: Context, groupId: String, userId: String) {
-        val group = getGroup(context, groupId) ?: return
+    fun promoteToAdmin(context: Context, groupId: String, userId: String) = synchronized(lock) {
+        val group = getGroup(context, groupId) ?: return@synchronized
         val updatedAdmins = group.admins.toMutableList()
 
         if (!updatedAdmins.contains(userId) && group.members.contains(userId)) {
@@ -290,8 +302,15 @@ object GroupManager {
         }
     }
 
+    // Now also requires current membership (external review 2026-08-23): was
+    // `admins.contains(userId) || createdBy == userId` -- the createdBy check
+    // had no membership requirement at all, so a creator who was later
+    // removed from the group (removeMember() strips them from both members
+    // and admins) was still treated as admin by this function forever,
+    // regardless of actually being in the group anymore.
     fun isAdmin(context: Context, groupId: String, userId: String): Boolean {
         val group = getGroup(context, groupId) ?: return false
+        if (userId !in group.members) return false
         return group.admins.contains(userId) || group.createdBy == userId
     }
 

@@ -51,6 +51,14 @@ token_pending: dict = {}  # token (str) → list[dict]  (очередь для �
 token_pending_created: dict = {}  # token (str) → time.time() когда встал в очередь (для TTL)
 ws_to_tokens: dict = {}   # websocket → set[str]       (для очистки при дисконнекте)
 known_tokens: set  = set() # токены, которые хоть раз были зарегистрированы (фейки дропаем)
+# Отдельно от known_tokens (external review 2026-08-23): known_tokens никогда
+# не чистится, поэтому один и тот же токен, уже доставленный и подтверждённый
+# anon_delivery_ack, всё ещё проходил "is_known" и принимался как настоящий
+# при повторной отправке — тихо перезаписывая token_pending[token] вместо
+# отказа. Разделено на "known" (когда-либо реальный, для отличия от decoy) и
+# "spent" (уже доставлен, больше не принимать) — то же самое дерево причин,
+# что двойная трата на клиенте (AnonTokenManager), просто на другом конце.
+spent_tokens: set = set()
 TOKEN_PENDING_TTL_SEC = 24 * 3600
 
 # ─── Anonymous Mailbox ────────────────────────────────────────────────────────
@@ -270,7 +278,7 @@ def db_connect():
         conn = sqlcipher.connect(DB_PATH)
         conn.execute(f"PRAGMA key = \"x'{DB_ENCRYPTION_KEY_HEX}'\"")
         return conn
-    return db_connect()
+    return sqlite3.connect(DB_PATH)
 
 
 def _db_setup_sync():
@@ -578,16 +586,20 @@ def _db_count_access_codes_sync():
 
 
 def _db_check_and_consume_access_code_sync(code, fingerprint):
+    # One-shot UPDATE, same pattern as _db_check_and_consume_recovery_code_sync
+    # (external review 2026-08-23) -- this used to be a separate SELECT
+    # followed by an UPDATE with no "AND used = 0" guard, so two concurrent
+    # redemption attempts for the same code could both pass the SELECT
+    # (both see used=0) and both succeed at the UPDATE. Checking rowcount on
+    # a single atomic UPDATE means only one of them can ever actually flip
+    # the row.
     with db_connect() as conn:
-        row = conn.execute("SELECT used FROM server_access_codes WHERE code = ?", (code,)).fetchone()
-        if row is None or row[0]:
-            return False
-        conn.execute(
-            "UPDATE server_access_codes SET used = 1, used_by = ?, used_at = ? WHERE code = ?",
+        cur = conn.execute(
+            "UPDATE server_access_codes SET used = 1, used_by = ?, used_at = ? WHERE code = ? AND used = 0",
             (fingerprint, time.time(), code)
         )
         conn.commit()
-        return True
+        return cur.rowcount > 0
 
 
 def _db_is_fingerprint_registered_sync(fingerprint):
@@ -598,13 +610,38 @@ def _db_is_fingerprint_registered_sync(fingerprint):
     return row is not None
 
 
-def _db_mark_fingerprint_registered_sync(fingerprint):
+def _db_try_register_new_fingerprint_sync(fingerprint, max_users):
+    """Atomic cap-check-and-insert (external review 2026-08-23): the previous
+    flow did a plain SELECT COUNT(*) at register() time, then inserted much
+    later via a fire-and-forget asyncio.create_task() once the rest of the
+    flow (PoW, TOTP, session setup) succeeded. Two different brand-new
+    fingerprints registering concurrently could both read the same
+    pre-insert count (e.g. both see 99/100), both pass, and the server ends
+    up over MAX_REGISTERED_USERS -- INSERT OR IGNORE only dedupes the SAME
+    fingerprint, not two DIFFERENT ones racing the same cap. BEGIN IMMEDIATE
+    takes SQLite's write lock up front, so a second concurrent caller blocks
+    until the first's transaction commits and sees the updated count --
+    genuinely atomic, not just "less likely". max_users <= 0 means no cap;
+    the insert still happens unconditionally (registered_fingerprints also
+    backs the access-code gate and Sybil tracking generally, not just this
+    cap)."""
     with db_connect() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO registered_fingerprints (fingerprint, first_registered_at) VALUES (?, ?)",
-            (fingerprint, time.time())
-        )
-        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if max_users > 0:
+                count = conn.execute("SELECT COUNT(*) FROM registered_fingerprints").fetchone()[0]
+                if count >= max_users:
+                    conn.rollback()
+                    return False
+            conn.execute(
+                "INSERT OR IGNORE INTO registered_fingerprints (fingerprint, first_registered_at) VALUES (?, ?)",
+                (fingerprint, time.time())
+            )
+            conn.commit()
+            return True
+        except Exception:
+            conn.rollback()
+            raise
 
 
 async def db_check_and_consume_access_code(code, fingerprint):
@@ -617,20 +654,9 @@ async def db_is_fingerprint_registered(fingerprint):
     return await loop.run_in_executor(None, _db_is_fingerprint_registered_sync, fingerprint)
 
 
-async def db_mark_fingerprint_registered(fingerprint):
+async def db_try_register_new_fingerprint(fingerprint, max_users):
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, _db_mark_fingerprint_registered_sync, fingerprint)
-
-
-def _db_count_registered_fingerprints_sync():
-    with db_connect() as conn:
-        row = conn.execute("SELECT COUNT(*) FROM registered_fingerprints").fetchone()
-    return row[0] if row else 0
-
-
-async def db_count_registered_fingerprints():
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _db_count_registered_fingerprints_sync)
+    return await loop.run_in_executor(None, _db_try_register_new_fingerprint_sync, fingerprint, max_users)
 
 
 def _db_revoke_fingerprint_sync(fingerprint):
@@ -1476,10 +1502,23 @@ async def handle_client(websocket):
                 # cares about IP: a cap counts real DB rows regardless of who
                 # asked, and PoW cost is paid by the device doing the hashing,
                 # not routed through any address the attacker chose.
-                if is_new_fingerprint and MAX_REGISTERED_USERS > 0:
-                    total = await db_count_registered_fingerprints()
-                    if total >= MAX_REGISTERED_USERS:
-                        print(f"[SECURITY] register: сервер заполнен ({total}/{MAX_REGISTERED_USERS}), отказ новому {username} от {ip}")
+                # Atomic check-and-insert (external review 2026-08-23) -- was a
+                # plain SELECT COUNT(*) here with the actual INSERT happening
+                # much later (fire-and-forget, after PoW/TOTP/session setup
+                # succeeded), leaving a window where two different concurrent
+                # new fingerprints could both read the same pre-insert count
+                # and both get admitted past the cap. Reserving the slot here,
+                # atomically, means a fingerprint that later fails PoW/TOTP
+                # wastes a slot rather than risk an unbounded cap overshoot --
+                # an acceptable trade since a legitimate client always
+                # computes valid PoW; see db_try_register_new_fingerprint's
+                # own comment for the BEGIN IMMEDIATE mechanics. Also replaces
+                # the old late, unawaited db_mark_fingerprint_registered()
+                # call further down -- this is now the single place a new
+                # fingerprint gets inserted.
+                if is_new_fingerprint:
+                    if not await db_try_register_new_fingerprint(username, MAX_REGISTERED_USERS):
+                        print(f"[SECURITY] register: сервер заполнен ({MAX_REGISTERED_USERS}), отказ новому {username} от {ip}")
                         await send_safe(websocket, json.dumps({"type": "registration_full"}))
                         continue
 
@@ -1595,7 +1634,11 @@ async def handle_client(websocket):
                     cleanup_stale_rate_limits()
 
                 print(f"[OK] Зарегистрирован: {username}")
-                asyncio.create_task(db_mark_fingerprint_registered(username))
+                # db_mark_fingerprint_registered() call removed from here
+                # (external review 2026-08-23) -- new fingerprints are now
+                # inserted atomically at the cap-check above, the single
+                # source of truth; this late, unawaited duplicate served no
+                # purpose beyond what INSERT OR IGNORE already made a no-op.
 
                 # ── Обмен аватарами ───────────────────────────────────────────
                 incoming_avatar = message.get("avatar", "")
@@ -2594,8 +2637,14 @@ async def handle_client(websocket):
                     continue
                 async with lock:
                     is_known = token in known_tokens
-                if not is_known:
-                    # Фейковый/cover-traffic токен — дропаем без очереди и без лога
+                    is_spent = token in spent_tokens
+                if not is_known or is_spent:
+                    # Фейковый/cover-traffic токен ИЛИ уже доставленный и
+                    # anon_delivery_ack'нутый ранее — оба дропаются одинаково
+                    # (без очереди, без лога, с тем же "ack" отправителю), чтобы
+                    # снаружи нельзя было отличить decoy-токен от настоящего, но
+                    # уже потраченного — иначе разное поведение само по себе
+                    # утекло бы информацию о том, какие токены реальны.
                     if msg_id:
                         await send_safe(websocket, json.dumps({"type": "ack", "id": msg_id}))
                     continue
@@ -2759,12 +2808,35 @@ async def handle_client(websocket):
                 token = message.get("token", "")
                 if token and len(token) == MAX_TOKEN_LEN:
                     async with lock:
-                        token_pending.pop(token, None)
-                        token_pending_created.pop(token, None)
-                        target_ws_final = token_to_ws.pop(token, None)
-                        if target_ws_final:
-                            ws_to_tokens.get(target_ws_final, set()).discard(token)
-                    print(f"[ANON] Подтверждена доставка токена …{token[-6:]}")
+                        # Ownership check added (external review 2026-08-23):
+                        # this previously accepted an ACK for any token from
+                        # ANY authenticated connection, not just the one that
+                        # actually registered/owns it via subscribe_tokens.
+                        # The sender itself knows the token it just used to
+                        # send a message, so it could "confirm" its own
+                        # message's delivery to a recipient who never actually
+                        # received or processed anything — destroying the
+                        # token_pending fallback copy before the real
+                        # recipient ever got a chance to ACK it for real. Now
+                        # only honored if the current websocket is the one
+                        # registered as this token's owner.
+                        if token_to_ws.get(token) is websocket:
+                            token_pending.pop(token, None)
+                            token_pending_created.pop(token, None)
+                            token_to_ws.pop(token, None)
+                            ws_to_tokens.get(websocket, set()).discard(token)
+                            # Marked spent, not just removed from token_to_ws
+                            # (external review 2026-08-23) — token_to_ws only
+                            # tracked live routing, not single-use history;
+                            # known_tokens is never cleared, so a replayed
+                            # anon_message with this same token was still
+                            # accepted as "real" and could silently overwrite
+                            # token_pending[token] with a new entry. See the
+                            # anon_message handler's is_spent check above.
+                            spent_tokens.add(token)
+                            print(f"[ANON] Подтверждена доставка токена …{token[-6:]}")
+                        else:
+                            print(f"[SECURITY] anon_delivery_ack: токен …{token[-6:]} не принадлежит этому соединению — игнорируем")
                 continue
 
             # ─── Client-side diagnostic "ticket" ─────────────────────────────────
