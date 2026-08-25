@@ -186,7 +186,8 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                 onClick = {
                     when {
                         username.isBlank() -> error = s.registerErrorEnterUsername
-                        password.length < 6 -> error = s.registerErrorPasswordLength
+                        password.length < PasswordPolicy.MIN_LENGTH -> error = s.registerErrorPasswordLength
+                        PasswordPolicy.isCommonPassword(password) -> error = s.registerErrorPasswordCommon
                         password != passwordRepeat -> error = s.registerErrorPasswordMatch
                         else -> {
                             isGeneratingKeys = true

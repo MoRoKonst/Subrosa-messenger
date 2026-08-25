@@ -211,7 +211,7 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                if (BiometricHelper.isBiometricAvailable(context)) {
+                if (UserStorage.getBiometricUnlockEnabled(context) && BiometricHelper.isBiometricAvailable(context)) {
                     OutlinedButton(
                         onClick = {
                             showBiometric = true

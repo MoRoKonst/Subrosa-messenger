@@ -1106,8 +1106,11 @@ fun AppNavigation() {
             onOpenDiagnostics = { screen = "security_diagnostics" },
             onOpenWipeSettings = { screen = "wipe_settings" },
             onOpenTotpSettings = { screen = "totp_settings" },
-            onOpenSecurityGuide = { screen = "security_guide" }
+            onOpenSecurityGuide = { screen = "security_guide" },
+            onOpenChangePassword = { screen = "change_password" }
         )
+
+        "change_password" -> ChangePasswordScreen(onBack = { screen = "profile" })
 
         "verify_key" -> VerifyKeyScreen(
             contactId = verifyKeyContact,
@@ -1251,6 +1254,7 @@ fun AppNavigation() {
 
                 Spacer(modifier = Modifier.height(8.dp))
 
+                if (UserStorage.getBiometricUnlockEnabled(context) && BiometricHelper.isBiometricAvailable(context)) {
                 OutlinedButton(
                     onClick = {
                         val activity = context as? androidx.fragment.app.FragmentActivity ?: return@OutlinedButton
@@ -1269,6 +1273,15 @@ fun AppNavigation() {
                             .setTitle(s.lockBiometricTitle)
                             .setSubtitle(s.lockBiometricSubtitle)
                             .setNegativeButtonText(s.lockBiometricCancel)
+                            // Unlike LoginScreen's BiometricHelper.authenticate(), this
+                            // prompt built its own PromptInfo without restricting the
+                            // authenticator class — left at the platform default, which
+                            // does not guarantee Class 3 (BIOMETRIC_STRONG) hardware.
+                            // Matched to BiometricHelper's flags explicitly.
+                            .setAllowedAuthenticators(
+                                androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                                    androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                            )
                             .build()
                         biometricPrompt.authenticate(promptInfo)
                     },
@@ -1276,6 +1289,7 @@ fun AppNavigation() {
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.3f))
                 ) {
                     Text(s.lockUnlock, fontFamily = lockFont, fontSize = 16.sp, color = Color.White)
+                }
                 }
             }
         }

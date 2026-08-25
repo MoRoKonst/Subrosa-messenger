@@ -220,7 +220,8 @@ fun ProfileScreen(
     onOpenDiagnostics: () -> Unit,
     onOpenWipeSettings: () -> Unit = {},
     onOpenTotpSettings: () -> Unit = {},
-    onOpenSecurityGuide: () -> Unit = {}
+    onOpenSecurityGuide: () -> Unit = {},
+    onOpenChangePassword: () -> Unit = {}
 ) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
@@ -238,6 +239,8 @@ fun ProfileScreen(
     var panicPassword      by remember { mutableStateOf("") }
     var hideNotif          by remember { mutableStateOf(UserStorage.getHideNotificationContent(context)) }
     var currentLock        by remember { mutableStateOf(UserStorage.getAutoLockTimeout(context)) }
+    var biometricEnabled   by remember { mutableStateOf(UserStorage.getBiometricUnlockEnabled(context)) }
+    var showBiometricWarning by remember { mutableStateOf(false) }
     var emergencyEnabled        by remember { mutableStateOf(UserStorage.isEmergencyWipeEnabled(context) && isEmergencyServiceEnabled(context)) }
     var showEmergencyInfoDialog by remember { mutableStateOf(false) }
     var torEnabled              by remember { mutableStateOf(UserStorage.isTorEnabled(context)) }
@@ -851,6 +854,38 @@ fun ProfileScreen(
                             onClick = { showLockDialog = true },
                             trailing = { PChevron() }
                         )
+                        if (BiometricHelper.isBiometricAvailable(context)) {
+                            PDivider()
+                            PRow(
+                                title = s.profileBiometricTitle,
+                                subtitle = s.profileBiometricSub,
+                                trailing = {
+                                    Switch(
+                                        checked = biometricEnabled,
+                                        onCheckedChange = { wantEnabled ->
+                                            if (wantEnabled) {
+                                                // Don't flip the pref until the user explicitly
+                                                // acknowledges the coercion-risk warning below.
+                                                showBiometricWarning = true
+                                            } else {
+                                                biometricEnabled = false
+                                                UserStorage.setBiometricUnlockEnabled(context, false)
+                                            }
+                                        },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = c.accent,
+                                            checkedTrackColor = c.accent.copy(alpha = 0.35f)
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                        PDivider()
+                        PRow(
+                            title = s.profileChangePassword,
+                            onClick = onOpenChangePassword,
+                            trailing = { PChevron() }
+                        )
                         PDivider()
                         PRow(
                             title = s.profilePanicTitle,
@@ -1107,6 +1142,29 @@ fun ProfileScreen(
                 }
             },
             confirmButton = {}
+        )
+    }
+
+    if (showBiometricWarning) {
+        AlertDialog(
+            onDismissRequest = { showBiometricWarning = false },
+            containerColor = c.dialog,
+            title = { Text(s.profileBiometricWarningTitle, color = Color(0xFFFFA726), fontFamily = AppFont) },
+            text = { Text(s.profileBiometricWarningText, color = c.textPrimary, fontFamily = AppFont, fontSize = 13.sp, lineHeight = 19.sp) },
+            confirmButton = {
+                TextButton(onClick = {
+                    biometricEnabled = true
+                    UserStorage.setBiometricUnlockEnabled(context, true)
+                    showBiometricWarning = false
+                }) {
+                    Text(s.profileBiometricWarningConfirm, color = Color(0xFFFFA726))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBiometricWarning = false }) {
+                    Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f))
+                }
+            }
         )
     }
 

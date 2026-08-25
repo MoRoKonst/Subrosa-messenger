@@ -24,6 +24,7 @@ interface IStr2 {
     val registerPassword: String; val registerRepeatPassword: String
     val registerGeneratingKeys: String
     val registerErrorEnterUsername: String; val registerErrorPasswordLength: String
+    val registerErrorPasswordCommon: String
     val registerErrorPasswordMatch: String; val registerButton: String
     val registerImportBackup: String; val registerImportTitle: String
     val registerImportHint: String; val registerImportPassword: String
@@ -55,6 +56,14 @@ interface IStr3 {
     val profileInviteCodeOneTimeWarning: String
     val profileHideNotif: String; val profileHideNotifSub: String
     val profileAutoLock: String; val profileAutoLockAfter: (String) -> String
+    val profileBiometricTitle: String; val profileBiometricSub: String
+    val profileBiometricWarningTitle: String; val profileBiometricWarningText: String
+    val profileBiometricWarningConfirm: String
+    val profileChangePassword: String
+    val changePasswordTitle: String; val changePasswordDesc: String
+    val changePasswordCurrent: String; val changePasswordNew: String; val changePasswordRepeat: String
+    val changePasswordSubmit: String; val changePasswordSuccess: String
+    val changePasswordErrCurrentWrong: String; val changePasswordErrSameAsOld: String
     val profileLockOff: String; val profileLock1min: String
     val profileLock5min: String; val profileLock15min: String
     val profileLock30min: String; val profileEmergencyBtn: String
@@ -364,7 +373,8 @@ private val ru2 = object : IStr2 {
     override val registerRepeatPassword = "Повторите пароль"
     override val registerGeneratingKeys = "Генерация ключей шифрования..."
     override val registerErrorEnterUsername = "Введите имя"
-    override val registerErrorPasswordLength = "Пароль минимум 6 символов"
+    override val registerErrorPasswordLength = "Пароль минимум 8 символов"
+    override val registerErrorPasswordCommon = "Этот пароль слишком предсказуем (например, простая последовательность цифр) — выберите менее очевидный"
     override val registerErrorPasswordMatch = "Пароли не совпадают"
     override val registerButton = "Создать аккаунт"
     override val registerImportBackup = "📥 Восстановить из бэкапа"
@@ -419,6 +429,21 @@ private val ru3 = object : IStr3 {
     override val profileHideNotifSub = "Показывать только «Новое сообщение»"
     override val profileAutoLock = "Автоблокировка"
     override val profileAutoLockAfter: (String) -> String = { "Блокировать через: $it" }
+    override val profileBiometricTitle = "Разблокировка по биометрии"
+    override val profileBiometricSub = "Отпечаток/лицо вместо пароля при входе"
+    override val profileBiometricWarningTitle = "Прежде чем включить"
+    override val profileBiometricWarningText = "Заставить человека приложить палец или показать лицо физически проще, чем заставить назвать пароль — а в ряде юрисдикций принудительная биометрия юридически защищена слабее, чем принудительное раскрытие пароля. Если для тебя актуален сценарий с физическим/юридическим принуждением — оставь только пароль. Пароль как способ входа остаётся доступен всегда, даже если включишь биометрию."
+    override val profileBiometricWarningConfirm = "Понимаю, включить"
+    override val profileChangePassword = "Сменить пароль"
+    override val changePasswordTitle = "Смена пароля"
+    override val changePasswordDesc = "Этот пароль защищает всё зашифрованное локально на устройстве. Смена пароля не трогает уже сохранённые данные — только пересохраняет ключ доступа к ним под новым паролем."
+    override val changePasswordCurrent = "Текущий пароль"
+    override val changePasswordNew = "Новый пароль"
+    override val changePasswordRepeat = "Повторите новый пароль"
+    override val changePasswordSubmit = "Сменить пароль"
+    override val changePasswordSuccess = "Пароль изменён"
+    override val changePasswordErrCurrentWrong = "Текущий пароль неверен"
+    override val changePasswordErrSameAsOld = "Новый пароль совпадает со старым — выберите другой"
     override val profileLockOff = "Выкл"
     override val profileLock1min = "1 мин"
     override val profileLock5min = "5 мин"
@@ -939,7 +964,8 @@ private val en2 = object : IStr2 {
     override val registerRepeatPassword = "Repeat password"
     override val registerGeneratingKeys = "Generating encryption keys..."
     override val registerErrorEnterUsername = "Enter username"
-    override val registerErrorPasswordLength = "Password must be at least 6 characters"
+    override val registerErrorPasswordLength = "Password must be at least 8 characters"
+    override val registerErrorPasswordCommon = "This password is too predictable (e.g. a simple digit sequence) — choose a less obvious one"
     override val registerErrorPasswordMatch = "Passwords don't match"
     override val registerButton = "Create account"
     override val registerImportBackup = "Restore from backup"
@@ -994,6 +1020,21 @@ private val en3 = object : IStr3 {
     override val profileHideNotifSub = "Show only \"New message\""
     override val profileAutoLock = "Auto-lock"
     override val profileAutoLockAfter: (String) -> String = { "Lock after: $it" }
+    override val profileBiometricTitle = "Biometric unlock"
+    override val profileBiometricSub = "Fingerprint/face instead of a password at login"
+    override val profileBiometricWarningTitle = "Before you enable this"
+    override val profileBiometricWarningText = "It's physically easier to force someone to press a finger or show their face than to force them to reveal a password — and in several jurisdictions, compelled biometric unlock has weaker legal protection than compelled password disclosure. If physical or legal coercion is part of your threat model, keep password-only. Your password remains a valid way to unlock even after enabling biometrics."
+    override val profileBiometricWarningConfirm = "I understand, enable"
+    override val profileChangePassword = "Change password"
+    override val changePasswordTitle = "Change Password"
+    override val changePasswordDesc = "This password protects everything encrypted locally on the device. Changing it doesn't touch already-saved data — it only re-wraps the access key to it under the new password."
+    override val changePasswordCurrent = "Current password"
+    override val changePasswordNew = "New password"
+    override val changePasswordRepeat = "Repeat new password"
+    override val changePasswordSubmit = "Change password"
+    override val changePasswordSuccess = "Password changed"
+    override val changePasswordErrCurrentWrong = "Current password is incorrect"
+    override val changePasswordErrSameAsOld = "New password is the same as the old one — choose a different one"
     override val profileLockOff = "Off"
     override val profileLock1min = "1 min"
     override val profileLock5min = "5 min"
