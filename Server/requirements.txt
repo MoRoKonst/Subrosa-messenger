@@ -1,5 +1,5 @@
 websockets>=12.0
-cryptography>=42.0
+cryptography>=50.0.0
 miniupnpc>=2.3.3
 
 # Опционально: только если нужны push-уведомления через Firebase
