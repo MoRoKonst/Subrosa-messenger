@@ -59,6 +59,15 @@ android {
             signingConfig = signingConfigs.getByName("release")
         }
     }
+
+    // Lint had never been run in CI before (docs/CI_SAST_PLAN.md, Phase 0) --
+    // baseline captures whatever pre-existing issues already exist so CI
+    // starts clean and only fails on genuinely new lint errors from here on,
+    // rather than blocking on unrelated legacy findings this change didn't
+    // introduce. Regenerate with `./gradlew updateLintBaseline` if it drifts.
+    lint {
+        baseline = file("lint-baseline.xml")
+    }
 }
 
 dependencies {
