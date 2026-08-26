@@ -2987,10 +2987,10 @@ def _upnp_http_fallback() -> str:
     """
     try:
         import urllib.request
-        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected
         # URL is a hardcoded literal, not attacker-controlled input -- the
         # rule flags urllib's file:// support as an SSRF/arbitrary-file-read
         # risk when the URL comes from user data, which isn't the case here.
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         external_ip = urllib.request.urlopen(
             "https://api.ipify.org", timeout=5
         ).read().decode().strip()
