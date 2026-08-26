@@ -7,7 +7,7 @@ miniupnpc>=2.2.2
 
 # Шифрование БД at-rest (см. DB_ENCRYPTION_KEY_HEX в .env.example).
 # Без переменной DB_ENCRYPTION_KEY_HEX сервер работает и без неё, БД просто не шифруется.
-sqlcipher3-binary>=0.5.3
+sqlcipher3-binary>=0.6.0
 
 # Опционально: только для генерации QR-картинок кодов доступа
 # (Server/admin_gen_codes.py) — офлайн, без сети, ничего никуда не уходит.
