@@ -1,0 +1,20 @@
+#!/bin/sh
+# Local secret scan before push -- first barrier per docs/CI_SAST_PLAN.md
+# (CI/Push Protection catch what slips past this, but this is the cheapest
+# place to catch a secret: before it ever leaves the machine).
+#
+# Setup (once per clone):
+#   git config core.hooksPath githooks
+#   install gitleaks: https://github.com/gitleaks/gitleaks#installing
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-push: gitleaks not installed, skipping local secret scan" >&2
+  echo "pre-push: install it -- https://github.com/gitleaks/gitleaks#installing" >&2
+  exit 0
+fi
+
+# Full-history scan. Slower than diffing just the outgoing commits, but
+# this is a solo-dev safety net, not the primary control -- GitHub Push
+# Protection (server-side, blocks the push outright) is the real backstop.
+gitleaks detect --source . --redact -v
+exit $?

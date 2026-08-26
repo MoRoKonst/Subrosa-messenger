@@ -67,6 +67,7 @@ Server/android-studio*/
 # Python bytecode cache
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Runtime logs / scratch output
 *.log

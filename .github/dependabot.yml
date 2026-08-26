@@ -1,0 +1,32 @@
+version: 2
+
+updates:
+  # Android app (root Gradle project). Desktop client is untracked
+  # (.gitignore'd), so it has no dependabot manifest to scan here.
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  # Server (Server/requirements.txt)
+  - package-ecosystem: pip
+    directory: /Server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  # The GitHub Actions themselves are a supply-chain dependency too --
+  # SHA-pinned actions still need version bumps over time.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  # Docker image tag pinned in .github/workflows/semgrep.yml (container:).
+  - package-ecosystem: docker
+    directory: /.github/workflows
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
