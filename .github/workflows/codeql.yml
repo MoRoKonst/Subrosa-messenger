@@ -25,15 +25,32 @@ jobs:
     steps:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
+      - name: Set up JDK 21
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@6f5948dfacef28e207b48d0905cf90c03365536d # v3.37.9
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           languages: ${{ matrix.language }}
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@6f5948dfacef28e207b48d0905cf90c03365536d # v3.37.9
+      # Autobuild doesn't know about this project's required JDK 21
+      # toolchain -- it defaults to JDK 17, which this Gradle 9.2.1/AGP
+      # 9.0.1 setup can't build with (confirmed live: autobuild's own
+      # spawned gradlew invocation fails with -Dorg.gradle.java.home
+      # pointed at temurin-17). Build explicitly instead, same command as
+      # build.yml's android-build job. Python needs no build step at all
+      # (interpreted, nothing to compile).
+      - name: Build (java-kotlin only)
+        if: matrix.language == 'java-kotlin'
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@6f5948dfacef28e207b48d0905cf90c03365536d # v3.37.9
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           category: /language:${{ matrix.language }}
