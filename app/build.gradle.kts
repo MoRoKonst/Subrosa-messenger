@@ -91,7 +91,7 @@ dependencies {
     // Шифрование хранилища
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     // Корутины
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     // Биометрия
     implementation("androidx.biometric:biometric:1.1.0")
     // EXIF-стриппинг (GPS/устройство/даты) для фото, отправленных как файл
