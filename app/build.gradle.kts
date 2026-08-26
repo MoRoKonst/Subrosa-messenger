@@ -3,7 +3,16 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    id("com.google.gms.google-services")
+    id("com.google.gms.google-services") apply false
+}
+
+// google-services.json is gitignored (per-deployment Firebase project, not
+// committed -- see DOCKER.md/DEPLOY.md on the FCM opt-in). Applying the
+// plugin unconditionally makes any build without that file (CI, or a fresh
+// no-FCM checkout) fail outright even though FCM push is optional
+// everywhere else in this codebase.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }
 
 val localProperties = Properties()
