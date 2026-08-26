@@ -72,7 +72,7 @@ android {
 
 dependencies {
     implementation("androidx.activity:activity-compose:1.8.2")
-    implementation("com.google.zxing:core:3.5.1")
+    implementation("com.google.zxing:core:3.5.4")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -111,7 +111,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     // Геолокация (Fused Location Provider)
-    implementation("com.google.android.gms:play-services-location:21.2.0")
+    implementation("com.google.android.gms:play-services-location:21.4.0")
     // OpenStreetMap
     implementation("org.osmdroid:osmdroid-android:6.1.18")
     // WebRTC (P2P звонки)
