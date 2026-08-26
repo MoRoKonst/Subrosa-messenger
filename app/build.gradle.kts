@@ -93,7 +93,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     // Геолокация (Fused Location Provider)
-    implementation("com.google.android.gms:play-services-location:21.2.0")
+    implementation("com.google.android.gms:play-services-location:21.4.0")
     // OpenStreetMap
     implementation("org.osmdroid:osmdroid-android:6.1.18")
     // WebRTC (P2P звонки)
