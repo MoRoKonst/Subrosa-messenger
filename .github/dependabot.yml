@@ -24,9 +24,9 @@ updates:
       interval: weekly
     open-pull-requests-limit: 10
 
-  # Docker image tag pinned in .github/workflows/semgrep.yml (container:).
-  - package-ecosystem: docker
-    directory: /.github/workflows
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
+  # NOTE: there's no dependabot ecosystem that tracks a docker image tag
+  # referenced via a workflow's `container:` key (semgrep.yml pins
+  # semgrep/semgrep:1.175.0 that way) -- the `docker` ecosystem only scans
+  # actual Dockerfiles/Kubernetes manifests and errors out otherwise
+  # (confirmed live: "No Dockerfiles nor Kubernetes YAML found in
+  # /.github/workflows"). That tag needs a manual bump occasionally.
