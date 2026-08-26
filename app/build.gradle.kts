@@ -71,7 +71,7 @@ dependencies {
     // QR сканирование
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     // Шифрование хранилища
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.security:security-crypto:1.1.0")
     // Корутины
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     // Биометрия
