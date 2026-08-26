@@ -1,0 +1,25 @@
+name: Semgrep
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.175.0
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      # Community rulesets, no Semgrep AppSec Platform account/token needed.
+      # p/security-audit + p/secrets per docs/CI_SAST_PLAN.md -- custom
+      # project-specific rules (token/group-key invariants) come later.
+      - name: Semgrep scan
+        run: semgrep scan --config p/security-audit --config p/secrets --error
