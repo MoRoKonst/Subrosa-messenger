@@ -72,7 +72,15 @@ Full writeup: [docs/ANDROID_AUDIT.md](ANDROID_AUDIT.md).
 | ID | Summary | Severity | Status | Regression test |
 |---|---|---|---|---|
 | S3-1 | `GroupManager` mutators had no internal authorization check (relied entirely on caller) | Medium (defense-in-depth gap, no known live bypass — every call site already checked) | Fixed | **Yes** — `GroupManagerTest.kt` (9 tests) |
-| S3-2 | 5 CI/build issues found only via live GitHub Actions runs (google-services.json plugin, stale codeql-action pin, CodeQL Autobuild/JDK mismatch, Semgrep false positive, first-ever lint run) | Low (tooling, not product security) | Fixed | CI itself is the regression test |
+| S3-2 | 5 CI/build issues found only via live GitHub Actions runs (google-services.json plugin, stale codeql-action pin, CodeQL Autobuild/JDK mismatch, Semgrep false positive, first-ever lint run) | Low (tooling, not product security) | Fixed | **Yes** — `test_recovery_code_has_sufficient_entropy` |
+| S3-3 | Recovery-code entropy was 40 bits — single unsalted SHA-256 hash crackable offline in under a minute on one GPU given a stolen DB (composite with KL-27) | **High** | Fixed (bumped to 80 bits) | **Yes** — `test_recovery_code_has_sufficient_entropy` |
+
+Found by an external *documentation-level* review of the six audit-package files (not a code
+review) — flagged the "metadata exposure, not credential compromise" framing in an earlier
+`THREAT_MODEL.md` draft as underselling what a stolen DB actually exposes; checking the code behind
+that framing surfaced the actual 40-bit weakness, which was real and unrelated to the wording
+issue itself. Documentation review finding real code bugs, not just prose problems, is worth noting
+for its own sake.
 
 ## Open, undecided (not yet a "fix", a product decision still needed)
 
@@ -82,3 +90,5 @@ Full writeup: [docs/ANDROID_AUDIT.md](ANDROID_AUDIT.md).
 | OPEN-2 | `message_delete`/`disappear_timer`/`group_message_delete` — not yet checked for the same return-vs-throw signature-failure pattern as AA-7 | `docs/TODO.md` |
 | OPEN-3 | No fuzzing/negative-input test suite for the server's protocol handlers | `docs/TODO.md`, `docs/AUDIT_PREPARATION_NEXT_STEPS.md` §15–16 |
 | OPEN-4 | Desktop client — no static audit yet performed (same bug classes as Android, not yet checked) | `docs/TODO.md` |
+| OPEN-5 | Sender gets no notification when a `token_pending` entry silently expires (24h TTL) without ever reaching the recipient — found while writing the token_pending lifecycle contract, not previously documented anywhere | [MESSAGE_DELIVERY.md](MESSAGE_DELIVERY.md) |
+| OPEN-6 | Federation (`forward_to_peers`) interaction with anonymous-token ownership/ACK semantics not traced end-to-end — flagged for explicit auditor attention, not asserted safe or unsafe | [MESSAGE_DELIVERY.md](MESSAGE_DELIVERY.md) |
