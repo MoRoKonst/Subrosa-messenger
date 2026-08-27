@@ -76,6 +76,9 @@ meminfo_watch.log
 # Статья (черновик, публикуется отдельно)
 Статья.md
 
+# Внутренний план подготовки к security-аудиту — не для публичного репо
+docs/AUDIT_PREPARATION_NEXT_STEPS.md
+
 # Desktop client — не публикуется пока не готов
 /desktop/
 
