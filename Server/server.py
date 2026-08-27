@@ -769,13 +769,24 @@ def _hash_recovery_code(code: str) -> str:
 
 
 def generate_recovery_codes(count: int = 8) -> list:
-    """Human-typeable, high-entropy: 10 hex chars, grouped for readability
-    (e.g. 'A1B2C-D3E4F'). Not derived from the TOTP secret -- an independent
-    credential, so losing one doesn't compromise the other."""
+    """Human-typeable, high-entropy: 20 hex chars (80 bits), grouped for
+    readability (e.g. 'A1B2C-D3E4F-56789-ABCDE'). Not derived from the TOTP
+    secret -- an independent credential, so losing one doesn't compromise
+    the other.
+
+    80 bits, not the previous 40 (external review, 2026-08-27): the stored
+    hash (_hash_recovery_code, below) is a single unsalted SHA-256 -- fine
+    for a high-entropy random token as originally reasoned, but 40 bits of
+    entropy against a fast, trivially-parallelizable hash is NOT actually
+    safe against offline brute force once an attacker has the hash (e.g.
+    via KL-27, DB theft when SQLCipher isn't enabled) -- a single modern
+    GPU exhausts 2^40 SHA-256 candidates in well under a minute. 80 bits
+    keeps the same hash function (no KDF migration needed) but pushes
+    brute-force cost back to infeasible."""
     codes = []
     for _ in range(count):
-        raw = secrets.token_hex(5).upper()
-        codes.append(f"{raw[:5]}-{raw[5:]}")
+        raw = secrets.token_hex(10).upper()
+        codes.append(f"{raw[:5]}-{raw[5:10]}-{raw[10:15]}-{raw[15:]}")
     return codes
 
 
