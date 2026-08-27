@@ -103,7 +103,7 @@ dependencies {
     // EXIF-стриппинг (GPS/устройство/даты) для фото, отправленных как файл
     implementation("androidx.exifinterface:exifinterface:1.4.2")
     // WebSocket
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp:5.5.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.79") // 1.79+ required for org.bouncycastle.pqc.crypto.mlkem (ML-KEM)
 
     // Тесты
