@@ -12,6 +12,12 @@ Restart=always
 RestartSec=5
 
 # Переменные окружения
+#
+# PYTHONUNBUFFERED=1 — обязательно. Без неё Python буферизует stdout, когда
+# он не подключён к tty (как раз случай systemd), и логи в `journalctl -f`
+# приходят с задержкой (иногда пачками в минуту и больше) вместо реального
+# времени — найдено и подтверждено живьём 2026-08-28.
+Environment=PYTHONUNBUFFERED=1
 # Скопируй файл сервисного аккаунта Firebase и укажи путь:
 Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/beacon/firebase-adminsdk.json
 # При необходимости добавь другие переменные:
