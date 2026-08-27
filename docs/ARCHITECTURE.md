@@ -158,7 +158,27 @@ Stateless singleton for all EC cryptography. Keys are stored in `EncryptedShared
 | ECDH | `KeyAgreement("ECDH")` |
 | Symmetric encryption | AES-256-GCM, 12-byte IV, 128-bit tag |
 | Digital signature | ECDSA with SHA-256 |
-| Key derivation | HKDF-style HMAC-SHA256 |
+| Key derivation | HKDF (RFC 5869), HMAC-SHA256 for both Extract and Expand |
+
+**Key derivation, specified precisely (external review 2026-08-28, CRYPTO-10 — "HKDF-style" wasn't
+enough detail for an auditor):** `CryptoManager.deriveAesKey(sharedSecret, info)` —
+
+```
+PRK = HMAC-SHA256(key="BeaconHKDF", data=sharedSecret)      // Extract
+OKM = HMAC-SHA256(key=PRK, data=info || 0x01)                // Expand, single block
+aesKey = OKM[0:32]
+```
+
+- **Extract salt**: the fixed ASCII string `"BeaconHKDF"` — not random or per-session, but not
+  secret either (matches RFC 5869's allowance for a non-secret, even zero, salt; this string's
+  only role is as a domain-separation constant, not entropy).
+- **Expand info** (domain separation between contexts sharing the same derivation function):
+  `"BeaconECDHpq"` (hybrid ECDH+ML-KEM one-shot: 1:1 forward-secrecy fallback, `edit`, group-key
+  wrapping), `"BeaconECDH"` (classical-only anonymous-mailbox bootstrap), `"BeaconFileEncryptionPq"`
+  (hybrid file/image/voice encryption). Each context uses a distinct `info` string, so the same
+  `sharedSecret` value would never produce the same derived key across two different contexts.
+- **Output**: 32 bytes (one HKDF-Expand block — HMAC-SHA256's own 32-byte output needs no
+  additional expansion round for a 256-bit AES key).
 
 The private key is stored wrapped with the Storage Master Key (SMK) when the user is logged in (see `StorageKeyManager`).
 

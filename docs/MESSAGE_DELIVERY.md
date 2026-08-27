@@ -50,8 +50,8 @@ ownership check: token_to_ws.get(token) is this connection?
    NO         YES
    │           │
 ignored,    token_pending.pop(token)  +  spent_tokens.add(token)
-logged      (cleared for real, token now permanently unusable —
-             replay of this same token is rejected from here on)
+logged      (cleared for real, token "permanently" unusable while the
+             server process stays up — see the restart caveat below)
 ```
 
 ## Contract details
@@ -66,6 +66,7 @@ logged      (cleared for real, token now permanently unusable —
 | **What happens after TTL** | The entry is silently deleted. No message is sent to the original sender informing them the delivery expired. | `token_pending_watchdog` — no notification code path exists there |
 | **Does the sender learn about expiry?** | **No.** This is a real, previously-undocumented gap surfaced while writing this file, not a "residual risk" line borrowed from elsewhere — a sender has no signal that a message sat in `token_pending` for 24h and was dropped without ever reaching the recipient. Distinguishing this from a message that *was* delivered live requires the sender to infer it from an absent read receipt or ACK, over whatever timeout the client UI uses, if any. |
 | **Federation ACK semantics** | `anon_delivery_ack`'s ownership check (`token_to_ws.get(token) is <this connection>`) is a purely local, in-process dict lookup — not verified end-to-end against how `forward_to_peers`/federation interacts with anonymous token ownership across a multi-server deployment in this pass. **Flagged for explicit auditor attention, not asserted as safe or unsafe.** |
+| **`spent_tokens`/`known_tokens` persistence across restart** | **Neither persists — both are plain in-memory `set()`s, reset to empty on every server restart** (external review 2026-08-28, PROTO-02). `spent_tokens` also has no TTL/cleanup at all (unlike `token_pending`), so it grows unbounded for the life of the process. Consequence: a token legitimately spent before a restart is no longer recognized as spent afterward. If the original recipient later resubscribes to that same token value (`subscribe_tokens` unconditionally re-adds to `known_tokens`, with no check against `spent_tokens`), a replayed `anon_message` using that old token would be accepted as if new. This narrows to server-operator-level attackers in practice — token values aren't secret from the server that routes them, so exploiting this means the party who can already see every token (the server operator) deliberately restarting to reopen a window on tokens they've already observed. Partially mitigated by an independent, separate layer: 1:1 message delivery also dedupes by `messageId` client-side (`receivedMessageIds`), which would likely still catch and drop a truly identical replayed payload even if the token-level check were bypassed. Not fixed in this pass — persisting `spent_tokens` to SQLite (mirroring `token_pending`'s design, with its own TTL) is the natural fix, tracked as an open item rather than rushed. |
 
 ## Regression test coverage
 

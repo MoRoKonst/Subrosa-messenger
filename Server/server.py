@@ -1446,11 +1446,25 @@ async def handle_client(websocket):
                 "group_key_rotation",
                 "group_invite_accepted",
                 "delivered",
-                "channel_create",
-                "channel_subscribe",
-                "channel_unsubscribe",
-                "channel_post",
-                "channel_get_info",
+                # channel_create/channel_subscribe/channel_unsubscribe/
+                # channel_post/channel_get_info removed from here (external
+                # review 2026-08-28, SCOPE-01) -- the Channels feature was
+                # only ever disabled at the Android/Desktop UI layer, while
+                # these server-side handlers (and their DB tables) stayed
+                # fully live. SECURITY.md's Known Limitations #12 claimed
+                # this had "no live attack surface today" because of the UI
+                # disablement, which was wrong: any custom WebSocket client
+                # (not just the shipped apps) could reach channel_create/
+                # channel_post/etc. directly, with none of the anon-routing
+                # protection the rest of the protocol has (channel posts and
+                # subscriber lists were never anonymized, by design, since
+                # the feature predates that work). Removed from
+                # ALLOWED_TYPES so these now hit the same "неизвестный тип"
+                # rejection as any other unsupported message -- matches the
+                # product's actual intent (disabled) rather than only
+                # appearing disabled in the UI. The handler code and DB
+                # tables are left in place, unreachable, not deleted -- see
+                # docs/TODO.md if Channels is ever re-enabled.
                 # ── Call signaling ──
                 "call_offer", "call_answer", "call_ice",
                 "call_end", "call_ringing",
