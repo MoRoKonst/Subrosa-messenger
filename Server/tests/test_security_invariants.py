@@ -298,6 +298,26 @@ async def test_registration_cap_atomic_under_concurrent_new_fingerprints():
     assert sum(1 for r in results if r) == 5
 
 
+# ── 9. Recovery-код имеет достаточную энтропию против offline brute-force ──
+#
+# External review 2026-08-27 (DOC-03): the stored hash is a single,
+# unsalted SHA-256 -- fine for a high-entropy random token, but the
+# original 40 bits (secrets.token_hex(5)) was crackable by a single GPU in
+# well under a minute given only the hash (e.g. via stolen DB access,
+# KL-27). Bumped to 80 bits; this test guards against that regressing.
+
+async def test_recovery_code_has_sufficient_entropy():
+    codes = server.generate_recovery_codes(8)
+    assert len(codes) == 8
+    for code in codes:
+        hex_chars = code.replace("-", "")
+        assert len(hex_chars) >= 20, (
+            f"recovery code has only {len(hex_chars) * 4} bits of entropy, "
+            f"want >= 80 (SHA-256 hash alone isn't brute-force-resistant below that)"
+        )
+    assert len(set(codes)) == 8  # no accidental duplicates in one batch
+
+
 async def test_access_code_atomic_under_concurrent_redemption():
     code = "TESTCODE1"
     with server.db_connect() as conn:
