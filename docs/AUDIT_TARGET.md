@@ -4,14 +4,24 @@
 than the date below, ask for a fresh `AUDIT_TARGET.md` rather than assuming `main` still matches
 this — the whole point of this file is to stop the target from moving mid-review.*
 
+**Tag immutability policy (external review 2026-08-27, DOC-06):** this tag was moved twice during
+internal prep — first to include `AUDIT_SETUP.md`/`KNOWN_SECURITY_ISSUES.md`, then again to
+include a real security fix (recovery-code entropy, see Known Issues below) found by a
+documentation-level review before this package was ever handed to an actual external auditor.
+Both moves happened before external handoff, which is the only reason they're acceptable — moving
+a tag *after* an auditor has started reviewing it is not okay. **Going forward: once this tag is
+actually sent to an external reviewer, it does not move again.** Anything found after that point
+gets a new tag (`audit-2026-08-rc2`, or `audit-2026-09` for a later full re-review), never a
+rewrite of this one.
+
 | Field | Value |
 |---|---|
 | Repository | https://github.com/MoRoKonst/Subrosa-messenger |
-| Commit | `ba329f0d56105df8d2681d64041ab246a8a37fa8` (the tag was moved once, after the first cut, to include `AUDIT_SETUP.md`/`KNOWN_SECURITY_ISSUES.md` — this is the final position). Last functional/code change: `cf524e7`. |
+| Commit | see `git rev-list -n 1 audit-2026-08` at handoff time — intentionally not hardcoded here to avoid the self-referential chicken-and-egg problem of a file needing to name the commit it's part of. |
 | Tag | `audit-2026-08` |
 | Android `versionCode` / `versionName` | 3 / 1.0 |
 | Server version | not independently versioned — tracked by commit hash above (`Server/server.py`) |
-| Dependencies lock state | `Server/requirements.txt` pins minimum versions (`>=`), not exact — see `git log -- Server/requirements.txt` at this commit for what was actually installed when this tag was cut. Android dependencies are exact-pinned in `app/build.gradle.kts` / `gradle/libs.versions.toml`. |
+| Dependencies lock state | `Server/requirements-lock.txt` — exact pinned versions, verified against both a clean local install and the actual production VPS. `Server/requirements.txt` (the deployment-facing file) still uses `>=` ranges deliberately; use the lock file when reproducibility matters, per [AUDIT_SETUP.md](AUDIT_SETUP.md). Android dependencies are exact-pinned in `app/build.gradle.kts` / `gradle/libs.versions.toml` already. |
 | CI status at this commit | All required checks green (Build, Semgrep SAST, CodeQL × 2, Server syntax check, Server security regression tests, Gitleaks) — see the Actions run for this commit. |
 | Date | 2026-08-27 |
 
@@ -25,7 +35,13 @@ this — the whole point of this file is to stop the target from moving mid-revi
   rotation invariants, Robolectric-backed).
 - `docs/SECURITY_MODEL.md`, `docs/THREAT_MODEL.md`, `docs/SCOPE.md`, `docs/AUDIT_SETUP.md`,
   `docs/KNOWN_SECURITY_ISSUES.md` — written same session as this tag, cross-checked against the
-  actual code rather than summarized from prose.
+  actual code rather than summarized from prose. Revised once already after an external
+  documentation-level review (2026-08-27) found real issues — see
+  `docs/KNOWN_SECURITY_ISSUES.md`'s "This session" section for what changed, including one actual
+  code fix (recovery-code entropy, 40→80 bits) that review surfaced, not just a wording issue.
+- `Server/requirements-lock.txt` — exact dependency versions, added after the same review flagged
+  that `>=`-ranged `requirements.txt` alone doesn't make a tagged commit's dependency graph
+  reproducible.
 
 ## Explicitly not included / known-incomplete at this commit
 

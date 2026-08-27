@@ -1,0 +1,30 @@
+# Exact dependency versions actually verified for the audit-2026-08 target
+# (see docs/AUDIT_TARGET.md) -- Server/requirements.txt uses >= ranges for
+# normal deployment flexibility, which means a `pip install` run today and
+# one run a month from now can silently resolve to different versions of
+# the same tree. This file pins what was concretely installed and tested:
+# use it when you need the audit's dependency graph to be reproducible,
+# not just its source tree.
+#
+# Generated 2026-08-27:
+#   - websockets/cryptography/cffi/pycparser: `pip freeze` in a clean venv
+#     on this machine, installing from Server/requirements.txt as-is.
+#   - miniupnpc/sqlcipher3-binary: these build native extensions and have
+#     no prebuilt wheel for Windows, so they couldn't be resolved on the
+#     dev machine that generated this file -- versions below are what was
+#     confirmed installed on the actual production VPS (Ubuntu 22.04,
+#     Python 3.11.15) the same day.
+#
+# Regenerate with:
+#   python3 -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install -r requirements.txt
+#   /tmp/lockenv/bin/pip freeze > requirements-lock.txt
+#
+# Install with exact versions (no resolver drift):
+#   pip install -r requirements-lock.txt
+
+websockets==17.1
+cryptography==50.0.1
+cffi==2.1.1
+pycparser==3.0
+miniupnpc==2.3.3
+sqlcipher3-binary==0.6.0
