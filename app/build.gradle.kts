@@ -23,7 +23,7 @@ if (localPropertiesFile.exists()) {
 
 android {
     namespace = "com.subrosa.messenger"
-    compileSdk = 34
+    compileSdk = 37
 
 
     signingConfigs {

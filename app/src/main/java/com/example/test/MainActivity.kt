@@ -500,12 +500,14 @@ class MainActivity : FragmentActivity() {
                 val overlayApps = packageManager
                     .getInstalledPackages(android.content.pm.PackageManager.GET_PERMISSIONS)
                     .filter { pkg ->
+                        val appInfo = pkg.applicationInfo
                         !isTrustedPackage(pkg.packageName) &&
                         pkg.requestedPermissions
                             ?.contains(android.Manifest.permission.SYSTEM_ALERT_WINDOW) == true &&
+                        appInfo != null &&
                         appOps.checkOpNoThrow(
                             android.app.AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW,
-                            pkg.applicationInfo.uid,
+                            appInfo.uid,
                             pkg.packageName
                         ) == android.app.AppOpsManager.MODE_ALLOWED
                     }
