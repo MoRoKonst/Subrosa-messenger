@@ -81,6 +81,12 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    // Was pulled in transitively via material3 on compose-bom 2024.09.00 --
+    // no longer implicit as of 2026.08.00, so Icons.Filled.* etc. across
+    // the app stopped resolving. Declared explicitly now (version comes
+    // from the compose-bom platform() above, same as the other compose
+    // artifacts here).
+    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.appcompat:appcompat:1.8.0")
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
     implementation(platform("com.google.firebase:firebase-bom:33.0.0"))
