@@ -23,16 +23,13 @@ this — the whole point of this file is to stop the target from moving mid-revi
 - Security regression tests — `Server/tests/test_security_invariants.py` (8 protocol-level
   invariants) and `app/src/test/java/com/example/test/GroupManagerTest.kt` (9 group-authorization/
   rotation invariants, Robolectric-backed).
-- `docs/SECURITY_MODEL.md`, `docs/THREAT_MODEL.md`, `docs/SCOPE.md` — written same session as this
-  tag, cross-checked against the actual code rather than summarized from prose.
+- `docs/SECURITY_MODEL.md`, `docs/THREAT_MODEL.md`, `docs/SCOPE.md`, `docs/AUDIT_SETUP.md`,
+  `docs/KNOWN_SECURITY_ISSUES.md` — written same session as this tag, cross-checked against the
+  actual code rather than summarized from prose.
 
 ## Explicitly not included / known-incomplete at this commit
 
 - Desktop client — not published in this repository (`/desktop/` gitignored).
-- `docs/AUDIT_SETUP.md` (reproducible auditor setup instructions) — not yet written; use
-  `docs/DEPLOY.md`/`docs/DOCKER.md`/`docs/CHECKLIST.md` in the interim.
-- `docs/KNOWN_SECURITY_ISSUES.md` as a standalone ID/severity register — this content currently
-  lives in `SECURITY.md`'s "Known Limitations" section instead.
 - Protocol-level attack scripting (fuzzing / negative-input test suite) — see `docs/TODO.md`,
   "Протокольное тестирование сервера" — not started.
 - `websockets` 12→17 / production-VPS Python 3.10→3.11 migration — done and verified live this
