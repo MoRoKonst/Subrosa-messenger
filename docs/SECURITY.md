@@ -63,7 +63,7 @@ Subrosa is designed to protect against the following adversaries:
 
 | Scenario | Reason |
 |---|---|
-| Endpoint compromise (full device root + live RAM dump) | SMK in memory while unlocked; key unavoidable |
+| Endpoint compromise (full device root + live RAM dump) | Key material resident in the running process — SMK while unlocked, and separately, SPK/OPK/PQ private keys/Double Ratchet session state for the lifetime of the process regardless of app-lock state (see "SPK / OPK private keys and Double Ratchet session state" below) — unavoidable for either without killing the process entirely |
 | Server-side traffic correlation | Timing and metadata on the wire |
 | Coercion of the recipient | Recipient device not controlled |
 | Supply-chain attack (malicious build) | Requires independent APK verification |
@@ -149,7 +149,15 @@ X3DH-style initial key agreement:
    ```
 3. `master_secret` seeds the Double Ratchet.
 
-Each subsequent message ratchets forward. Compromise of a session key does not compromise past or future session keys.
+Each subsequent message ratchets forward. Precisely (external review 2026-08-28, CRYPTO-09 — the
+previous "does not compromise past or future" phrasing was too absolute, per the Double Ratchet
+spec's own compromise model): compromising the current ratchet state does not reveal *already-
+deleted* past message keys (those are wiped after use — see `SecureMemory.wipe` calls throughout
+`CryptoManager.kt`/`SessionKeyManager.kt`). Future confidentiality is *not* immediate or
+unconditional — an attacker holding the current chain key can compute upcoming message keys until
+an uncompromised Diffie-Hellman ratchet step introduces new secret entropy the attacker doesn't
+have. This is standard Double Ratchet behavior, not a bug, but "future keys are also safe" as a
+blanket claim overstated the model.
 
 The server is notified when OPK supply drops below the watermark (`OPK_LOW_WATERMARK = 5`) and prompts the client to upload more bundles.
 
@@ -166,6 +174,20 @@ master_secret     = KDF(DH1 || DH2 || DH3 || [DH4] || pq_shared_secret)
 
 Only the *initial* X3DH root key needs this hardening — every subsequent Double Ratchet root key is `HKDF(dhOutput, salt=previousRootKey)`, so deriving it requires the actual secret previous root key, not just breaking that step's classical DH. A quantum adversary who breaks every individual ratchet-step DH still cannot advance the chain without the root, and the root is only recoverable by breaking **both** the classical and the ML-KEM component. This is the same reasoning behind Signal's PQXDH.
 
+**Scope of this guarantee, stated precisely (external review 2026-08-28, CRYPTO-07 — the previous
+phrasing implied a stronger, general property than the design actually provides):** this protects
+against harvest-now-decrypt-later for a *passive* adversary who only records ciphertext traffic and
+never compromises either endpoint or the session's root key. It is **not** a general continuous
+post-quantum post-compromise security property. If an adversary compromises a device or its root
+key *now* (by any means — not necessarily quantum) and continues recording that session's traffic,
+a future quantum computer does not need to break ML-KEM at all — it already has everything a
+classical attacker with the same compromise would have. Continuous protection against a
+compromise-now-decrypt-later scenario (as opposed to harvest-now) would require a full
+post-quantum ratchet construction (e.g. Signal's own PQ ratchet extensions), which this project
+does not implement. ML-KEM-768 itself is a sound, NIST-standardized (FIPS 203) primitive choice —
+the caveat above is about the boundary of what the *protocol construction* guarantees, not about
+the primitive.
+
 The same hybrid treatment is applied everywhere else a shared secret is derived via one-shot ephemeral ECDH outside the ratchet chain: the pre-session/legacy message fallback, `edit`, group key distribution, and image/file/voice encryption. A bundle or handshake missing the PQ component is rejected outright rather than silently accepted as classical-only, to close the obvious downgrade attack (a malicious server stripping the field).
 
 **Known limitations:**
@@ -174,16 +196,35 @@ The same hybrid treatment is applied everywhere else a shared secret is derived 
 
 ### Group Key Exchange
 
-Each group has a 256-bit random AES key (`groupKey`). It is distributed out-of-band to each member individually:
+*Corrected 2026-08-28 (external review, CRYPTO-04): this section previously described a
+classical-only `ECDH → AES-GCM(groupKey, KDF(shared))` wrap, contradicting the Post-Quantum Hybrid
+section above, which claims group key distribution gets the same hybrid treatment as everything
+else. Checked against the actual code — `GroupManager.encryptGroupKeyForMember()` calls
+`CryptoManager.encrypt()`, the same one-shot hybrid function `sendImage`/`sendFile` use. The
+Post-Quantum Hybrid section's claim was correct; this section's pseudocode was stale.*
+
+Each group has a 256-bit random AES key (`groupKey`). It is distributed out-of-band to each member
+individually, using the same hybrid ECDH+ML-KEM one-shot encryption as file/image transfer:
 
 1. Admin calls `generateGroupKey()` → `SecureRandom().nextBytes(32)`.
-2. For each member M:
+2. For each member M, `GroupManager.encryptGroupKeyForMember()` calls `CryptoManager.encrypt()`:
    ```
-   shared = ECDH(adminPriv, memberPub)
-   encKey = AES-256-GCM(groupKey, KDF(shared))
+   ephemeralKeyPair = generate fresh EC keypair
+   classicalSecret  = ECDH(ephemeralKeyPair.private, M.identityPublicKey)
+   (pqCiphertext, pqSharedSecret) = ML-KEM-768-Encapsulate(M.pqPublicKey)
+   combinedSecret   = classicalSecret || pqSharedSecret
+   aesKey           = HKDF-Extract-then-Expand(combinedSecret, info="BeaconECDHpq")
+   encKey           = AES-256-GCM(groupKey, aesKey)
+   wire format       = [ephemeralPublicKey][pqCiphertext][iv || encKey || tag]
    ```
-3. `{memberId, encKey}` pairs are sent to the server in the `create_group` message; the server delivers each `encKey` only to the corresponding member.
-4. Member calls `decryptGroupKey(encKey, myPriv)` → `groupKey`.
+   Breaking either the classical ECDH or the ML-KEM component alone does not recover `groupKey` —
+   same reasoning as the Post-Quantum Hybrid section above, applied to group-key wrapping instead
+   of message content.
+3. `{memberId, encKey}` pairs are sent to the server in the `group_create`/`group_member_added`
+   message; the server delivers each `encKey` only to the corresponding member (it cannot decrypt
+   any of them — it never has any member's private key).
+4. Member calls `GroupManager.decryptGroupKey(encKey)` → `CryptoManager.decrypt()` (the matching
+   hybrid decrypt, using the member's own identity + PQ private keys) → `groupKey`.
 
 Group messages:
 ```
@@ -193,13 +234,43 @@ plaintext
 iv[12] || ciphertext || tag[16]
 ```
 
-On member removal, the admin generates a new `groupKey` and redistributes it to remaining members.
+Group message **authenticity is separate from the AES-GCM encryption**: since every member shares
+the same symmetric `groupKey`, AES-GCM alone only proves *some* group member produced the
+ciphertext, not *which* one. Every `group_message`/`group_reaction`/`group_key_rotation`/etc. is
+additionally signed with the sender's own ECDSA identity key (`CryptoManager.sign`), verified
+against their known identity public key on receipt before the message is trusted — a member cannot
+forge a message under another member's name, even knowing the shared `groupKey`. (External review
+2026-08-28, CRYPTO-05, confirmed by reading the code — this was already implemented, just not
+documented here.)
 
-When stored locally, `groupKey` is wrapped with the SMK (`"smk1:"` prefix) if unlocked, otherwise stored as plain Base64.
+**Key rotation happens on member *removal* only, not on member addition** (external review
+2026-08-28, CRYPTO-08 — the previous wording, "rotated on membership change," was ambiguous about
+this and has been corrected). On removal, the admin generates a fresh `groupKey` and redistributes
+it to the remaining members, with the removed member explicitly excluded from the redistribution
+list (see [Known Limitations #15](#known-limitations) for the bug this closed, and
+[THREAT_MODEL.md § C](THREAT_MODEL.md#c-removed-group-member) for the regression test covering it).
+Adding a member does **not** rotate the key — a newly-added member receives the group's *current*
+key and can decrypt any historical ciphertext they separately obtain (e.g. from another member's
+device, or if the server ever logged group message payloads) from before they joined. This is a
+genuine backward-secrecy gap, not yet decided as accepted-tradeoff-vs-needs-fixing — see
+[KNOWN_SECURITY_ISSUES.md OPEN-7](KNOWN_SECURITY_ISSUES.md).
+
+When stored locally, `groupKey` is wrapped with the SMK (`"smk1:"` prefix) if unlocked, otherwise
+stored as plain Base64 (still inside `EncryptedSharedPreferences`/Keystore-backed storage — see the
+[Double Encryption at Rest](#double-encryption-at-rest-smk) section for exactly what this fallback
+does and doesn't lose).
 
 ### Double Encryption at Rest (SMK)
 
-All sensitive at-rest values receive a second encryption layer on top of `EncryptedSharedPreferences`.
+Sensitive at-rest values receive a second encryption layer on top of `EncryptedSharedPreferences`
+**when the SMK is unlocked**. Corrected 2026-08-28 (external review, CRYPTO-02 — the previous
+"all sensitive values" phrasing directly contradicted this same document's own Group Key Exchange
+and SPK/OPK/session-state sections a few paragraphs down, both of which describe a plain-Base64
+fallback for writes made while locked): the SMK layer is the normal case, not an unconditional
+guarantee. See "Value Wrapping" below for exactly when the fallback applies and what it does and
+doesn't lose — the fallback value is still inside `EncryptedSharedPreferences`/AndroidKeyStore-backed
+storage, so this is "single-layer instead of double-layer protection" for that value until the next
+unlock triggers the documented self-healing re-wrap, not plaintext-on-disk.
 
 #### SMK Generation
 
@@ -303,6 +374,19 @@ Authentication is challenge-response via ECDSA. The server never stores or trans
 4. Client sends a separate `{type: "register", name, public_key, device_id, ...}` — `public_key` here is checked to match exactly the key that was just proven in step 2/3 (identity-binding fix, see Known Limitations item 14); a mismatch is rejected outright, closing the connection.
 5. The server derives the fingerprint (`SHA-256(public_key)[:8]`), which is also the username, and applies any additional gates before accepting the registration — in order: optional one-time access-code allowlist for private/business deployments (`access_code_required` on failure), then device-gated TOTP if the account has it enabled (`totp_required` on failure — see [Device-Gated TOTP](#device-gated-totp--recovery-codes) below). Only once these pass does the server accept the connection, resolve `session_conflict` if another device is already registered under this fingerprint, and later send `{type: "turn_config", ...}` for call signaling.
 
+**Fingerprint length, analyzed (external review 2026-08-28, AUTH-01):** 8 bytes = 64 bits. Targeted
+preimage (find a keypair matching one specific victim's fingerprint) stays infeasible at 2^64.
+Birthday-bound *collision* resistance is the relevant number for a shared identity-namespace,
+though: ~2^32 (about 4.3 billion) registered fingerprints before an accidental collision becomes
+likely. That's far beyond this product's realistic scale, so not a practical concern today. Worth
+noting as a real (if currently theoretical) scaling ceiling: `register()` stores/overwrites
+`clients[fingerprint]`'s public key on every registration with no check against a previously-seen
+public key for that fingerprint, and `registered_fingerprints.fingerprint` is a SQLite `PRIMARY KEY`
+— so a genuine collision (two different keypairs hashing to the same 8 bytes) would let the second
+key silently overwrite/impersonate the first in `clients` (in-memory), while the DB insert would
+just no-op (`INSERT OR IGNORE`) rather than surface the collision at all. Not fixed, since it isn't
+reachable at realistic scale — flagged for the record, not treated as an active vulnerability.
+
 Handshake timeout: 15 seconds.
 
 Session conflict: when a second `device_id` registers for the same fingerprint, the server sends `{type: "session_conflict", ts}` to the existing session (and a push notification via FCM if the old session isn't live to receive the WebSocket message). The existing client disconnects and notifies the user. The server's `connect()` reconnect loop on both clients does not currently distinguish `session_conflict` from an ordinary network disconnect, so both devices can end up in a "reconnect war" alternately displacing each other — device-gated TOTP (below) prevents this for any device the fingerprint hasn't registered with a valid code, but does not resolve the race for two device_ids the account has already registered.
@@ -316,7 +400,7 @@ Since 2026-08-10, TOTP is a **mandatory** step immediately after registration, n
 
 The secret is generated client-side, shown once with an `otpauth://` URI for any standard authenticator app, and is never included in the backup file itself (only the boolean `totp_enabled` flag is) — deliberately, so a stolen backup + password alone can't also recover the TOTP secret.
 
-**Recovery codes**: 8 one-time codes are generated and shown once when TOTP is enabled (`totp_setup_ok.recovery_codes`), the same model as GitHub/Google 2FA. The server stores only their SHA-256 hashes (`totp_recovery_codes` table). A recovery code can substitute for a TOTP code in `register()` if the authenticator is lost; redeeming one is atomic (`UPDATE ... WHERE used = 0`, so two simultaneous redemption attempts of the same code can't both succeed) and immediately revokes the account's TOTP secret and all other recovery codes — the account returns to "no TOTP" and requires a deliberate fresh setup from the now-trusted device, rather than leaving stale credentials usable by whoever else might have seen them.
+**Recovery codes**: 8 one-time codes are generated and shown once when TOTP is enabled (`totp_setup_ok.recovery_codes`), the same model as GitHub/Google 2FA. Format and entropy, stated explicitly (external review 2026-08-28, AUTH-02 — this section previously said only "the server stores SHA-256 hashes," without specifying the code's own entropy, which is what actually determines offline brute-force resistance against a stolen copy of those hashes): each code is `secrets.token_hex(10)` — **80 bits**, formatted as four 5-hex-character groups (`XXXXX-XXXXX-XXXXX-XXXXX`) for readability. Bumped from an original 40 bits (`secrets.token_hex(5)`) after this same external review flagged that 40 bits against a single unsalted SHA-256 hash is crackable offline in well under a minute on one consumer GPU — a real, live weakness given a stolen/unencrypted server DB (`totp_recovery_codes` table) exposes exactly these hashes; see the composite-attack discussion in [THREAT_MODEL.md § F](THREAT_MODEL.md#f-attacker-with-offline-access-to-the-servers-database-stolen-disk-backup-hosting-provider-access). The server stores only the SHA-256 hash of each code (`totp_recovery_codes` table) — a single unsalted hash is an acceptable choice for an 80-bit *server-generated* random token (not a user-chosen low-entropy password), since the entropy itself, not hash cost, is what needs to resist brute force here. A recovery code can substitute for a TOTP code in `register()` if the authenticator is lost; redeeming one is atomic (`UPDATE ... WHERE used = 0`, so two simultaneous redemption attempts of the same code can't both succeed — regression-tested, `test_recovery_code_consumed_exactly_once_under_concurrency`) and immediately revokes the account's TOTP secret and all other recovery codes — the account returns to "no TOTP" and requires a deliberate fresh setup from the now-trusted device, rather than leaving stale credentials usable by whoever else might have seen them.
 
 **Known limitation**: accounts created before 2026-08-10 were not migrated to mandatory TOTP retroactively — this only applies to registrations after that date. There is currently no recovery path if both the TOTP secret *and* all recovery codes are lost (by design, same rationale as the backup password having no recovery mechanism below) — the account's fingerprint becomes permanently unable to register a new `device_id` until an operator manually clears its `user_totp_secrets` row.
 
@@ -409,6 +493,14 @@ In Paranoid Mode, a critical-severity scan result triggers `handleThreat()`.
 ### Certificate Pinning
 
 `CertificatePinner` (OkHttp3) pins the server's TLS certificate or public key. A connection that presents an unexpected certificate is rejected even if it is signed by a trusted CA. This mitigates attacks that install a custom root CA.
+
+**Scope, stated explicitly (external review 2026-08-28):** the pin (`NetworkConfig.CERT_PIN`) is
+tied to exactly one hardcoded hostname (`NetworkConfig.SERVER_HOSTNAME` — the project's own official
+server) and is applied conditionally, only when both are non-empty at build time. **A self-hosted
+server a user adds at runtime is a different hostname and receives no pinning at all** — it's
+validated through the normal system CA trust store instead. Deliberate scope, not a gap: there's no
+mechanism today to pre-pin an arbitrary self-hosted deployment's certificate (would need some
+out-of-band provisioning step — TOFU, QR-code-carried pin, etc. — none of which exist yet).
 
 ---
 
