@@ -33,6 +33,13 @@ jobs:
       - name: Lint
         run: ./gradlew lint --no-daemon
 
+      # JVM unit tests (Robolectric-backed where Android Context is needed --
+      # see GroupManagerTest.kt) -- first Kotlin-side security regression
+      # tests, covering docs/THREAT_MODEL.md threats B and C (GroupManager
+      # authorization, removed-member-loses-group-key invariant).
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon
+
   server-syntax-check:
     name: Server syntax check
     runs-on: ubuntu-latest

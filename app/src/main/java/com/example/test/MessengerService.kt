@@ -2670,7 +2670,7 @@ class MessengerService : Service() {
                             Log.e(TAG, "group_member_removed: неверная подпись от $from — отклонено")
                             return
                         }
-                        GroupManager.removeMember(this@MessengerService, groupId, removedMember)
+                        GroupManager.removeMember(this@MessengerService, groupId, from, removedMember)
 
                         val sysMessage = GroupMessage(
                             id = UUID.randomUUID().toString(),
@@ -2720,7 +2720,7 @@ class MessengerService : Service() {
                             Log.e(TAG, "group_member_added: неверная подпись от $from — отклонено")
                             return
                         }
-                        GroupManager.addMember(this@MessengerService, groupId, newMember)
+                        GroupManager.addMember(this@MessengerService, groupId, from, newMember)
 
                         val sysMessage = GroupMessage(
                             id = UUID.randomUUID().toString(),
@@ -2814,7 +2814,11 @@ class MessengerService : Service() {
                         return
                     }
 
-                    GroupManager.addMember(this@MessengerService, groupId, newMember)
+                    // Processed on the inviting admin's own device once the new
+                    // member signs proof of accepting -- actor is this device's
+                    // own user (the admin who originated the invite), not the
+                    // new member being added.
+                    GroupManager.addMember(this@MessengerService, groupId, username, newMember)
 
                     val sysMessage = GroupMessage(
                         id = UUID.randomUUID().toString(),

@@ -57,6 +57,18 @@ object GroupManager {
     private const val KEY_GROUPS = "my_groups"
     private val lock = Any()
 
+    // Test seam: production always uses the real EncryptedStorage path.
+    // Robolectric has no working AndroidKeyStore simulation (a well-known
+    // limitation, not something worth reimplementing a fake KeyStore SPI
+    // for), so GroupManagerTest overrides this to plain
+    // context.getSharedPreferences() -- the authorization/membership logic
+    // under test doesn't depend on the storage layer being encrypted, only
+    // on it being consistent read-after-write.
+    internal var prefsProvider: (Context, String) -> android.content.SharedPreferences =
+        { context, name -> EncryptedStorage.getEncryptedPrefs(context, name) }
+
+    private fun prefs(context: Context) = prefsProvider(context, PREFS_NAME)
+
     fun generateGroupKey(): ByteArray {
         val keyGen = KeyGenerator.getInstance("AES")
         keyGen.init(256, SecureRandom())
@@ -105,7 +117,7 @@ object GroupManager {
     }
 
     fun saveGroup(context: Context, group: Group) = synchronized(lock) {
-        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val prefs = prefs(context)
 
         val existingRawKeys = mutableMapOf<String, String>()
         try {
@@ -158,11 +170,11 @@ object GroupManager {
         loadGroups(context).forEach { group ->
             EncryptedStorage.getEncryptedPrefs(context, "group_messages_${group.id}").edit().clear().apply()
         }
-        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME).edit().clear().apply()
+        prefs(context).edit().clear().apply()
     }
 
     fun loadGroups(context: Context): List<Group> = synchronized(lock) {
-        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val prefs = prefs(context)
         val jsonStr = prefs.getString(KEY_GROUPS, "[]") ?: "[]"
 
         return try {
@@ -215,7 +227,7 @@ object GroupManager {
     }
 
     fun deleteGroup(context: Context, groupId: String) = synchronized(lock) {
-        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val prefs = prefs(context)
 
         val existingRawKeys = mutableMapOf<String, String>()
         try {
@@ -268,8 +280,23 @@ object GroupManager {
     // Kotlin's synchronized is a reentrant monitor, so the nested
     // getGroup()/saveGroup() calls re-entering the same lock is safe, not a
     // deadlock.
-    fun addMember(context: Context, groupId: String, userId: String) = synchronized(lock) {
+    //
+    // actorId + internal isAdmin() check added (docs/THREAT_MODEL.md threat B /
+    // docs/TODO.md's "GroupManager authorization" item): every current call
+    // site already gated these behind its own isAdmin check before calling in
+    // (UI buttons hidden for non-admins, remote group_* messages verified
+    // against the sender's admin status + signature in MessengerService --
+    // see docs/SECURITY.md's group-key-rotation fix history), so this is
+    // defense-in-depth against a future caller forgetting that check, not a
+    // fix for a currently-reachable bypass. removeMember keeps a self-removal
+    // exception -- a member must be able to leave a group without being an
+    // admin of it.
+    fun addMember(context: Context, groupId: String, actorId: String, userId: String) = synchronized(lock) {
         val group = getGroup(context, groupId) ?: return@synchronized
+        if (!isAdmin(context, groupId, actorId)) {
+            android.util.Log.w("GroupManager", "addMember: $actorId is not admin of $groupId — rejected")
+            return@synchronized
+        }
         val updatedMembers = group.members.toMutableList()
 
         if (!updatedMembers.contains(userId)) {
@@ -278,8 +305,13 @@ object GroupManager {
         }
     }
 
-    fun removeMember(context: Context, groupId: String, userId: String) = synchronized(lock) {
+    fun removeMember(context: Context, groupId: String, actorId: String, userId: String) = synchronized(lock) {
         val group = getGroup(context, groupId) ?: return@synchronized
+        val selfRemoval = actorId == userId
+        if (!selfRemoval && !isAdmin(context, groupId, actorId)) {
+            android.util.Log.w("GroupManager", "removeMember: $actorId is not admin of $groupId — rejected")
+            return@synchronized
+        }
         val updatedMembers = group.members.toMutableList()
         val updatedAdmins = group.admins.toMutableList()
 
@@ -292,8 +324,12 @@ object GroupManager {
         ))
     }
 
-    fun promoteToAdmin(context: Context, groupId: String, userId: String) = synchronized(lock) {
+    fun promoteToAdmin(context: Context, groupId: String, actorId: String, userId: String) = synchronized(lock) {
         val group = getGroup(context, groupId) ?: return@synchronized
+        if (!isAdmin(context, groupId, actorId)) {
+            android.util.Log.w("GroupManager", "promoteToAdmin: $actorId is not admin of $groupId — rejected")
+            return@synchronized
+        }
         val updatedAdmins = group.admins.toMutableList()
 
         if (!updatedAdmins.contains(userId) && group.members.contains(userId)) {
