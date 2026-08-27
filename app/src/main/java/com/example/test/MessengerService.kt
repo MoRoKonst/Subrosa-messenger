@@ -2283,6 +2283,7 @@ class MessengerService : Service() {
                     )
                 } catch (e: Exception) {
                     Log.e(TAG, "video_chunk error: ${e.message}", e)
+                    throw e
                 }
             }
 
@@ -2336,14 +2337,14 @@ class MessengerService : Service() {
                     if (signature == null || senderKey == null) {
                         Log.e(TAG, "Voice без ключа от $from — запрашиваем")
                         requestPrekeyBundle(from)
-                        return
+                        throw SecurityException("voice: нет ключа от $from")
                     }
 
                     val fixedKey = senderKey.replace('-', '+').replace('_', '/')
 
                     if (!CryptoManager.verify(encryptedData, signature, fixedKey)) {
                         Log.e(TAG, "Неверная подпись голосового от $from")
-                        return
+                        throw SecurityException("voice: неверная подпись от $from")
                     }
 
                     val voiceData = CryptoManager.decrypt(encryptedData)
@@ -2427,11 +2428,11 @@ class MessengerService : Service() {
                 if (signature == null || senderPublicKey == null) {
                     Log.e(TAG, "Нет ключа от $from — запрашиваем")
                     requestPrekeyBundle(from)
-                    return
+                    throw SecurityException("message: нет ключа от $from")
                 }
                 if (!CryptoManager.verify(encryptedText, signature, senderPublicKey)) {
                     Log.e(TAG, "Неверная подпись от $from")
-                    return
+                    throw SecurityException("message: неверная подпись от $from")
                 }
                 try {
                     val decryptedText = if (protocolVersion >= 2 && json.has("session_header")) {
@@ -2514,12 +2515,12 @@ class MessengerService : Service() {
 
                     if (signature == null || senderKey == null) {
                         Log.e(TAG, "group_create без ключа от $from")
-                        return
+                        throw SecurityException("group_create: нет ключа от $from")
                     }
 
                     if (!CryptoManager.verify(encryptedGroupKey, signature, senderKey)) {
                         Log.e(TAG, "Неверная подпись приглашения в группу от $from")
-                        return
+                        throw SecurityException("group_create: неверная подпись от $from")
                     }
 
                     // Full signed roster (members+admins) added so every invitee
@@ -2540,11 +2541,11 @@ class MessengerService : Service() {
                         val payload = rosterPayload(groupId, membersFromPacket, adminsFromPacket)
                         if (rosterSignature == null || !CryptoManager.verify(payload, rosterSignature, senderKey)) {
                             Log.e(TAG, "Неверная подпись ростера группы от $from")
-                            return
+                            throw SecurityException("group_create: неверная подпись ростера от $from")
                         }
                         if (username !in membersFromPacket) {
                             Log.e(TAG, "group_create: ростер не содержит получателя — отклонено")
-                            return
+                            throw SecurityException("group_create: ростер не содержит получателя")
                         }
                         members = membersFromPacket
                         admins = adminsFromPacket
@@ -2591,7 +2592,13 @@ class MessengerService : Service() {
 
                     }
                 } catch (e: Exception) {
+                    // Re-thrown (external review 2026-08-27/28, closing the
+                    // rest of the AA-7/OPEN-2 pattern) -- was swallowed, so
+                    // anon_delivery_ack could fire for a group_create that
+                    // was actually rejected (bad signature/roster) or never
+                    // applied (an exception mid-processing).
                     Log.e(TAG, "group_create error: ${e.message}")
+                    throw e
                 }
             }
 
@@ -2613,8 +2620,14 @@ class MessengerService : Service() {
 
                     val group = GroupManager.getGroup(this@MessengerService, groupId)
                     if (group == null) {
+                        // Thrown, not returned (external review 2026-08-27/28):
+                        // an unknown group can mean group_create just hasn't
+                        // arrived yet (reordered delivery) -- not ACKing lets
+                        // the server's token_pending keep this queued for
+                        // retry instead of losing it if group_create later
+                        // catches up.
                         android.util.Log.w(TAG, "Получено сообщение для неизвестной группы $groupId")
-                        return
+                        throw SecurityException("group_message: неизвестная группа $groupId")
                     }
 
                     val senderKey = publicKeys[from]
@@ -2624,12 +2637,12 @@ class MessengerService : Service() {
 
                     if (signature == null || senderKey == null) {
                         android.util.Log.e(TAG, "Сообщение группы без ключа от $from")
-                        return
+                        throw SecurityException("group_message: нет ключа от $from")
                     }
 
                     if (!CryptoManager.verify(encryptedText, signature, senderKey)) {
                         android.util.Log.e(TAG, "Неверная подпись группового сообщения от $from")
-                        return
+                        throw SecurityException("group_message: неверная подпись от $from")
                     }
 
                     val decryptedText = GroupManager.decryptGroupMessage(encryptedText, group.groupKey!!)
@@ -2653,6 +2666,7 @@ class MessengerService : Service() {
                     }
                 } catch (e: Exception) {
                     android.util.Log.e(TAG, "group_message error: ${e.message}")
+                    throw e
                 }
             }
             "group_reaction" -> {
@@ -2670,12 +2684,12 @@ class MessengerService : Service() {
 
                     if (signature == null || senderKey == null) {
                         Log.e(TAG, "group_reaction без ключа от $from")
-                        return
+                        throw SecurityException("group_reaction: нет ключа от $from")
                     }
 
                     if (!CryptoManager.verify(emoji, signature, senderKey)) {
                         Log.e(TAG, "Неверная подпись group_reaction от $from")
-                        return
+                        throw SecurityException("group_reaction: неверная подпись от $from")
                     }
 
                     withContext(Dispatchers.Main) {
@@ -2683,6 +2697,7 @@ class MessengerService : Service() {
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "group_reaction error: ${e.message}")
+                    throw e
                 }
             }
 
@@ -2698,7 +2713,7 @@ class MessengerService : Service() {
 
                         if (from == null || !GroupManager.isAdmin(this@MessengerService, groupId, from)) {
                             Log.e(TAG, "group_member_removed от не-администратора $from — отклонено")
-                            return
+                            throw SecurityException("group_member_removed: $from не админ")
                         }
 
                         val adminKey = publicKeys[from]
@@ -2706,7 +2721,7 @@ class MessengerService : Service() {
                         if (removeSignature == null || adminKey == null ||
                             !CryptoManager.verify("$groupId:$removedMember", removeSignature, adminKey)) {
                             Log.e(TAG, "group_member_removed: неверная подпись от $from — отклонено")
-                            return
+                            throw SecurityException("group_member_removed: неверная подпись от $from")
                         }
                         GroupManager.removeMember(this@MessengerService, groupId, from, removedMember)
 
@@ -2727,6 +2742,7 @@ class MessengerService : Service() {
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "group_member_removed error: ${e.message}")
+                    throw e
                 }
             }
 
@@ -2748,7 +2764,7 @@ class MessengerService : Service() {
 
                         if (from == null || !GroupManager.isAdmin(this@MessengerService, groupId, from)) {
                             Log.e(TAG, "group_member_added от не-администратора $from — отклонено")
-                            return
+                            throw SecurityException("group_member_added: $from не админ")
                         }
 
                         val adminKey = publicKeys[from]
@@ -2756,7 +2772,7 @@ class MessengerService : Service() {
                         if (addSignature == null || adminKey == null ||
                             !CryptoManager.verify("$groupId:add:$newMember", addSignature, adminKey)) {
                             Log.e(TAG, "group_member_added: неверная подпись от $from — отклонено")
-                            return
+                            throw SecurityException("group_member_added: неверная подпись от $from")
                         }
                         GroupManager.addMember(this@MessengerService, groupId, from, newMember)
 
@@ -2777,6 +2793,7 @@ class MessengerService : Service() {
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "group_member_added error: ${e.message}")
+                    throw e
                 }
             }
 
@@ -2794,17 +2811,17 @@ class MessengerService : Service() {
 
                     if (signature == null || senderKey == null) {
                         Log.e(TAG, "group_key_rotation без ключа от $from")
-                        return
+                        throw SecurityException("group_key_rotation: нет ключа от $from")
                     }
 
                     if (!CryptoManager.verify(encryptedNewKey, signature, senderKey)) {
                         Log.e(TAG, "Неверная подпись ротации ключа от $from")
-                        return
+                        throw SecurityException("group_key_rotation: неверная подпись от $from")
                     }
 
                     if (!GroupManager.isAdmin(this@MessengerService, groupId, from)) {
                         Log.e(TAG, "group_key_rotation от не-администратора $from в группе $groupId")
-                        return
+                        throw SecurityException("group_key_rotation: $from не админ")
                     }
 
                     val newGroupKey = GroupManager.decryptGroupKey(encryptedNewKey)
@@ -2833,6 +2850,7 @@ class MessengerService : Service() {
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "group_key_rotation error: ${e.message}")
+                    throw e
                 }
             }
 
@@ -2849,7 +2867,7 @@ class MessengerService : Service() {
                     if (inviteSignature == null || memberPublicKey == null ||
                         !CryptoManager.verify("$groupId:$newMember", inviteSignature, memberPublicKey)) {
                         Log.e(TAG, "group_invite_accepted: неверная подпись от $newMember — отклонено")
-                        return
+                        throw SecurityException("group_invite_accepted: неверная подпись от $newMember")
                     }
 
                     // Processed on the inviting admin's own device once the new
@@ -2874,6 +2892,7 @@ class MessengerService : Service() {
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "group_invite_accepted error: ${e.message}")
+                    throw e
                 }
             }
 
@@ -4036,7 +4055,7 @@ class MessengerService : Service() {
         if (signature == null || senderKey == null ||
             !CryptoManager.verifyChunk(chunkData, signature, senderKey, videoId, chunkIndex)) {
             Log.e(TAG, "video_chunk неверная подпись от $from")
-            return
+            throw SecurityException("video_chunk: неверная подпись от $from")
         }
 
         val transferKey = "$from:$videoId"
