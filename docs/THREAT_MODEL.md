@@ -62,10 +62,12 @@ Threat / Mitigation / Residual risk.**
   - `SessionKeyManager` verifies the SPK/PQ-key signature against the claimed identity key before
     trusting a bundle; an attacker without the victim's private key cannot produce a valid one
     ([SECURITY.md #14](SECURITY.md#known-limitations)).
-- **Residual risk:** `GroupManager`'s own mutators (`addMember`/`removeMember`/`promoteToAdmin`)
-  do not verify the *caller* is an admin inside the manager itself — that check currently lives
-  only in the UI call sites. A caller that reaches the manager directly (a future bug, not a known
-  live exploit today) would not be stopped by the manager. Open in `docs/TODO.md`.
+  - **Fixed:** `GroupManager`'s mutators (`addMember`/`removeMember`/`promoteToAdmin`) now verify
+    the caller (`actorId`) is an admin *inside the manager itself*, not only at UI call sites —
+    `removeMember` keeps a self-removal exception. Regression-tested in
+    `app/src/test/java/com/example/test/GroupManagerTest.kt` (Robolectric).
+- **Residual risk:** none currently known for this specific threat — was the highest-priority open
+  item, now closed and tested.
 
 ---
 
@@ -82,12 +84,15 @@ Threat / Mitigation / Residual risk.**
   layer — this was a real, found-and-fixed bug
   ([SECURITY.md #15](SECURITY.md#known-limitations): the original code sent the freshly-rotated
   key directly to the account just kicked).
-- **Residual risk:** no automated regression test currently exercises "removed member does not
-  receive the rotated key" end-to-end (unlike the ACK-ownership and token-replay invariants, which
-  do have tests). This is the highest-value untested invariant flagged in
-  `docs/AUDIT_PREPARATION_NEXT_STEPS.md`'s priority list. Also unresolved: `GroupManager`'s
-  authorization gap (see threat B above) means a bug elsewhere in the call chain could in
-  principle call the mutators without an admin check.
+- **Residual risk:** the exact invariant `rotateGroupKey`'s recipient list depends on — that a
+  removed member's id is actually gone from persisted `Group.members` immediately after
+  `GroupManager.removeMember()` — is now regression-tested
+  (`GroupManagerTest.kt`, `` `admin can remove another member, and the removed id is actually gone
+  from persisted state` ``). `GroupManager`'s authorization gap (threat B) is also closed. What's
+  *not* tested: the full `rotateGroupKey()` network distribution path itself (it lives in
+  `MessengerService`, an Android `Service` with WebSocket I/O, not practically unit-testable
+  without a running client-server pair) — the tested invariant is the state it reads from, which
+  is the part that was actually buggy historically.
 
 ---
 
@@ -175,7 +180,8 @@ Threat / Mitigation / Residual risk.**
 ## Priority for external audit
 
 Per the ordering this threat model implies (highest-leverage first, matching
-`docs/AUDIT_PREPARATION_NEXT_STEPS.md`'s own conclusion): **C (group-key rotation invariant,
-currently untested) and B (GroupManager's missing internal authorization check)** are the two
-highest-value open items — everything else in this file already has either a fix, a passing
+`docs/AUDIT_PREPARATION_NEXT_STEPS.md`'s own conclusion): **C (group-key rotation invariant) and
+B (GroupManager's internal authorization check)** were the two highest-value open items identified
+when this document was first written — both are now fixed and regression-tested
+(`GroupManagerTest.kt`). Everything else in this file already has either a fix, a passing
 regression test, or an explicit, honestly-documented residual-risk statement.

@@ -311,7 +311,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                                             DropdownMenuItem(
                                                 text = { Text(s.groupInfoPromoteAdmin) },
                                                 onClick = {
-                                                    GroupManager.promoteToAdmin(context, groupId, memberId)
+                                                    GroupManager.promoteToAdmin(context, groupId, userId, memberId)
                                                     group = GroupManager.getGroup(context, groupId)
                                                     showMemberMenu = false
                                                 }
@@ -324,7 +324,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
 
                                                 val preRemovalMembers = group!!.members
 
-                                                GroupManager.removeMember(context, groupId, memberId)
+                                                GroupManager.removeMember(context, groupId, userId, memberId)
 
                                                 messengerService?.notifyMemberRemoved(
                                                     groupId,
@@ -439,20 +439,24 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                         if (inviteCode.isNotBlank()) {
 
                             val parts = inviteCode.trim().split("&")
-                            val userId = parts.firstOrNull()?.trim() ?: ""
+                            // Was named `userId` here, shadowing the outer
+                            // current-user `userId` for the rest of this block --
+                            // renamed since GroupManager's mutators now need an
+                            // explicit, unambiguous actorId (the outer userId).
+                            val newMemberId = parts.firstOrNull()?.trim() ?: ""
                             val publicKey = parts.find { it.startsWith("pk=") }
                                 ?.removePrefix("pk=")?.trim()
 
-                            if (userId.isNotEmpty() && publicKey != null) {
+                            if (newMemberId.isNotEmpty() && publicKey != null) {
 
-                                if (!group!!.members.contains(userId)) {
+                                if (!group!!.members.contains(newMemberId)) {
 
-                                    if (!ChatStorage.getContacts(context).contains(userId)) {
-                                        ChatStorage.addContact(context, userId)
-                                        ChatStorage.saveContactPublicKey(context, userId, publicKey)
+                                    if (!ChatStorage.getContacts(context).contains(newMemberId)) {
+                                        ChatStorage.addContact(context, newMemberId)
+                                        ChatStorage.saveContactPublicKey(context, newMemberId, publicKey)
                                     }
 
-                                    GroupManager.addMember(context, groupId, userId)
+                                    GroupManager.addMember(context, groupId, userId, newMemberId)
 
                                     // Reload so the roster sent out (and the one
                                     // used to notify existing members) reflects
@@ -465,8 +469,8 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
                                         groupId = groupId,
                                         groupName = postAddGroup.name,
                                         groupAvatar = postAddGroup.avatar,
-                                        newMemberId = userId,
-                                        newMemberName = ChatStorage.getContactName(context, userId),
+                                        newMemberId = newMemberId,
+                                        newMemberName = ChatStorage.getContactName(context, newMemberId),
                                         groupKey = postAddGroup.groupKey!!,
                                         allMembers = postAddGroup.members,
                                         admins = postAddGroup.admins
@@ -520,7 +524,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
 
-                    GroupManager.removeMember(context, groupId, userId)
+                    GroupManager.removeMember(context, groupId, userId, userId)
 
                     messengerService?.notifyMemberRemoved(
                         groupId,
