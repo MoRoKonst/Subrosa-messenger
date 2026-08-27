@@ -69,14 +69,15 @@ Threat / Mitigation / Residual risk.**
     `removeMember` keeps a self-removal exception. Regression-tested in
     `app/src/test/java/com/example/test/GroupManagerTest.kt` (Robolectric).
 - **Residual risk:** the `GroupManager` authorization gap specifically is closed and tested (was
-  the highest-priority open item under this threat). Broader than that one fix, though: several
-  security-sensitive handlers remain unreviewed for the same signature-failure /
-  state-transition class this threat covers, identified in `AA-7`
-  (`docs/ANDROID_AUDIT.md`) but not yet checked exhaustively —
-  `message_delete`/`disappear_timer`/`group_message_delete` specifically
-  ([KNOWN_SECURITY_ISSUES.md OPEN-2](KNOWN_SECURITY_ISSUES.md#open-undecided-not-yet-a-fix-a-product-decision-still-needed)).
-  Until OPEN-2 is checked, this threat should not be read as fully closed — external review
-  correctly flagged an earlier draft's "none currently known" here as overstated (2026-08-27).
+  the highest-priority open item under this threat). **Also fixed (2026-08-28):**
+  `message_delete`/`disappear_timer`/`group_message_delete` — the last unreviewed handlers under
+  the `AA-7` signature-failure pattern (`docs/ANDROID_AUDIT.md`). `group_message_delete` turned out
+  worse than the pattern predicted: it had **no signature at all**, and no check that the deleter
+  was the message's original author or even a group member — any group member's modified client
+  could silently delete any other member's group message on every recipient's device. Now requires
+  a signature over `groupId:messageId` and verifies `from` matches the message's stored
+  `senderId`. See [KNOWN_SECURITY_ISSUES.md § S4](KNOWN_SECURITY_ISSUES.md#s4-2026-0827-28--closing-open-2)
+  for both fixes.
 
 ---
 
@@ -319,7 +320,8 @@ Per the ordering this threat model implies (highest-leverage first, matching
 `docs/AUDIT_PREPARATION_NEXT_STEPS.md`'s own conclusion): **C (group-key rotation invariant) and
 B (GroupManager's internal authorization check)** were the two highest-value open items identified
 when this document was first written — both are now fixed and regression-tested
-(`GroupManagerTest.kt`). Threat B's broader scope (OPEN-2) is not yet closed — see that section.
+(`GroupManagerTest.kt`). Threat B's broader scope (formerly OPEN-2) is now also closed — see that
+section for the `group_message_delete` finding, which was more serious than the pattern predicted.
 
 G/H/I were added 2026-08-27 to close a gap where [SECURITY_MODEL.md](SECURITY_MODEL.md) claimed
 assets (message-size protection, coercion resistance, screen-visibility protection) with no

@@ -1857,6 +1857,11 @@ class MessengerService : Service() {
             }
 
             "message_delete" -> {
+                // throw instead of a plain return on bad signature (external
+                // review 2026-08-27, OPEN-2/AA-7 pattern) -- a plain return
+                // let anon_delivery_ack fire for a delete request that was
+                // actually rejected, same class of bug already fixed in
+                // edit/reaction/session_init.
                 val from = json.getString("from")
                 val messageId = json.getString("message_id")
                 val signature = json.optString("signature", null)
@@ -1864,7 +1869,7 @@ class MessengerService : Service() {
                     ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also { publicKeys[from] = it }
                 if (signature == null || senderKey == null || !CryptoManager.verify(messageId, signature, senderKey)) {
                     Log.e(TAG, "message_delete: неверная или отсутствующая подпись от $from")
-                    return
+                    throw SecurityException("message_delete: неверная или отсутствующая подпись от $from")
                 }
                 val myId = UserStorage.getUserId(this@MessengerService)
                 ChatStorage.deleteMessage(this@MessengerService, myId, from, messageId)
@@ -1872,6 +1877,7 @@ class MessengerService : Service() {
             }
 
             "disappear_timer" -> {
+                // Same throw-not-return fix as message_delete above.
                 val from = json.getString("from")
                 val seconds = json.getLong("seconds")
                 val signature = json.optString("signature", null)
@@ -1879,7 +1885,7 @@ class MessengerService : Service() {
                     ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also { publicKeys[from] = it }
                 if (signature == null || senderKey == null || !CryptoManager.verify(seconds.toString(), signature, senderKey)) {
                     Log.e(TAG, "disappear_timer: неверная или отсутствующая подпись от $from")
-                    return
+                    throw SecurityException("disappear_timer: неверная или отсутствующая подпись от $from")
                 }
                 val myId = UserStorage.getUserId(this@MessengerService)
                 ChatStorage.setDisappearTimer(this@MessengerService, myId, from, seconds)
@@ -1887,9 +1893,41 @@ class MessengerService : Service() {
             }
 
             "group_message_delete" -> {
+                // Was entirely unauthenticated and unauthorized (external
+                // review 2026-08-27, OPEN-2) -- no signature was ever sent
+                // (sendGroupDeleteMessage() didn't produce one) and this
+                // handler didn't check `from` at all, let alone that `from`
+                // was the original author of the message being deleted. The
+                // server does stamp `from` to the real authenticated sender
+                // (server.py's group_message_delete relay), so `from` itself
+                // can be trusted -- but a malicious/modified client in the
+                // group could still ask to delete ANY other member's message,
+                // not just their own, and every recipient applied it blindly.
+                // Now requires a signature over "$groupId:$messageId" AND
+                // that `from` matches the stored message's own senderId --
+                // i.e. only the original author (proven by signature) can
+                // delete-for-everyone their own group message, matching what
+                // the UI already only lets the real client request
+                // (GroupChatScreen.kt gates the "delete for everyone" button
+                // on ctxMsg.isOwn).
                 val groupId = json.getString("group_id")
                 val messageId = json.getString("message_id")
+                val from = json.getString("from")
+                val signature = json.optString("signature", null)
+                val senderKey = publicKeys[from]
+                    ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also { publicKeys[from] = it }
+                if (signature == null || senderKey == null ||
+                    !CryptoManager.verify("$groupId:$messageId", signature, senderKey)) {
+                    Log.e(TAG, "group_message_delete: неверная или отсутствующая подпись от $from")
+                    throw SecurityException("group_message_delete: неверная или отсутствующая подпись от $from")
+                }
                 val myId = UserStorage.getUserId(this@MessengerService)
+                val existing = GroupManager.loadGroupMessages(this@MessengerService, myId, groupId)
+                    .find { it.id == messageId }
+                if (existing != null && existing.senderId != from) {
+                    Log.e(TAG, "group_message_delete: $from пытается удалить чужое сообщение $messageId — отклонено")
+                    throw SecurityException("group_message_delete: $from is not the author of $messageId")
+                }
                 GroupManager.deleteGroupMessage(this@MessengerService, myId, groupId, messageId)
                 withContext(Dispatchers.Main) { onGroupMessageDeleted?.invoke(groupId, messageId) }
             }
@@ -3803,6 +3841,10 @@ class MessengerService : Service() {
     fun sendGroupDeleteMessage(groupId: String, messageId: String, members: List<String>) {
         // Same fix as sendDeleteMessage() above — no isConnected guard,
         // sendAnonOrDirect() already queues per-member when offline.
+        // Signature added (external review 2026-08-27, OPEN-2) -- see the
+        // matching receive-side fix in the "group_message_delete" handler
+        // for why this was previously unauthenticated entirely.
+        val signature = CryptoManager.sign("$groupId:$messageId")
         scope.launch(Dispatchers.IO) {
             members.filter { it != username }.forEach { memberId ->
                 sendAnonOrDirect(memberId, JSONObject().apply {
@@ -3811,6 +3853,7 @@ class MessengerService : Service() {
                     put("to", memberId)
                     put("group_id", groupId)
                     put("message_id", messageId)
+                    put("signature", signature)
                 })
             }
         }

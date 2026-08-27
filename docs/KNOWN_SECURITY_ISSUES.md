@@ -87,8 +87,18 @@ for its own sake.
 | ID | Summary | Where |
 |---|---|---|
 | OPEN-1 | Recovery-code takeover window — TOTP disabled account-wide after any successful recovery-code redemption, no time bound | [THREAT_MODEL.md § D](THREAT_MODEL.md#d-stolen-or-compromised-device--stolen-backup), `docs/TODO.md` |
-| OPEN-2 | `message_delete`/`disappear_timer`/`group_message_delete` — not yet checked for the same return-vs-throw signature-failure pattern as AA-7 | `docs/TODO.md` |
 | OPEN-3 | No fuzzing/negative-input test suite for the server's protocol handlers | `docs/TODO.md`, `docs/AUDIT_PREPARATION_NEXT_STEPS.md` §15–16 |
 | OPEN-4 | Desktop client — no static audit yet performed (same bug classes as Android, not yet checked) | `docs/TODO.md` |
 | OPEN-5 | Sender gets no notification when a `token_pending` entry silently expires (24h TTL) without ever reaching the recipient — found while writing the token_pending lifecycle contract, not previously documented anywhere | [MESSAGE_DELIVERY.md](MESSAGE_DELIVERY.md) |
 | OPEN-6 | Federation (`forward_to_peers`) interaction with anonymous-token ownership/ACK semantics not traced end-to-end — flagged for explicit auditor attention, not asserted safe or unsafe | [MESSAGE_DELIVERY.md](MESSAGE_DELIVERY.md) |
+
+## S4 (2026-08-27/28) — closing OPEN-2
+
+Checking `message_delete`/`disappear_timer`/`group_message_delete` for the AA-7 pattern found the
+first two matched exactly (return-not-throw), but `group_message_delete` was worse than the pattern
+predicted:
+
+| ID | Summary | Severity | Status | Regression test |
+|---|---|---|---|---|
+| S4-1 | `message_delete`/`disappear_timer`: bad-signature check `return`ed instead of `throw`ing, same class as AA-7 | Medium | Fixed | — |
+| S4-2 | `group_message_delete`: **no signature was ever sent or checked, and no check that the deleter was the message's original author or even a group member** — any group member's modified client could silently delete any other member's group message on every recipient's device | **High** | Fixed — now requires a signature over `groupId:messageId` and verifies `from` matches the stored message's `senderId` | — |
