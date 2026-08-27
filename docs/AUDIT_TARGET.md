@@ -7,7 +7,7 @@ this — the whole point of this file is to stop the target from moving mid-revi
 | Field | Value |
 |---|---|
 | Repository | https://github.com/MoRoKonst/Subrosa-messenger |
-| Commit | `cf524e7be5717ee65cf5209a1dc060f91b6d939f` |
+| Commit | `66ecce8` (HEAD at tag time — includes this file and `SCOPE.md` themselves; the last functional/code change was `cf524e7`) |
 | Tag | `audit-2026-08` |
 | Android `versionCode` / `versionName` | 3 / 1.0 |
 | Server version | not independently versioned — tracked by commit hash above (`Server/server.py`) |
