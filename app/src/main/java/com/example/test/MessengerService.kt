@@ -2814,7 +2814,7 @@ class MessengerService : Service() {
                         throw SecurityException("group_key_rotation: нет ключа от $from")
                     }
 
-                    if (!CryptoManager.verify(encryptedNewKey, signature, senderKey)) {
+                    if (!CryptoManager.verify("$groupId:$encryptedNewKey", signature, senderKey)) {
                         Log.e(TAG, "Неверная подпись ротации ключа от $from")
                         throw SecurityException("group_key_rotation: неверная подпись от $from")
                     }
@@ -5686,7 +5686,18 @@ class MessengerService : Service() {
                     val memberPqKey = resolvePqKey(memberId)
                     if (memberPublicKey != null && memberPqKey != null) {
                         val encryptedNewKey = GroupManager.encryptGroupKeyForMember(newGroupKey, memberPublicKey, memberPqKey)
-                        val signature = CryptoManager.sign(encryptedNewKey)
+                        // groupId bound into the signed payload (external
+                        // review 2026-08-28, CRYPTO-06) -- it wasn't before,
+                        // and encrypted_new_key decrypts using only the
+                        // recipient's own identity key (not anything group-
+                        // specific), so a signature over encrypted_new_key
+                        // alone doesn't stop a malicious server from
+                        // relabeling a real, validly-signed rotation for
+                        // group X as being for group Y (if the same admin
+                        // sends both and the recipient is in both groups) --
+                        // the recipient would then silently overwrite group
+                        // Y's real key with what was actually group X's.
+                        val signature = CryptoManager.sign("$groupId:$encryptedNewKey")
 
                         sendAnonOrDirect(memberId, JSONObject().apply {
                             put("type", "group_key_rotation")
