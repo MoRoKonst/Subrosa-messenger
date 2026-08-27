@@ -4,7 +4,7 @@
 
 *A concise technical overview for IT and security teams evaluating Subrosa for privileged communication.*
 
-*Last verified against commit: `4486682` (2026-08-23) — cross-checked against `SECURITY.md`, the source of truth for this project's actual security posture. If claims here and in `SECURITY.md` ever disagree, `SECURITY.md` is correct.*
+*Last verified against commit: `2ae787a` (2026-08-28) — cross-checked against `SECURITY.md`, the source of truth for this project's actual security posture. If claims here and in `SECURITY.md` ever disagree, `SECURITY.md` is correct.*
 
 ---
 

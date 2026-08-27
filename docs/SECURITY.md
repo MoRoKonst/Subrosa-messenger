@@ -1,6 +1,6 @@
 # Security Model
 
-*Last verified against commit: `4486682` (2026-08-23). This project changes quickly — if you're reading this much later than that date, treat specific claims as needing a fresh code check, not as guaranteed-current.*
+*Last verified against commit: `2ae787a` (2026-08-28) — re-verified end-to-end against an external documentation-level review of this exact file (see `docs/KNOWN_SECURITY_ISSUES.md` § S5 for what changed and why). This project changes quickly — if you're reading this much later than that date, treat specific claims as needing a fresh code check, not as guaranteed-current.*
 
 This document describes the threat model, cryptographic design, and anti-forensics mechanisms of Subrosa Messenger.
 
