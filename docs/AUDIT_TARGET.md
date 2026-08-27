@@ -7,7 +7,7 @@ this — the whole point of this file is to stop the target from moving mid-revi
 | Field | Value |
 |---|---|
 | Repository | https://github.com/MoRoKonst/Subrosa-messenger |
-| Commit | whatever `git rev-parse audit-2026-08` resolves to — this file is committed *before* the tag is cut, so it can't name its own final hash without a chicken-and-egg problem. The last functional/code change before this doc-only tag-prep commit was `cf524e7`. |
+| Commit | `ba329f0d56105df8d2681d64041ab246a8a37fa8` (the tag was moved once, after the first cut, to include `AUDIT_SETUP.md`/`KNOWN_SECURITY_ISSUES.md` — this is the final position). Last functional/code change: `cf524e7`. |
 | Tag | `audit-2026-08` |
 | Android `versionCode` / `versionName` | 3 / 1.0 |
 | Server version | not independently versioned — tracked by commit hash above (`Server/server.py`) |
