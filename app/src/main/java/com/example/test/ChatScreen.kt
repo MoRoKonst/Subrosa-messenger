@@ -55,6 +55,7 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -2350,7 +2351,7 @@ fun MessageBubble(
                 if (!msg.isSystem) {
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(msg.timestamp)),
+                        text = SimpleDateFormat("HH:mm", LocalLocale.current.platformLocale).format(Date(msg.timestamp)),
                         fontSize = 10.sp,
                         color = c.textPrimary.copy(alpha = 0.5f)
                     )
