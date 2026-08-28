@@ -2659,11 +2659,6 @@ async def handle_client(websocket):
                 payload = message.get("payload", {})
                 msg_id  = payload.get("id", "") if isinstance(payload, dict) else ""
                 if not token or not isinstance(payload, dict) or len(token) != MAX_TOKEN_LEN:
-                    # TEMP DEBUG (2026-08-29, remove after zombie-send investigation):
-                    # proves whether a suspect message even reached this handler
-                    # malformed, vs never reaching the server at all.
-                    print(f"[DEVLOG-DIAG] anon_message отброшен как malformed: "
-                          f"token_len={len(token) if token else 0} payload_is_dict={isinstance(payload, dict)} from={username}")
                     continue
                 async with lock:
                     is_known = token in known_tokens
@@ -2675,18 +2670,9 @@ async def handle_client(websocket):
                     # снаружи нельзя было отличить decoy-токен от настоящего, но
                     # уже потраченного — иначе разное поведение само по себе
                     # утекло бы информацию о том, какие токены реальны.
-                    # TEMP DEBUG (2026-08-29, remove after investigation): this
-                    # branch is intentionally silent in normal operation (see
-                    # comment above) — logging it now, while we're deliberately
-                    # testing, to see whether "silently vanished" messages are
-                    # actually landing here (spent/unknown token) rather than
-                    # never reaching the server at all.
-                    print(f"[DEVLOG-DIAG] anon_message DROPPED от {username}: token=…{token[-6:]} "
-                          f"is_known={is_known} is_spent={is_spent} msg_id={msg_id}")
                     if msg_id:
                         await send_safe(websocket, json.dumps({"type": "ack", "id": msg_id}))
                     continue
-                print(f"[DEVLOG-DIAG] anon_message ПРИНЯТ от {username}: token=…{token[-6:]} msg_id={msg_id}")
                 delivery = json.dumps({"type": "anon_delivery", "token": token, "payload": payload})
 
                 # Queued as a fallback BEFORE attempting live delivery, and
