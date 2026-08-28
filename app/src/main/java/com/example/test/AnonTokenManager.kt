@@ -20,6 +20,15 @@ object AnonTokenManager {
     private const val PREF_MY_TOKENS = "anon_my_tokens"
     private const val PREFS_NAME = "anon_token_store"
     private const val PREF_CT_PREFIX = "anon_ct_"
+    private const val PREF_CT_SPENT_PREFIX = "anon_ct_spent_"
+    // Generous relative to POOL_SIZE/BATCH_TO_SHARE — a stale duplicate
+    // resupply batch keeps resending the same tokensToShareWith() slice
+    // (that function doesn't rotate on its own, only consumeMyToken() on the
+    // OTHER end shrinks it) for as long as the sender hasn't had those
+    // specific tokens actually used against it, which live testing showed
+    // can be many resupply cycles. Capped, not unbounded, purely so this
+    // doesn't grow forever for a long-lived contact.
+    private const val SPENT_HISTORY_CAP = 300
     private const val POOL_SIZE = 50
     // Refilling isn't instant: it takes a round trip (I send my batch → they
     // receive it → THEY reciprocate with a fresh batch of theirs, which is
@@ -104,6 +113,14 @@ object AnonTokenManager {
         } catch (e: Exception) { emptyList() }
     }
 
+    private fun getSpentContactTokens(ctx: Context, fingerprint: String): List<String> {
+        val json = prefs(ctx).getString("$PREF_CT_SPENT_PREFIX$fingerprint", "[]") ?: "[]"
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (e: Exception) { emptyList() }
+    }
+
     fun addContactTokens(ctx: Context, fingerprint: String, tokens: List<String>) = synchronized(lock) {
         val existing = getContactTokens(ctx, fingerprint).toMutableList()
         val originalSize = existing.size
@@ -122,7 +139,23 @@ object AnonTokenManager {
         if (duplicates.isNotEmpty()) {
             Log.w(TAG, "DEBUG-TOKENLIFE addContactTokens($fingerprint): ${duplicates.size} токен(ов) уже были в пуле — ${duplicates.map { short(it) }}")
         }
-        existing.addAll(valid.filterNot { it in existing })
+        // Found live 2026-08-29 via server-side DEVLOG-DIAG: "already in the
+        // current pool" isn't the whole story — once a token is consumed by
+        // consumeNextContactToken(), it's gone from `existing`, so a STALE
+        // duplicate resupply batch (the peer resending the same
+        // tokensToShareWith() slice because it hasn't rotated yet) looked
+        // indistinguishable from a genuinely new token and got re-inserted —
+        // resurrecting an already-spent token, which the server then
+        // silently drops (spent_tokens check) the next time it's handed out,
+        // with the message vanishing and zero client-side error. Filtering
+        // against a persistent per-contact spent-history, not just the live
+        // pool, is what actually closes this.
+        val spent = getSpentContactTokens(ctx, fingerprint)
+        val resurrected = valid.filter { it in spent }
+        if (resurrected.isNotEmpty()) {
+            Log.w(TAG, "DEBUG-TOKENLIFE addContactTokens($fingerprint): ${resurrected.size} токен(ов) уже были потрачены ранее, отброшены — ${resurrected.map { short(it) }}")
+        }
+        existing.addAll(valid.filterNot { it in existing || it in spent })
 
         val capped = if (existing.size > POOL_SIZE) existing.takeLast(POOL_SIZE) else existing
         prefs(ctx).edit()
@@ -141,7 +174,33 @@ object AnonTokenManager {
      * tag / bootstrap cycle, possibly no longer valid on their end either)
      * would still get consumed as if the relationship had never been reset. */
     fun clearContactTokens(ctx: Context, fingerprint: String) = synchronized(lock) {
-        prefs(ctx).edit().remove("$PREF_CT_PREFIX$fingerprint").apply()
+        prefs(ctx).edit()
+            .remove("$PREF_CT_PREFIX$fingerprint")
+            .remove("$PREF_CT_SPENT_PREFIX$fingerprint")
+            .apply()
+    }
+
+    /** Wipes MY OWN token pool (the tokens I generated and handed out for
+     *  others to reach me) — call on chat deletion, alongside
+     *  clearContactTokens(). Found live 2026-08-29: deleting a chat only
+     *  ever cleared the OTHER side's bookkeeping; my own pool (PREF_MY_TOKENS)
+     *  was untouched, and a token I'd shared can have an undelivered message
+     *  sitting in the server's token_pending queue (recipient offline, or
+     *  they deleted the chat before it ever got acked). The server has no
+     *  concept of "which contact" a token belongs to (that's the whole
+     *  point — see AnonTokenManager's anonymous-routing design), so it can't
+     *  selectively drop just that one queued message. The only clean client
+     *  fix is to stop ever re-subscribing that specific token again — since
+     *  ensureMyTokenPool()/subscribe_tokens() always resend my FULL current
+     *  pool, wiping it here forces a completely fresh batch on next use,
+     *  guaranteeing the stale queued delivery can never resurface into a
+     *  freshly re-added version of the same contact. Costs a one-time
+     *  resupply churn for any OTHER still-active contacts too (their next
+     *  message just triggers a normal resupply round-trip) — an acceptable
+     *  trade for correctness, since this only runs on an explicit,
+     *  infrequent user action. */
+    fun wipeMyTokenPool(ctx: Context) = synchronized(lock) {
+        prefs(ctx).edit().remove(PREF_MY_TOKENS).apply()
     }
 
     /** [allowReserve] false (the default, used by sendAnonOrDirect for all
@@ -162,8 +221,10 @@ object AnonTokenManager {
             return@synchronized null
         }
         val token = tokens.removeAt(0)
+        val spent = (getSpentContactTokens(ctx, fingerprint) + token).takeLast(SPENT_HISTORY_CAP)
         prefs(ctx).edit()
             .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(tokens).toString())
+            .putString("$PREF_CT_SPENT_PREFIX$fingerprint", JSONArray(spent).toString())
             .apply()
         Log.d(TAG, "DEBUG-TOKENLIFE consumeNextContactToken($fingerprint): взят ${short(token)}, осталось ${tokens.size}")
         token
