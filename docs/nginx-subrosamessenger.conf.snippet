@@ -25,6 +25,33 @@ server {
     allow 198.41.128.0/17;
     deny all;
 
+    # Restores nginx's own visibility into the real client IP behind
+    # Cloudflare (ngx_http_realip_module) — WITHOUT the app ever seeing
+    # it. Without this, $remote_addr in access_log is Cloudflare's edge
+    # IP, not the actual abuser, making IP-based anti-abuse (fail2ban
+    # etc.) useless. Only trusted from the same Cloudflare ranges
+    # allow-listed above, so it can't be spoofed by a client claiming to
+    # be Cloudflare. See SECURITY.md item 30 ("server.py must never see
+    # client IPs") — this only changes what nginx itself can see/log,
+    # never what's forwarded to the backend (/ws below still doesn't set
+    # X-Real-IP/X-Forwarded-For).
+    set_real_ip_from 103.21.244.0/22;
+    set_real_ip_from 103.22.200.0/22;
+    set_real_ip_from 103.31.4.0/22;
+    set_real_ip_from 104.16.0.0/13;
+    set_real_ip_from 104.24.0.0/14;
+    set_real_ip_from 108.162.192.0/18;
+    set_real_ip_from 131.0.72.0/22;
+    set_real_ip_from 141.101.64.0/18;
+    set_real_ip_from 162.158.0.0/15;
+    set_real_ip_from 172.64.0.0/13;
+    set_real_ip_from 173.245.48.0/20;
+    set_real_ip_from 188.114.96.0/20;
+    set_real_ip_from 190.93.240.0/20;
+    set_real_ip_from 197.234.240.0/22;
+    set_real_ip_from 198.41.128.0/17;
+    real_ip_header CF-Connecting-IP;
+
     location /ws {
         proxy_pass http://127.0.0.1:9000;
         proxy_http_version 1.1;
@@ -91,6 +118,24 @@ server {
     allow 197.234.240.0/22;
     allow 198.41.128.0/17;
     deny all;
+
+    # See the matching block/comment on the 4430 server above.
+    set_real_ip_from 103.21.244.0/22;
+    set_real_ip_from 103.22.200.0/22;
+    set_real_ip_from 103.31.4.0/22;
+    set_real_ip_from 104.16.0.0/13;
+    set_real_ip_from 104.24.0.0/14;
+    set_real_ip_from 108.162.192.0/18;
+    set_real_ip_from 131.0.72.0/22;
+    set_real_ip_from 141.101.64.0/18;
+    set_real_ip_from 162.158.0.0/15;
+    set_real_ip_from 172.64.0.0/13;
+    set_real_ip_from 173.245.48.0/20;
+    set_real_ip_from 188.114.96.0/20;
+    set_real_ip_from 190.93.240.0/20;
+    set_real_ip_from 197.234.240.0/22;
+    set_real_ip_from 198.41.128.0/17;
+    real_ip_header CF-Connecting-IP;
 
     location /ws {
         proxy_pass http://127.0.0.1:9000;
