@@ -2,6 +2,94 @@
 
 Рабочий список задач между сессиями. Не changelog (готовые изменения — туда), это то, что ещё не сделано.
 
+## CI/SAST — реализация `docs/CI_SAST_PLAN.md`
+
+Сделано (файлы в репо): `.github/workflows/build.yml` (Android build+lint,
+Python syntax-check, pip-audit, security regression tests),
+`.github/workflows/secrets-scan.yml` (Gitleaks в CI, push/PR/еженедельно по
+расписанию), `.github/dependabot.yml` (gradle/pip/github-actions/docker),
+`.github/workflows/dependency-review.yml`, `.github/workflows/semgrep.yml`
+(`p/security-audit` + `p/secrets`), `.github/workflows/codeql.yml`
+(java-kotlin + python, matrix, еженедельно + push/PR), `githooks/pre-push`
+(локальный Gitleaks-хук, требует ручной установки), `Server/tests/`
+(8 security regression tests, все проходят локально, прогнано 3 раза без
+флаки). Все сторонние Actions запинены на commit SHA (не тег), `permissions:
+contents: read` по умолчанию везде (кроме CodeQL analyze — там нужен
+`security-events: write` для загрузки результатов).
+
+- [x] Secret scanning + Push protection — включено через `gh api`
+  (secret scanning уже было включено ранее, push protection тоже).
+- [x] Dependabot alerts + Dependabot security updates — включено через
+  `gh api` (`vulnerability-alerts`, `automated-security-fixes`).
+- [x] Semgrep (`p/security-audit`, `p/secrets`) — `.github/workflows/semgrep.yml`.
+- [x] CodeQL — `.github/workflows/codeql.yml`.
+- [x] Первые 8 security regression tests — `Server/tests/test_security_invariants.py`,
+  все 8 инвариантов из `docs/CI_SAST_PLAN.md` покрыты, реальный
+  `websockets.serve(server.handle_client, ...)` в тестах (не переписанная
+  логика), только сама recovery-code атомарность продублирована и через
+  прямой вызов DB-функции, и через полный register()-путь.
+  По ходу нашлась и подтверждена (не починена, уже задокументированный
+  trade-off) тонкость: после того как ЛЮБАЯ конкурентная попытка выигрывает
+  recovery-код, TOTP-гейтинг для аккаунта отключается целиком — остальные
+  параллельные попытки после этого момента тоже проходят, просто уже без
+  кода. Не баг теста — сам код так и работает (см. пункт ниже "recovery-code
+  takeover window").
+- [ ] **Локально (на этой машине и любой другой, с которой пушат):**
+    `git config core.hooksPath githooks` + установить бинарник gitleaks
+    (https://github.com/gitleaks/gitleaks#installing) — без него хук молча
+    пропускает скан и просто предупреждает.
+- [x] Branch protection на `main` — включена через `gh api`, 7 required
+  status checks (Semgrep SAST, CodeQL x2, Android build + lint, Server
+  syntax check, Server security regression tests, Gitleaks), PR обязателен
+  (0 approvals — соло-разработка), force-push/удаление ветки запрещены,
+  `enforce_admins: false` (у владельца остаётся обход на экстренный случай,
+  осознанное решение — не вредит audit-readiness, стандартная практика для
+  соло-мейнтейнера).
+
+**Весь план `docs/CI_SAST_PLAN.md` реализован и подтверждён на реальном
+CI** (не только локально) — 5 живых итераций правок по логам настоящих
+прогонов на GitHub Actions, не только "выглядит похожим на правду":
+- google-services.json гитигнорится → плагин ломал сборку без него →
+  применение плагина сделано условным (`app/build.gradle.kts`)
+- codeql-action v3.37.9 успела устареть за часы до пуша (вышел v4) —
+  перепроверено и перепинено на v4.37.9
+- CodeQL Autobuild не видел наш JDK 21 toolchain (дефолтная JDK17) —
+  заменено на явную сборку тем же способом, что в build.yml
+- Semgrep нашёл 1 реальный (но false-positive) finding — добавлен точечный
+  `nosemgrep` с обоснованием в комментарии, ОШИБСЯ с rule-id/расположением
+  комментария с первого раза — поймано локальным прогоном semgrep, не
+  ещё одним циклом CI
+- lint ни разу не гонялся в CI раньше — 3 pre-existing ошибки заблокировали
+  бы вообще любой PR; заведён `lint-baseline.xml`, а не правка
+  несвязанного медиа-кода без контекста
+
+**Dependabot: разобраны все 20 первых PR (19/20 слито).** okhttp/compose-bom/
+core-ktx синхронно упирались в старый AGP 9.0.1/compileSdk 34 — поднято до
+AGP 9.1.1/Gradle 9.3.1/compileSdk 37 (попутно найдена и починена реальная
+поломка компиляции: `ApplicationInfo?` стал nullable на SDK 37). Новый
+compose-bom дополнительно потребовал явной зависимости `material-icons-core`
+(раньше подтягивалась транзитивно через material3) и поймал новый lint-чек
+`NonObservableLocale` в `ChatScreen.kt` (реальный, поправлен на
+`LocalLocale.current`). Пользователь вручную проверил приложение после
+мержа compose-bom — связь работает, security-тесты проходят, поломок не
+найдено.
+- [ ] **#10 (`websockets` 12→17) — единственный оставшийся открытый PR.**
+  Прод-VPS (`beacon.service`) гоняет `/usr/bin/python3` напрямую через
+  systemd без venv — Python 3.10.12, а `websockets` 17.x требует ≥3.11.
+  Нужен апгрейд Python на VPS (отдельная задача), не код.
+- Dependabot `docker`-ecosystem не умеет отслеживать образ, запиненный в
+  `container:` воркфлоу — убрана нерабочая секция после живой ошибки
+
+Отдельно: включение Dependabot сразу открыло ~20 PR с обновлениями
+зависимостей (ожидаемо для первого запуска на устоявшемся репо) — не
+мержил без решения пользователя, это отдельная задача на потом.
+
+- [ ] Bandit, Detekt, custom Semgrep-правила — низкий приоритет, после
+  основного.
+- [ ] Разобрать ~20 Dependabot PR (gradle/pip/github-actions) — по одному,
+  не пачкой; часть — мажорные бампы (`cryptography` >=42→>=50,
+  `compose-bom` 2024.09→2026.08), нужно тестирование, не слепой merge.
+
 ## Android/Server security audit — сессия 2026-08-23
 
 Полный построчно-верифицированный журнал — `docs/ANDROID_AUDIT.md`. Файлы
@@ -70,3 +158,5 @@
 - [ ] **Формальный security release process.** Сейчас есть общие слова "security updates as new threats emerge" (PRICING.md), но нет политики: формат CVE/advisory, embargo-период, severity levels, какие версии поддерживаются, срок поддержки старых релизов, процедура на случай компрометации ключа. Для платной поддержки (реальный источник дохода проекта) это станет важнее многих новых фич.
 - [ ] **Backup/identity recovery как отдельный тестируемый security-flow.** Бэкап сохраняет identity, TOTP блокирует захват аккаунта через бэкап — сильная идея, но сценарии не протестированы системно: потерянный телефон, украденный бэкап, потерянный authenticator, повторное использование recovery-кода, restore на новое устройство, revoke старого устройства.
 - [ ] **`subrosa doctor` — диагностический скрипт для деплоя.** Реальный прецедент был сегодня (порт 9000 открыт всему интернету при неактивном `ufw`). Предложение: скрипт, проверяющий exposed ports, TLS, firewall, шифрование БД, бэкапы, FCM-конфиг, TURN, права доступа файлов — сразу усиливает коммерческую ценность тарифов Firm/Managed (меньше шанс, что клиент задеплоит с дырой, как было у нас самих).
+- [ ] **Бан по железу/фингерпринту вместо IP.** Подтверждено 2026-08-28: `server.py` стоит за reverse-proxy (nginx терминирует TLS на `wss://.../8443`), сам процесс видит только `127.0.0.1` в `websocket.remote_address` — никакой обработки `X-Forwarded-For`/`X-Real-IP` в коде нет (`server.py:1334`). Значит любая текущая или будущая IP-based защита (существующий `dynamic_peer_strikes`/`FED_BUNDLE_BAN_SEC` для федерации — те бьют напрямую, не через прокси, так что для НИХ это ок) для обычных клиентских подключений через прокси бесполезна. Нужен бан по device fingerprint / крипто-fingerprint аккаунта вместо IP для обычных клиентов.
+- [x] **`anon_message.payload` содержал `from`/`to` в открытом виде — исправлено 2026-08-29.** Был недосмотр: федерация появилась раньше токенов, поля не перенесли внутрь шифрования при внедрении анонимной маршрутизации. Осознанное решение с пользователем: `from`/`to` теперь запечатываются вместе с остальным пакетом ещё одним слоем гибридного шифрования на identity-ключ получателя (`sealPacketForRecipient()` в `MessengerService.kt`, используется в `sendAnonOrDirect()`/`sendWithForwardSecrecy()`) — тем же механизмом, что уже был у `sendAnonTokensTo()`/`__beacon_tokens__`. Получатель расшифровывает своим приватным ключом без необходимости заранее знать отправителя. **Trade-off:** federation-fallback по `payload.get("to")` для таких сообщений больше не работает — принято сознательно, утечка метаданных признана худшим злом. Обратная совместимость на приём есть (если `blob` нет — старый формат), но старый непропатченный получатель не поймёт новый формат (нет `type`/`from`/`text` на верхнем уровне) — обе стороны нужно обновить одновременно.
