@@ -155,7 +155,11 @@ object CallManager {
     private val preAcceptedCallIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     fun init(context: Context) {
-        if (factory != null) return
+        if (factory != null) {
+            Log.d(TAG, "CALL-TRACE init(): factory уже существует (переиспользуется), eglBase=${eglBase != null}")
+            return
+        }
+        Log.d(TAG, "CALL-TRACE init(): создаём factory/eglBase впервые за жизнь процесса")
         appContext = context.applicationContext
         eglBase = EglBase.create()
         PeerConnectionFactory.initialize(
@@ -424,6 +428,11 @@ object CallManager {
     }
 
     fun startCall(context: Context, targetId: String, isVideo: Boolean) {
+        Log.w(TAG, "CALL-TRACE startCall(): to=$targetId isVideo=$isVideo — state before: " +
+            "callActive=${callActive.get()} peerConnections=${peerConnections.size} " +
+            "localAudioTrack=${localAudioTrack != null} localVideoTrack=${localVideoTrack != null} " +
+            "videoCapturer=${videoCapturer != null} groupPeers=${groupPeers.size} " +
+            "tokenPoolFor$targetId=${AnonTokenManager.getContactTokens(context, targetId).size}")
         init(context)
         isVideoCall = isVideo
         isGroupCall = false
@@ -569,6 +578,10 @@ object CallManager {
 
     fun acceptCall(context: Context) {
         Log.w(TAG, "DEBUG-BOOTSTRAP acceptCall() called: callId=$callId incomingRequestFrom=$incomingRequestFrom pendingOffer=${pendingOffer != null} isGroupCall=$isGroupCall")
+        Log.w(TAG, "CALL-TRACE acceptCall(): state before: callActive=${callActive.get()} " +
+            "peerConnections=${peerConnections.size} localAudioTrack=${localAudioTrack != null} " +
+            "localVideoTrack=${localVideoTrack != null} videoCapturer=${videoCapturer != null} " +
+            "factory=${factory != null} eglBase=${eglBase != null}")
         CallSoundManager.stopAll()
         incomingRingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         incomingRingTimeoutRunnable = null
@@ -1113,6 +1126,8 @@ object CallManager {
             val myId = UserStorage.getUserId(ctx)
             if (myId.isNotBlank()) data.put("from", myId)
         }
+        Log.d(TAG, "CALL-TRACE sendSignal(): type=${data.optString("type")} to=${data.optString("to")} " +
+            "callId=${data.optString("call_id", callId)}")
         ctx.startService(Intent(ctx, MessengerService::class.java).apply {
             putExtra("call_signal", data.toString())
         })
@@ -1292,6 +1307,21 @@ object CallManager {
         iceRestartDone.clear()
         restartingIce.clear()
         Log.d(TAG, "CallManager released")
+        Log.w(TAG, "CALL-TRACE release(): state after cleanup: peerConnections=${peerConnections.size} " +
+            "localAudioTrack=${localAudioTrack != null} localVideoTrack=${localVideoTrack != null} " +
+            "videoCapturer=${videoCapturer != null} — factory=${factory != null} eglBase=${eglBase != null} " +
+            "(NOT disposed — intentionally reused for next call, see init())")
+
+        // Forces a clean WS reconnect a couple seconds after every call ends —
+        // see MessengerService's "call_ended_force_ws_reconnect" handler for
+        // why. release() is the single choke point both hangUp() and
+        // handleCallEnd() (remote-initiated end, including the P2P DataChannel
+        // "bye") funnel through, so this covers every way a call can end.
+        appContext?.let { ctx ->
+            ctx.startService(Intent(ctx, MessengerService::class.java).apply {
+                putExtra("call_ended_force_ws_reconnect", true)
+            })
+        }
         return true
     }
 }
