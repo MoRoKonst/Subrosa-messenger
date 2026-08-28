@@ -104,6 +104,40 @@ object AnonTokenManager {
 
     fun tokensToShareWith(ctx: Context): List<String> = ensureMyTokenPool(ctx).take(BATCH_TO_SHARE)
 
+    /** Always generates BATCH_TO_SHARE brand-new tokens and prepends them to
+     *  my own pool, instead of reusing whatever tokensToShareWith() would
+     *  have handed out from the existing (possibly already-exhausted, from
+     *  the recipient's point of view) pool.
+     *
+     *  Found live 2026-08-29 (user's own insight, working through the
+     *  mechanics live): ensureMyTokenPool() only tops up once my pool drops
+     *  below POOL_SIZE/2 — and it only drops when someone actually spends
+     *  one of my tokens by messaging me with it. If a contact's every send
+     *  attempt is failing (the exact moment sendAnonTokensTo() is needed
+     *  most), nothing is spending my tokens either, so the pool never tops
+     *  up, and tokensToShareWith() keeps reoffering the same already-spent
+     *  (per the recipient's own spent-history, see addContactTokens())
+     *  first 20 forever — a resupply that can never actually resupply
+     *  anything, both sides stuck in the same deadlock simultaneously.
+     *
+     *  Called specifically at the moment a contact needs tokens *now* — not
+     *  a substitute for ensureMyTokenPool()'s normal lazy top-up, which
+     *  still runs everywhere else (connect()'s subscribe, etc.) and is
+     *  fine for the non-emergency case. Capped at POOL_SIZE the same way
+     *  addContactTokens() caps an incoming batch — oldest tokens drop off
+     *  first. The caller is responsible for actually subscribing the
+     *  returned tokens with the server (subscribe_tokens) before handing
+     *  them to the contact, same as tokensToShareWith() always required. */
+    fun freshTokensToShare(ctx: Context): List<String> = synchronized(lock) {
+        val fresh = (1..BATCH_TO_SHARE).map { generateToken() }
+        val combined = (fresh + getMyTokens(ctx)).let {
+            if (it.size > POOL_SIZE) it.take(POOL_SIZE) else it
+        }
+        prefs(ctx).edit().putString(PREF_MY_TOKENS, JSONArray(combined).toString()).apply()
+        Log.d(TAG, "DEBUG-TOKENLIFE freshTokensToShare: +${fresh.size} гарантированно новых токенов (пул стал ${combined.size})")
+        fresh
+    }
+
     fun getContactTokens(ctx: Context, fingerprint: String): List<String> {
         val key = "$PREF_CT_PREFIX$fingerprint"
         val json = prefs(ctx).getString(key, "[]") ?: "[]"

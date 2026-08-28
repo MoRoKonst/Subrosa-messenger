@@ -214,11 +214,12 @@ class MessengerService : Service() {
     // 50-token resubscribe every time (regression caught live 2026-08-28,
     // same day as the original fix).
     @Volatile private var lastServerActivityMs = System.currentTimeMillis()
-    // Temporarily lowered from 45s to 15s (2026-08-28, user request) for faster
-    // live-test iteration while chasing the post-call zombie-write-connection bug.
-    // Revert to 45s (and the matching 15s ping interval below) once confirmed fixed
-    // -- 15s is more trigger-happy than needed for normal operation.
-    private val CONNECTION_WATCHDOG_TIMEOUT_MS = 15_000L
+    // Reverted to 45s/15s-ping (2026-08-29) — was temporarily lowered to
+    // 15s/5s-ping on 2026-08-28 for faster live-test iteration while
+    // chasing the post-call zombie-write-connection bug; that investigation
+    // is done (see the token-registration-ordering and spent-token-history
+    // fixes), so back to the less trigger-happy normal-operation values.
+    private val CONNECTION_WATCHDOG_TIMEOUT_MS = 45_000L
 
     private val publicKeys = mutableMapOf<String, String>()
     // Peer ML-KEM public keys, sourced from prekey bundles — required to
@@ -1682,7 +1683,7 @@ class MessengerService : Service() {
                 scope.launch(Dispatchers.IO) {
                     try {
                         while (isConnected && scope.isActive) {
-                            delay(5_000)
+                            delay(15_000)
                             if (!isConnected) break
                             val pingSent = sendWs(JSONObject().apply { put("type", "ping") }.toString())
                             val silenceMs = System.currentTimeMillis() - lastServerActivityMs
@@ -4739,9 +4740,27 @@ class MessengerService : Service() {
     }
 
     private fun depositTokensViaMailbox(contact: String, mailboxTag: String, publicKey: String, isReply: Boolean = false) {
-        val tokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
+        // freshTokensToShare(), not tokensToShareWith() — see its comment.
+        // Guarantees the contact never receives a batch that's already dead
+        // from their own perspective (their spent-history filter would just
+        // discard it), which was exactly the resupply deadlock this
+        // function exists to break out of.
+        val tokens = AnonTokenManager.freshTokensToShare(this@MessengerService)
         Log.d(TAG, "DEBUG-BOOTSTRAP depositTokensViaMailbox: contact=$contact tag=$mailboxTag tokens=${tokens.size} reply=$isReply")
         if (tokens.isEmpty()) return
+        // This function never called subscribe_tokens at all — found live
+        // 2026-08-29 via server-side DEVLOG-DIAG ("is_known=False" on a
+        // token that was freshly generated and deposited moments earlier):
+        // the tokens got handed to the contact via mailbox, but the server
+        // never heard about them until some unrelated later event (the next
+        // connect()) happened to resubscribe the full pool. Same fix as
+        // sendAnonTokensToLocked's ordering fix — register with the server
+        // BEFORE handing them out, not "eventually, whenever".
+        val allMyTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
+        sendWs(JSONObject().apply {
+            put("type", "subscribe_tokens")
+            put("tokens", org.json.JSONArray(allMyTokens))
+        }.toString())
         try {
             val inner = JSONObject().apply {
                 put("from", username)
@@ -4888,7 +4907,14 @@ class MessengerService : Service() {
     }
 
     private suspend fun sendAnonTokensToLocked(contact: String, isReply: Boolean) {
-        val tokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
+        // freshTokensToShare(), not tokensToShareWith() — see its comment.
+        // This function IS the "contact needs tokens now" moment (proactive
+        // low-pool warning, or a direct reactive reply) — reusing whatever's
+        // sitting in the existing pool risks resharing values the contact
+        // already marked spent, which can never actually resupply them
+        // (found live 2026-08-29: both sides stuck reoffering the same dead
+        // batch to each other forever).
+        val tokens = AnonTokenManager.freshTokensToShare(this@MessengerService)
         if (tokens.isEmpty()) return
 
         val recipientKey = publicKeys[contact]
@@ -4979,18 +5005,31 @@ class MessengerService : Service() {
             put("token", anonToken)
             put("payload", payload)
         }
-        // Restore-on-failure DISABLED here too — see sendAnonOrDirect()'s
-        // matching comment, docs/ISSUE_backup_identity_hijack.md, 2026-08-18.
-        if (!sendWs(addPadding(anonPacket).toString())) {
-            // AnonTokenManager.restoreContactToken(this@MessengerService, contact, anonToken)
-        }
-
+        // subscribe_tokens sent BEFORE the anon_message that hands these
+        // tokens to the contact, not after — found live 2026-08-29 via
+        // server-side DEVLOG-DIAG: "is_known=False" drops on a token that
+        // was freshly generated and shared moments earlier. The old order
+        // shared the tokens with the contact first and only registered them
+        // with the server afterward — on a fast connection the contact
+        // could receive the batch and reply with one of them before this
+        // device's own subscribe_tokens had reached/been processed by the
+        // server, and the server correctly has no idea what that token is
+        // yet. A single WebSocket connection preserves send order, so
+        // sending subscribe_tokens first guarantees the server has already
+        // registered every token before the contact could possibly have
+        // received (let alone used) any of them.
         val allMyTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
         Log.d(TAG, "DEBUG-TOKENLIFE sendAnonTokensTo($contact): re-subscribe_tokens (${allMyTokens.size}) — ${allMyTokens.map { "…${it.takeLast(6)}" }}")
         sendWs(JSONObject().apply {
             put("type", "subscribe_tokens")
             put("tokens", org.json.JSONArray(allMyTokens))
         }.toString())
+
+        // Restore-on-failure DISABLED here too — see sendAnonOrDirect()'s
+        // matching comment, docs/ISSUE_backup_identity_hijack.md, 2026-08-18.
+        if (!sendWs(addPadding(anonPacket).toString())) {
+            // AnonTokenManager.restoreContactToken(this@MessengerService, contact, anonToken)
+        }
         Log.d(TAG, "Отправлены анонимные токены → $contact через anon_message")
     }
 
@@ -5182,7 +5221,15 @@ class MessengerService : Service() {
         scope.launch(Dispatchers.IO) {
             try {
 
-                val myTokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
+                // freshTokensToShare(), not tokensToShareWith() — see its comment.
+                val myTokens = AnonTokenManager.freshTokensToShare(this@MessengerService)
+                // subscribe_tokens BEFORE the mailbox deposit — same ordering
+                // fix as depositTokensViaMailbox()/sendAnonTokensToLocked().
+                val allMyTokens = AnonTokenManager.ensureMyTokenPool(this@MessengerService)
+                sendWs(JSONObject().apply {
+                    put("type", "subscribe_tokens")
+                    put("tokens", org.json.JSONArray(allMyTokens))
+                }.toString())
                 val inner = JSONObject().apply {
                     put("from", username)
                     put("text", text)
