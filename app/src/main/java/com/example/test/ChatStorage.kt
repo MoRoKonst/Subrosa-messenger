@@ -246,6 +246,26 @@ object ChatStorage {
         contacts.remove(recipient)
         val array = org.json.JSONArray(contacts)
         prefs.edit().putString("contacts", array.toString()).apply()
+
+        // Found live 2026-08-29: without this, a message/typing indicator
+        // still queued server-side (recipient offline, or deleted before it
+        // was acked) resurfaces into a freshly re-added conversation with the
+        // same fingerprint — see AnonTokenManager.wipeMyTokenPool()'s comment
+        // for why the fix has to be "stop re-subscribing the old token" and
+        // can't be more surgical than that.
+        AnonTokenManager.clearContactTokens(context, recipient)
+        AnonTokenManager.wipeMyTokenPool(context)
+        // Found live 2026-08-29: without this, getContactMailboxTag(recipient)
+        // survives a "delete" — it's a separate store from the token pools
+        // above. The mailbox spam gate (see MessengerService's
+        // "депозит от X проигнорирован — контакт не добавлен взаимно") only
+        // checks whether this tag is non-null, as a proxy for "did I ever
+        // independently add this person" — a stale tag left over from before
+        // this delete makes that check pass again, so a deposit from a fresh
+        // re-add on the OTHER side silently resurrects a nameless contact on
+        // THIS side before this user has done anything themselves, which
+        // defeats the whole point of requiring mutual add.
+        AnonTokenManager.clearContactMailboxTag(context, recipient)
     }
 
     fun deleteMessage(context: Context, myUserId: String, recipientUserId: String, messageId: String) {
