@@ -195,6 +195,31 @@ class MessengerService : Service() {
     @Volatile private var pendingRecoveryCode: String? = null
     private var username = ""
 
+    // Watchdog for "zombie" WebSocket connections: writes (webSocket.send())
+    // can keep locally succeeding — and OkHttp's own pingInterval ping/pong
+    // (see buildOkHttpClient, 20s) can fail to notice — while the read side
+    // is actually dead (no onMessage, no onFailure/onClosed either). Found
+    // live 2026-08-28: right after a WebRTC call ended (heavy network churn —
+    // ICE/TURN, network callback rebinding), one device's main WS kept
+    // sending pollMailbox() every ~10-30s with zero replies for over a
+    // minute, no text messages or typing indicators arriving, yet isConnected
+    // stayed true the whole time since nothing ever told it otherwise.
+    //
+    // Driven by an explicit app-level ping we send ourselves (see the
+    // "pong" case in handleMessage and the sendWs("ping") loop below) —
+    // NOT bumped on arbitrary incoming traffic, because a quiet conversation
+    // with no messages for 45s+ is a completely normal state. An earlier
+    // version of this watchdog treated any silence as staleness and force-
+    // reconnected during ordinary idle gaps, causing a needless full
+    // 50-token resubscribe every time (regression caught live 2026-08-28,
+    // same day as the original fix).
+    @Volatile private var lastServerActivityMs = System.currentTimeMillis()
+    // Temporarily lowered from 45s to 15s (2026-08-28, user request) for faster
+    // live-test iteration while chasing the post-call zombie-write-connection bug.
+    // Revert to 45s (and the matching 15s ping interval below) once confirmed fixed
+    // -- 15s is more trigger-happy than needed for normal operation.
+    private val CONNECTION_WATCHDOG_TIMEOUT_MS = 15_000L
+
     private val publicKeys = mutableMapOf<String, String>()
     // Peer ML-KEM public keys, sourced from prekey bundles — required to
     // hybridize the legacy ephemeral-ECDH path (encrypt/decrypt, voice, group
@@ -219,6 +244,15 @@ class MessengerService : Service() {
     // again once the previous grant has had time to actually be used up.
     private val tokensSentThisSession = mutableMapOf<String, Long>()
     private val TOKEN_RESUPPLY_COOLDOWN_MS = 3 * 60_000L
+
+    /** Guards sendAnonTokensTo() against running twice concurrently for the
+     *  same contact. Found live 2026-08-28: multiple independent triggers
+     *  (proactive low-pool refill, the reactive isReply=true response, the
+     *  stuck-pendingAnonPackets retry loop) can all fire within the same
+     *  ~1s window for one contact — each one unaware of the others — and
+     *  each burns a real token (potentially a reserve one) sending a
+     *  redundant duplicate subscribe_tokens batch the peer just discards. */
+    private val anonTokenResupplyInFlight = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     /** True (and records the attempt) at most once per TOKEN_RESUPPLY_COOLDOWN_MS
      * per contact — replaces the old "once ever" Set.add() check at both call
@@ -267,7 +301,17 @@ class MessengerService : Service() {
     // contact so a burst collapses into one attempt instead of one per
     // packet.
     private val lastTokenBootstrapAttempt = mutableMapOf<String, Long>()
-    private val TOKEN_BOOTSTRAP_COOLDOWN_MS = 3_000L
+    // History: 3s originally, bumped to 20s same day (2026-08-28) to stop a burst
+    // of queued sends from burning all RESERVE_TOKENS (3) within ~9s — faster than
+    // a resupply round trip could realistically land. But 20s turned out too
+    // conservative: this cooldown previously only gated a *new* bootstrap attempt,
+    // and with nothing else retrying independently, a token-empty contact could
+    // stay stuck for minutes after a call if the user wasn't actively typing (no
+    // new sendAnonOrDirect call = no new retry). Settled on 10s as a middle
+    // ground — survives ~3 reserve tokens for 30s, still gives the round trip
+    // room — paired with an independent periodic retry below (not gated on the
+    // user doing anything) so recovery doesn't depend on user activity at all.
+    private val TOKEN_BOOTSTRAP_COOLDOWN_MS = 10_000L
 
     private data class PendingVideoCircle(val to: String, val videoId: String, val encFilePath: String, val duration: Int)
     private val pendingVideoCircles = mutableListOf<PendingVideoCircle>()
@@ -931,6 +975,34 @@ class MessengerService : Service() {
             return START_STICKY
         }
 
+        if (intent?.getBooleanExtra("call_ended_force_ws_reconnect", false) == true) {
+            // Found live 2026-08-28: after a call, the server started rejecting
+            // anon_delivery_ack for tokens as "не принадлежит этому соединению"
+            // — evidence of two live WS sessions for the same account at once,
+            // one of them a zombie that still answers our own ping/pong (so the
+            // staleness watchdog never notices) while real anon_message traffic
+            // silently vanishes into it. Call signaling (call_offer/ice/call_end)
+            // shares this same socket and appears to be a trigger, even though
+            // the actual audio/video only ever goes over TURN/ICE, never this
+            // socket. Forcing a clean reconnect right after every call ends is a
+            // blunt but targeted fix: whatever duplicate/stale state built up
+            // during the call gets wiped, guaranteed one live connection after.
+            // Delayed 2s so the call's own final call_end/heartbeat-bye signal
+            // (sent moments before this intent) has time to actually go out
+            // first — closing the socket out from under it would just recreate
+            // the CALL-TRACE-documented "сброс не долетает" gap we already fixed
+            // with the P2P DataChannel bye path.
+            scope.launch(Dispatchers.IO) {
+                delay(2_000)
+                if (isConnected) {
+                    Log.w(TAG, "call_ended_force_ws_reconnect: форс-переподключение после звонка")
+                    isConnected = false
+                    webSocket?.close(1000, "post-call forced reconnect")
+                }
+            }
+            return START_STICKY
+        }
+
         intent?.getStringExtra("channel_create_name")?.let { name ->
             val desc = intent.getStringExtra("channel_create_desc") ?: ""
             val avatar = intent.getStringExtra("channel_create_avatar") ?: "📢"
@@ -1187,15 +1259,27 @@ class MessengerService : Service() {
      *  failure needs to restore it rather than silently losing the token
      *  and the message both. */
     private fun sendWs(json: String): Boolean {
+        // Diagnostic added 2026-08-28 while chasing the post-call zombie-write
+        // bug: ping/pong keeps succeeding indefinitely while anon_message
+        // traffic silently vanishes before ever reaching the server, on what
+        // should be the same single WebSocket — even right after a forced
+        // clean reconnect. That symmetry only makes sense if two different
+        // WebSocket objects are somehow live and this function is sometimes
+        // reading a stale one. Logging identityHashCode(webSocket) + the
+        // packet's "type" on every call proves or disproves that directly
+        // instead of guessing further.
+        val ws = webSocket
+        val typeForLog = try { JSONObject(json).optString("type", "?") } catch (e: Exception) { "?" }
+        Log.d(TAG, "sendWs: type=$typeForLog ws=${System.identityHashCode(ws)}")
         val mode = UserStorage.getCoverTrafficMode(this)
         if (mode == UserStorage.CoverTrafficMode.AGGRESSIVE && isConnected) {
             if (!outboundQueue.offer(json)) {
                 Log.w(TAG, "outboundQueue переполнена — отправляем напрямую")
-                return webSocket?.send(json) ?: false
+                return ws?.send(json) ?: false
             }
             return true
         } else {
-            return webSocket?.send(json) ?: false
+            return ws?.send(json) ?: false
         }
     }
 
@@ -1260,10 +1344,11 @@ class MessengerService : Service() {
                 val listener = object : WebSocketListener() {
 
                     override fun onOpen(ws: WebSocket, response: Response) {
-                        Log.d(TAG, "WebSocket открыт")
+                        Log.d(TAG, "WebSocket открыт ws=${System.identityHashCode(ws)}")
                     }
 
                     override fun onMessage(ws: WebSocket, text: String) {
+                        lastServerActivityMs = System.currentTimeMillis()
                         scope.launch(Dispatchers.IO) {
                             try {
                                 val json = JSONObject(text)
@@ -1275,7 +1360,7 @@ class MessengerService : Service() {
                     }
 
                     override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                        Log.e(TAG, "WebSocket ошибка: ${t.message}")
+                        Log.e(TAG, "WebSocket ошибка: ${t.message} ws=${System.identityHashCode(ws)} currentWs=${System.identityHashCode(webSocket)}")
                         isConnected = false
                         stopCoverTraffic()
                         if (!handshakeDone) handshakeDone = true
@@ -1283,7 +1368,7 @@ class MessengerService : Service() {
                     }
 
                     override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                        Log.d(TAG, "WebSocket закрыт: $code $reason")
+                        Log.d(TAG, "WebSocket закрыт: $code $reason ws=${System.identityHashCode(ws)} currentWs=${System.identityHashCode(webSocket)}")
                         isConnected = false
                         stopCoverTraffic()
                         if (!handshakeDone) handshakeDone = true
@@ -1295,6 +1380,7 @@ class MessengerService : Service() {
 
                 val client = if (wsUrl.contains(".onion")) wsClient else activeWsClient()
                 webSocket = client.newWebSocket(request, listener)
+                Log.d(TAG, "connect: новый webSocket создан ws=${System.identityHashCode(webSocket)}")
 
                 val success = withTimeoutOrNull(15_000) {
                     while (!handshakeDone && scope.isActive) {
@@ -1403,6 +1489,7 @@ class MessengerService : Service() {
                 }
 
                 startCoverTraffic()
+                lastServerActivityMs = System.currentTimeMillis()
                 withContext(Dispatchers.Main) {
                     onStatusChanged?.invoke(true)
                     reconnectAttempts = 0
@@ -1511,6 +1598,16 @@ class MessengerService : Service() {
 
                 flushPendingVideoCircles()
 
+                // Retry anything queued by sendAnonOrDirect()/queuePendingAnon() while we
+                // were disconnected, now that isConnected is genuinely true. Without this,
+                // a queued packet only got retried via flushPendingAnon(from) — which fires
+                // solely on receiving fresh tokens FROM that contact — so on a quiet chat
+                // with no incoming traffic it could sit stuck indefinitely after a
+                // reconnect. See sendAnonTokensTo()'s isConnected guard, added same day.
+                synchronized(pendingAnonPackets) { pendingAnonPackets.keys.toList() }.forEach { contact ->
+                    flushPendingAnon(contact)
+                }
+
                 val pendingResetContacts = UserStorage.getAndClearPendingSessionResetContacts(this@MessengerService)
                 if (pendingResetContacts.isNotEmpty()) {
                     Log.d(TAG, "Рассылаем session_reset ${pendingResetContacts.size} контактам после восстановления бэкапа")
@@ -1539,6 +1636,75 @@ class MessengerService : Service() {
                     while (isConnected && scope.isActive) {
                         delay(60_000)
                         if (isConnected) checkContactSilence()
+                    }
+                }
+
+                // Retries any packets still sitting in pendingAnonPackets, independent
+                // of the user doing anything. Without this, recovery for a contact
+                // whose pool went empty (e.g. right after a call) depended entirely on
+                // sendAnonOrDirect() being called again — which only happens if the
+                // user keeps typing/sending. Found live 2026-08-28: with nobody
+                // actively sending, a token-empty contact could sit stuck for minutes
+                // (TOKEN_BOOTSTRAP_COOLDOWN_MS gates new attempts, but nothing new was
+                // ever triggering one). This just re-runs queuePendingAnon's own
+                // cooldown-gated bootstrap logic on a timer so it makes progress on
+                // its own.
+                scope.launch(Dispatchers.IO) {
+                    while (isConnected && scope.isActive) {
+                        delay(10_000)
+                        if (!isConnected) break
+                        val stuckContacts = synchronized(pendingAnonPackets) { pendingAnonPackets.keys.toList() }
+                        stuckContacts.forEach { contact ->
+                            val shouldRetry = synchronized(lastTokenBootstrapAttempt) {
+                                val now = System.currentTimeMillis()
+                                val last = lastTokenBootstrapAttempt[contact] ?: 0L
+                                if (now - last >= TOKEN_BOOTSTRAP_COOLDOWN_MS) {
+                                    lastTokenBootstrapAttempt[contact] = now
+                                    true
+                                } else false
+                            }
+                            if (shouldRetry) sendAnonTokensTo(contact)
+                        }
+                    }
+                }
+
+                // Connection watchdog — re-enabled 2026-08-28 after live evidence of
+                // exactly the failure mode this exists for: after two calls in a row,
+                // sendWs() kept returning true (frame handed to OkHttp's write buffer)
+                // but the message never reached the server at all — no error, no
+                // ПОЛУЧЕНО on the other side, completely silent. A write-side zombie
+                // connection. Was disabled earlier today only to reduce log noise
+                // while chasing the premature-anon_message handshake race (now fixed);
+                // that race is unrelated to this failure mode. Drives its own app-level
+                // ping/pong (server always replies "pong", see server.py msg_type ==
+                // "ping") instead of relying on incoming traffic to prove liveness —
+                // silence during a quiet conversation is normal, not staleness.
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        while (isConnected && scope.isActive) {
+                            delay(5_000)
+                            if (!isConnected) break
+                            val pingSent = sendWs(JSONObject().apply { put("type", "ping") }.toString())
+                            val silenceMs = System.currentTimeMillis() - lastServerActivityMs
+                            Log.d(TAG, "watchdog: ping отправлен sendWs=$pingSent, тишина от сервера ${silenceMs}мс")
+                            if (silenceMs > CONNECTION_WATCHDOG_TIMEOUT_MS) {
+                                // Set isConnected=false ourselves rather than relying solely
+                                // on close()'s onClosed callback — for a genuinely zombie
+                                // socket the close frame can vanish into the void too, and
+                                // that's exactly the failure mode this watchdog routes around.
+                                Log.w(TAG, "watchdog: от сервера нет ответа ${CONNECTION_WATCHDOG_TIMEOUT_MS}мс — форс-переподключение")
+                                isConnected = false
+                                webSocket?.close(1000, "watchdog: stale connection")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Found live 2026-08-28: this loop had no try/catch, so any
+                        // exception here (e.g. a transient sendWs()/JSONObject issue)
+                        // would silently kill the coroutine forever — SupervisorJob
+                        // keeps siblings alive, but nothing ever logged the death, so
+                        // the watchdog could stop protecting the connection with zero
+                        // visible trace, indistinguishable from "everything's fine".
+                        Log.e(TAG, "watchdog: цикл упал с исключением, перестал работать: ${e.message}", e)
                     }
                 }
             }
@@ -1680,6 +1846,11 @@ class MessengerService : Service() {
             }
 
             "ping" -> sendWs(JSONObject().apply { put("type", "pong") }.toString())
+
+            "pong" -> {
+                lastServerActivityMs = System.currentTimeMillis()
+                Log.d(TAG, "watchdog: pong получен")
+            }
 
             "turn_config" -> {
                 val turnUser = json.optString("user", "")
@@ -3282,8 +3453,26 @@ class MessengerService : Service() {
 
             "anon_delivery" -> {
                 try {
-                    val payload = json.getJSONObject("payload")
+                    val rawPayload = json.getJSONObject("payload")
                     val transportToken = json.optString("token", null)
+
+                    // See sealPacketForRecipient()'s comment: senders now wrap
+                    // from/to/text in one more layer of encryption keyed to
+                    // MY identity, instead of leaving from/to in the clear
+                    // next to the token. "blob" present means sealed —
+                    // decrypt with my own key (no need to know who sent it
+                    // first, unlike the Double Ratchet session itself).
+                    // Falls back to using rawPayload directly for an
+                    // unpatched peer mid-rollout (old shape had no "blob").
+                    val blob = rawPayload.optString("blob", null)
+                    val payload = if (blob != null) {
+                        try {
+                            org.json.JSONObject(CryptoManager.decrypt(blob))
+                        } catch (e: Exception) {
+                            Log.e(TAG, "anon_delivery: не удалось распечатать blob — ${e.message}")
+                            return
+                        }
+                    } else rawPayload
 
                     payload.optString("_anon_token").takeIf { it.isNotBlank() }?.let {
                         AnonTokenManager.consumeMyToken(this@MessengerService, it)
@@ -3393,13 +3582,29 @@ class MessengerService : Service() {
                         ?: AnonTokenManager.consumeNextContactToken(this@MessengerService, to)
 
                     if (anonToken != null) {
+                        val sealed = sealPacketForRecipient(to, packet)
+                        val outerPayload = if (sealed != null) {
+                            JSONObject().apply {
+                                put("id", id)
+                                put("blob", sealed)
+                            }
+                        } else {
+                            // Keys not cached yet — fall back to unsealed rather
+                            // than lose the send outright. For isFirst=true this
+                            // shouldn't normally happen (a bootstrap token only
+                            // exists because a prekey bundle — and its key —
+                            // just arrived), but sealPacketForRecipient() checks
+                            // both key types independently, so covering it here
+                            // too costs nothing.
+                            packet
+                        }
                         val anonPacket = JSONObject().apply {
                             put("type", "anon_message")
                             put("token", anonToken)
-                            put("payload", packet)
+                            put("payload", outerPayload)
                         }
                         val sent = sendWs(addPadding(anonPacket).toString())
-                        Log.d(TAG, "DEBUG-TOKENLIFE sendWithForwardSecrecy: to=$to id=$id isFirst=$isFirst token=…${anonToken.takeLast(6)} bootstrap=${bootstrapToken != null} sendWs=$sent")
+                        Log.d(TAG, "DEBUG-TOKENLIFE sendWithForwardSecrecy: to=$to id=$id isFirst=$isFirst token=…${anonToken.takeLast(6)} bootstrap=${bootstrapToken != null} sealed=${sealed != null} sendWs=$sent")
                         // Restore-on-failure DISABLED — found live 2026-08-18: sendWs()
                         // returning false is not a reliable signal that the frame never
                         // left the device (under real network stress — e.g. mid video
@@ -3696,6 +3901,44 @@ class MessengerService : Service() {
         sendAnonOrDirect(to, packet)
     }
 
+    /** Wraps `packet` (which otherwise carries "from"/"to" in the clear
+     *  right next to the anon_message token) in one more layer of hybrid
+     *  asymmetric encryption keyed to the recipient's own identity — the
+     *  same mechanism sendAnonTokensTo() already uses for
+     *  __beacon_tokens__. Decryption only needs the recipient's own
+     *  private key (CryptoManager.decrypt()), not any prior knowledge of
+     *  who sent it, so this doesn't have the chicken-and-egg problem a
+     *  Double Ratchet session does (you'd need "from" to pick the session
+     *  before you could decrypt something that reveals "from").
+     *
+     *  Found live 2026-08-29 (user-reported, external review pointed at
+     *  the specific fields): the token protects *routing* — the server
+     *  never needs from/to to deliver by token — but until this, the
+     *  actual JSON payload it relays still carried both in plaintext,
+     *  readable by anyone with access to the process at that moment
+     *  (and the federation fallback path explicitly read `to`). Sealing
+     *  here means the server (or anyone reading over its shoulder) sees
+     *  only an opaque blob, never the sender/recipient pair. Deliberate
+     *  trade-off, decided with the user: federation's fallback routing by
+     *  fingerprint (payload.get("to") when the token isn't known locally)
+     *  stops working for anything sent this way — accepted, since the
+     *  metadata leak was judged worse than that fallback path.
+     *
+     *  Returns null if the recipient's keys aren't cached yet — callers
+     *  fall back to the old unsealed shape rather than silently losing
+     *  the send outright. */
+    private fun sealPacketForRecipient(to: String, packet: JSONObject): String? {
+        val recipientKey = publicKeys[to] ?: ChatStorage.getContactPublicKey(this, to)?.also { publicKeys[to] = it }
+        val recipientPqKey = resolvePqKey(to)
+        if (recipientKey == null || recipientPqKey == null) return null
+        return try {
+            CryptoManager.encrypt(packet.toString(), recipientKey, recipientPqKey)
+        } catch (e: Exception) {
+            Log.e(TAG, "sealPacketForRecipient: не удалось запечатать для $to — ${e.message}")
+            null
+        }
+    }
+
     // No direct/fingerprint-addressed fallback here on purpose — see the
     // "cut the direct fallback" decision in docs/ISSUE_backup_identity_hijack.md.
     // An anonymity layer that silently degrades to non-anonymous the moment
@@ -3721,13 +3964,26 @@ class MessengerService : Service() {
         }
         val token = AnonTokenManager.consumeNextContactToken(this, to)
         if (token != null) {
+            val sealed = sealPacketForRecipient(to, packet)
+            val outerPayload = if (sealed != null) {
+                JSONObject().apply {
+                    put("id", packet.optString("id").ifBlank { packet.optString("message_id") })
+                    put("blob", sealed)
+                }
+            } else {
+                // Keys not cached yet — fall back to the old unsealed shape
+                // rather than silently losing the send. Self-heals: once a
+                // key arrives, every subsequent send through here seals
+                // normally.
+                packet
+            }
             val anonPacket = JSONObject().apply {
                 put("type", "anon_message")
                 put("token", token)
-                put("payload", packet)
+                put("payload", outerPayload)
             }
             val sent = sendWs(addPadding(anonPacket).toString())
-            Log.d(TAG, "DEBUG-TOKENLIFE sendAnonOrDirect: to=$to type=${packet.optString("type")} id=${packet.optString("id").ifBlank { packet.optString("message_id") }} token=…${token.takeLast(6)} sendWs=$sent")
+            Log.d(TAG, "DEBUG-TOKENLIFE sendAnonOrDirect: to=$to type=${packet.optString("type")} id=${packet.optString("id").ifBlank { packet.optString("message_id") }} token=…${token.takeLast(6)} sealed=${sealed != null} sendWs=$sent")
             if (!sent) {
                 // Token restore DISABLED — see sendWithForwardSecrecy()'s
                 // matching comment, docs/ISSUE_backup_identity_hijack.md,
@@ -4428,8 +4684,18 @@ class MessengerService : Service() {
      *  provides no cover, so a lone/contact-less new install falls back to the
      *  direct, non-anonymous fetch instead of pretending otherwise. */
     private fun requestPrekeyBundle(contactId: String) {
+        // Found live 2026-08-29: no guard here meant two calls for the same
+        // brand-new contact (e.g. two quick messages sent before the first
+        // bundle response lands) fired two separate get_prekey_bundle
+        // requests. The server's pick_bootstrap_token() doesn't mark a token
+        // used at pick time (only when actually spent in an anon_message),
+        // so both responses could hand back the SAME bootstrap token —
+        // sendWithForwardSecrecy() then used it for two different messages,
+        // the second silently dropped server-side as already-spent with zero
+        // client-visible error. One in-flight request per contact is enough;
+        // whichever response arrives flushes everything queued for them.
+        if (!pendingBundleRequests.add(contactId)) return
         val decoys = ChatStorage.getContacts(this).filter { it != contactId }
-        pendingBundleRequests.add(contactId)
         scope.launch(Dispatchers.IO) {
             if (decoys.isNotEmpty()) {
                 val batch = (decoys.shuffled().take(MAX_BATCH_BUNDLE_TARGETS - 1) + contactId).shuffled()
@@ -4472,9 +4738,9 @@ class MessengerService : Service() {
             SessionKeyManager.hasSession(contact)
     }
 
-    private fun depositTokensViaMailbox(contact: String, mailboxTag: String, publicKey: String) {
+    private fun depositTokensViaMailbox(contact: String, mailboxTag: String, publicKey: String, isReply: Boolean = false) {
         val tokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
-        Log.d(TAG, "DEBUG-BOOTSTRAP depositTokensViaMailbox: contact=$contact tag=$mailboxTag tokens=${tokens.size}")
+        Log.d(TAG, "DEBUG-BOOTSTRAP depositTokensViaMailbox: contact=$contact tag=$mailboxTag tokens=${tokens.size} reply=$isReply")
         if (tokens.isEmpty()) return
         try {
             val inner = JSONObject().apply {
@@ -4484,6 +4750,15 @@ class MessengerService : Service() {
                 put("tokens", org.json.JSONArray(tokens))
                 put("mailbox_tag", AnonTokenManager.getOrCreateMyPersistentMailboxTag(this@MessengerService))
                 put("id", UUID.randomUUID().toString())
+                // Same "reply" semantics as sendAnonTokensTo()'s anon_message path
+                // (see its comment) — without this, a mailbox-routed reply to a
+                // resupply request looks identical to a fresh request on receipt,
+                // and the receiving side's handler (the "reply" check around
+                // handleMailboxResult's tokensArr branch) would reciprocate again
+                // forever. Found live 2026-08-28: a contact stuck re-depositing
+                // every ~10s indefinitely once both sides had fully run out of
+                // anon tokens and every exchange had to go through mailbox.
+                put("reply", isReply)
             }.toString()
             val blob = CryptoManager.encryptClassicalOnly(inner, publicKey)
             sendWs(addPadding(JSONObject().apply {
@@ -4586,7 +4861,33 @@ class MessengerService : Service() {
         channelStuckNotified.remove(contact)
     }
 
-    private suspend fun sendAnonTokensTo(contact: String) {
+    private suspend fun sendAnonTokensTo(contact: String, isReply: Boolean = false) {
+        // Guard against a race with connect()'s own handshake wait: this is
+        // reachable via queuePendingAnon()'s fire-and-forget bootstrap launch,
+        // which fires precisely when sendAnonOrDirect() just found !isConnected
+        // — i.e. exactly the case where the raw WebSocket object can already be
+        // non-null (assigned early in connect()) while the app-level auth
+        // handshake hasn't completed yet. Without this check, sendWs() below
+        // would still succeed at the OkHttp layer and send anon_message/
+        // subscribe_tokens before the server ever saw our challenge_response,
+        // which the server treats as a protocol violation and disconnects for
+        // — found live 2026-08-28 via server log "[SECURITY] Ожидался
+        // challenge_response, получен anon_message", costing the full 15s
+        // handshake timeout before reconnecting and silently losing whatever
+        // was queued.
+        if (!isConnected) return
+        if (!anonTokenResupplyInFlight.add(contact)) {
+            Log.d(TAG, "sendAnonTokensTo: уже выполняется для $contact, пропускаем дубликат")
+            return
+        }
+        try {
+            sendAnonTokensToLocked(contact, isReply)
+        } finally {
+            anonTokenResupplyInFlight.remove(contact)
+        }
+    }
+
+    private suspend fun sendAnonTokensToLocked(contact: String, isReply: Boolean) {
         val tokens = AnonTokenManager.tokensToShareWith(this@MessengerService)
         if (tokens.isEmpty()) return
 
@@ -4603,7 +4904,7 @@ class MessengerService : Service() {
             val mailboxTag = AnonTokenManager.getContactMailboxTag(this@MessengerService, contact)
             if (mailboxTag != null && recipientKey != null) {
                 Log.d(TAG, "sendAnonTokensTo: нет PQ-ключа для $contact — бутстрап токенов через mailbox")
-                depositTokensViaMailbox(contact, mailboxTag, recipientKey)
+                depositTokensViaMailbox(contact, mailboxTag, recipientKey, isReply = isReply)
             } else {
                 Log.d(TAG, "sendAnonTokensTo: нет токенов/ключей для $contact, ждём mailbox-обмена")
             }
@@ -4627,7 +4928,7 @@ class MessengerService : Service() {
             val mailboxTag = AnonTokenManager.getContactMailboxTag(this@MessengerService, contact)
             if (mailboxTag != null && recipientKey != null) {
                 Log.d(TAG, "sendAnonTokensTo: нет anon-токена для $contact — бутстрап токенов через mailbox")
-                depositTokensViaMailbox(contact, mailboxTag, recipientKey)
+                depositTokensViaMailbox(contact, mailboxTag, recipientKey, isReply = isReply)
             } else {
                 Log.d(TAG, "DEBUG-BOOTSTRAP sendAnonTokensTo: нет токенов для $contact, ждём mailbox-обмена — mailboxTag=${mailboxTag != null} recipientKey=${recipientKey != null} hasSession=${SessionKeyManager.hasSession(contact)}")
             }
@@ -4650,9 +4951,16 @@ class MessengerService : Service() {
         // Piggybacks my persistent mailbox tag on every token exchange — see
         // AnonTokenManager.getOrCreateMyPersistentMailboxTag(), the tag
         // freshness fix. Nearly free: this message already goes out.
+        // "reply" marks this batch as a direct answer to a resupply we just
+        // received from `contact`, not a fresh request — the receiving side's
+        // handler uses this to decide whether to reciprocate again. Without
+        // it, an unconditional reciprocal send on receipt (see the two
+        // "reply=true" call sites below) would ping-pong forever: A sends,
+        // B receives and replies, A receives the reply and replies again, ...
         val tokenPayload = JSONObject().apply {
             put("tokens", org.json.JSONArray(tokens))
             put("mailbox_tag", AnonTokenManager.getOrCreateMyPersistentMailboxTag(this@MessengerService))
+            put("reply", isReply)
         }
         val systemText = "__beacon_tokens__:$tokenPayload"
         val encrypted = CryptoManager.encrypt(systemText, recipientKey, recipientPqKey)
@@ -4740,8 +5048,13 @@ class MessengerService : Service() {
                 }
                 ChatStorage.addContact(this@MessengerService, from)
                 Log.d(TAG, "Получены анонимные токены от $from: ${tokens.size} шт.")
-                if (shouldResupplyTokens(from)) {
-                    scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
+                // Direct reciprocal answer, no cooldown: this is a response to an
+                // explicit signal from `from` ("I'm low, here's a top-up"), not a
+                // proactive guess — see sendAnonTokensTo()'s "reply" comment for
+                // why isReply=true here is what stops this from looping forever.
+                val isReplyBatch = objAttempt?.optBoolean("reply", false) ?: false
+                if (!isReplyBatch) {
+                    scope.launch(Dispatchers.IO) { sendAnonTokensTo(from, isReply = true) }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка обработки beacon_tokens: ${e.message}")
@@ -5069,8 +5382,12 @@ class MessengerService : Service() {
                             AnonTokenManager.setContactMailboxTag(this@MessengerService, from, freshTag)
                         }
                         withContext(Dispatchers.Main) { onChannelReady?.invoke(from) }
-                        if (shouldResupplyTokens(from)) {
-                            scope.launch(Dispatchers.IO) { sendAnonTokensTo(from) }
+                        // Same direct-reciprocal-no-cooldown logic as the anon_message
+                        // beacon_tokens path above — mailbox-delivered batches carry
+                        // the same "reply" flag.
+                        val isReplyBatch = innerJson.optBoolean("reply", false)
+                        if (!isReplyBatch) {
+                            scope.launch(Dispatchers.IO) { sendAnonTokensTo(from, isReply = true) }
                         }
                     }
 
