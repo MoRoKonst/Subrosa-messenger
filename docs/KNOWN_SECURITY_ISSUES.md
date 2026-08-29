@@ -9,7 +9,7 @@ Status legend: **Fixed** (closed, code changed), **Mitigated** (reduced, not eli
 opt-in or partial), **Open/by-design** (accepted tradeoff, explicit non-goal or product decision,
 not expected to change), **Open/undecided** (a real gap someone still needs to make a call on).
 
-## SECURITY.md Known Limitations (items 1–29)
+## SECURITY.md Known Limitations (items 1–31, now split across SECURITY.md and SECURITY_CHANGELOG.md)
 
 | ID | Summary | Severity (estimate) | Status | Regression test |
 |---|---|---|---|---|
@@ -42,8 +42,13 @@ not expected to change), **Open/undecided** (a real gap someone still needs to m
 | KL-27 | No protection against offline access to the server's database | Medium | Mitigated (opt-in SQLCipher) | — |
 | KL-28 | Calculator-disguise hardcoded unlock code; wipe/restore could lose the code | Medium (disguise) / High (data loss) | Fixed | — |
 | KL-29 | Only one invite-code mailbox tag can be "live" per device | Low | Open/by-design tradeoff | — |
+| KL-30 | `server.py` must never read a client's real IP address (formal invariant) | Medium | Open/by-design (invariant now enforced — `deploy/nginx.conf` no longer forwards `X-Real-IP`/`X-Forwarded-For`) | — |
+| KL-31 | `anon_message` payload carried sender/recipient pair in plaintext next to the token | High (metadata leak) | Fixed (2026-08-29 — `sealPacketForRecipient()`; federation by-fingerprint fallback traded away) | — |
 
-Full writeups: [SECURITY.md § Known Limitations](SECURITY.md#known-limitations).
+Full writeups: **currently-open items** in [SECURITY.md § Known Limitations](SECURITY.md#known-limitations),
+**fully-resolved items** (Status = Fixed above) in [SECURITY_CHANGELOG.md](SECURITY_CHANGELOG.md) —
+split 2026-08-29, numbering preserved from the original list so the item numbers in this table
+still point at the right entry in whichever file it ended up in.
 
 ## 2026-08-23 audit session (`docs/ANDROID_AUDIT.md`)
 

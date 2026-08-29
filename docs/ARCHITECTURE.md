@@ -434,7 +434,7 @@ All messages are JSON objects over WebSocket. Every message has a `type` field.
 | `checkin` | Dead Man's Switch check-in |
 | `subscribe_tokens` | Register the client's pool of ~50 anonymous single-use tokens against this connection |
 | `anon_message` | Anything routed anonymously (1:1 text, typing, read receipts, reactions, edits, deletes, file/voice/video chunks, call signaling) wrapped in `{token, payload}` instead of being fingerprint-addressed — this is the actual carrier for most client→client traffic, not the `message`/`typing`/`reaction` rows above (those apply when a message is sent to a group or otherwise can't go anonymous) |
-| `anon_delivery_ack` | Recipient confirms it actually processed an `anon_delivery` payload — only after this does the server drop its fallback copy; see [SECURITY.md](SECURITY.md) item 18 |
+| `anon_delivery_ack` | Recipient confirms it actually processed an `anon_delivery` payload — only after this does the server drop its fallback copy; see [SECURITY_CHANGELOG.md](SECURITY_CHANGELOG.md) item 18 |
 | `revoke_identity` | Authenticated client asks the server to mark its own fingerprint as revoked (persisted, survives restart) |
 
 **Server → Client (selected types):**
