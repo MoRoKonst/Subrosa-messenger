@@ -319,7 +319,7 @@ reusable — реальная защита на сервере). Собирае�
 получает новый ключ" — этого бага здесь нет физически, `removeMember()`
 корректно чистит и `members`, и `admins`. Кто формирует список получателей
 при ротации ключа — в `MessengerService`/UI caller (уже чинилось раньше,
-`SECURITY.md` item 15), не здесь. Согласен, не мой файл для этого фикса.
+`SECURITY_CHANGELOG.md` item 15), не здесь. Согласен, не мой файл для этого фикса.
 
 **Подтверждено и исправлено — race condition (lost update).**
 `addMember()`/`removeMember()`/`promoteToAdmin()` делали `getGroup()` (свой
