@@ -128,7 +128,7 @@ dependencies {
     // Геолокация (Fused Location Provider)
     implementation("com.google.android.gms:play-services-location:21.4.0")
     // OpenStreetMap
-    implementation("org.osmdroid:osmdroid-android:6.1.18")
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
     // WebRTC (P2P звонки)
     implementation("io.getstream:stream-webrtc-android:1.3.10")
     // CameraX (видеокружки)
