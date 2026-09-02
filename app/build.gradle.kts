@@ -94,7 +94,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.appcompat:appcompat:1.8.0")
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
-    implementation(platform("com.google.firebase:firebase-bom:33.0.0"))
+    implementation(platform("com.google.firebase:firebase-bom:34.18.0"))
     implementation("com.google.firebase:firebase-messaging-ktx")
 
     // QR сканирование
