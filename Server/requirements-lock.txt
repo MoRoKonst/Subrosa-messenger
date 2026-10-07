@@ -23,7 +23,7 @@
 #   pip install -r requirements-lock.txt
 
 websockets==17.1
-cryptography==50.0.1
+cryptography==50.0.2
 cffi==2.1.1
 pycparser==3.0
 miniupnpc==2.3.3
