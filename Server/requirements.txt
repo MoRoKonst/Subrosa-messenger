@@ -1,4 +1,4 @@
-websockets>=17.0.1
+websockets>=17.3
 cryptography>=50.0.0
 miniupnpc>=2.3.3
 
