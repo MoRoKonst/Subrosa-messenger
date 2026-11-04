@@ -1,5 +1,11 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
+// jlink (used by Compose Desktop native packaging) fails when the project path
+// contains non-ASCII characters because it writes the output path into an args
+// file as UTF-8 but reads it back as the system ANSI codepage (Windows-1252),
+// producing mojibake. Redirect the build directory to an ASCII path to avoid this.
+layout.buildDirectory.set(file("C:/subrosa_desktop_build"))
+
 plugins {
     kotlin("jvm")
     id("org.jetbrains.compose") version "1.7.3"
