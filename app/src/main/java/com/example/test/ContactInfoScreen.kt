@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
@@ -182,10 +183,11 @@ fun ContactInfoScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     val isVerified = remember { KeyHistoryManager.getHistory(context, contactId).lastOrNull()?.verified == true }
 
+    val locale = LocalConfiguration.current.locales[0]
     val muteSubtitle = when {
         muteUntil == Long.MAX_VALUE -> s.muteStatusForever
         muteUntil > System.currentTimeMillis() ->
-            s.muteStatusUntil(java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(muteUntil)))
+            s.muteStatusUntil(java.text.SimpleDateFormat("HH:mm", locale).format(java.util.Date(muteUntil)))
         else -> s.muteStatusOff
     }
     val autoDeleteSubtitle = when (autoDeleteSecs) {
