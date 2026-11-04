@@ -79,8 +79,12 @@ meminfo_watch.log
 # Внутренний план подготовки к security-аудиту — не для публичного репо
 docs/AUDIT_PREPARATION_NEXT_STEPS.md
 
-# Desktop client — не публикуется пока не готов
-/desktop/
+# Desktop client — build artifacts
+/desktop/build/
+/desktop/.gradle/
+/desktop/.kotlin/
+/desktop/.idea/workspace.xml
+/desktop/.idea/gradle.xml
 
 # Рабочие файлы генерации иконки — не исходники приложения
 icon_work/
