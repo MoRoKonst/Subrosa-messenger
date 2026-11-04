@@ -25,6 +25,8 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import java.util.UUID
 import kotlin.math.absoluteValue
+import androidx.compose.ui.res.painterResource
+import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,6 +34,7 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
+    val c = LocalSubrosaColors.current
     val userId = UserStorage.getUserId(context)
 
     var groupName by remember { mutableStateOf("") }
@@ -75,41 +78,46 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(s.createGroupTitle, color = Color.White, fontFamily = JetBrainsMono) },
+                title = { Text(s.createGroupTitle, color = c.textPrimary, fontFamily = JetBrainsMono) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back, tint = Color.White)
+                        Icon(painterResource(R.drawable.ic_back_arrow), s.back, tint = c.textPrimary)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF4A151A))
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = if (c.isDark) Color(0xFF4A151A) else c.topBar)
             )
         }
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(Color(0xFF2B0F14), Color(0xFF180A0C))))
+                .background(
+                    Brush.verticalGradient(
+                        if (c.isDark) listOf(Color(0xFF2B0F14), Color(0xFF180A0C))
+                        else listOf(c.gradientStart, c.gradientEnd)
+                    )
+                )
                 .padding(padding)
                 .padding(16.dp)
         ) {
 
             Surface(
                 shape = CircleShape,
-                color = Color(0xFFC77B4F),
+                color = if (c.isDark) Color(0xFFC77B4F) else c.primaryBlue,
                 modifier = Modifier
                     .size(100.dp)
                     .align(Alignment.CenterHorizontally)
                     .clickable { showAvatarPicker = true }
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text(selectedAvatar, fontSize = 48.sp)
+                    Text(selectedAvatar, fontSize = 50.sp)
                 }
             }
 
             Text(
                 s.createGroupTapAvatar,
-                fontSize = 12.sp,
-                color = Color(0xFFE0E6FF).copy(alpha = 0.6f),
+                fontSize = 14.sp,
+                color = c.textPrimary.copy(alpha = 0.6f),
                 modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp),
                 fontFamily = JetBrainsMono
             )
@@ -123,13 +131,13 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFFD9A566),
-                    unfocusedBorderColor = Color(0xFFE0E6FF).copy(alpha = 0.3f),
-                    focusedLabelColor = Color(0xFFD9A566),
-                    unfocusedLabelColor = Color(0xFFE0E6FF).copy(alpha = 0.6f),
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    cursorColor = Color(0xFFD9A566)
+                    focusedBorderColor = if (c.isDark) Color(0xFFD9A566) else c.accent,
+                    unfocusedBorderColor = c.textPrimary.copy(alpha = 0.3f),
+                    focusedLabelColor = if (c.isDark) Color(0xFFD9A566) else c.accent,
+                    unfocusedLabelColor = c.textPrimary.copy(alpha = 0.6f),
+                    focusedTextColor = c.textPrimary,
+                    unfocusedTextColor = c.textPrimary,
+                    cursorColor = if (c.isDark) Color(0xFFD9A566) else c.accent
                 )
             )
 
@@ -137,9 +145,9 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
 
             Text(
                 s.createGroupMembersTitle(selectedMembers.size),
-                fontSize = 16.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = c.textPrimary,
                 fontFamily = JetBrainsMono
             )
 
@@ -164,7 +172,11 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                                 }
                             },
                         shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) Color(0xFFC77B4F).copy(alpha = 0.3f) else Color(0xFF3A1216)
+                        color = if (isSelected) {
+                            if (c.isDark) Color(0xFFC77B4F).copy(alpha = 0.3f) else c.primaryBlue.copy(alpha = 0.3f)
+                        } else {
+                            if (c.isDark) Color(0xFF3A1216) else c.card
+                        }
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
@@ -186,7 +198,7 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Text(
                                         text = contactName.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                                        fontSize = 18.sp,
+                                        fontSize = 20.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color.White
                                     )
@@ -197,14 +209,15 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
 
                             Text(
                                 contactName,
-                                fontSize = 16.sp,
-                                color = Color.White,
+                                fontSize = 18.sp,
+                                color = c.textPrimary,
                                 modifier = Modifier.weight(1f),
                                 fontFamily = JetBrainsMono
                             )
 
                             if (isSelected) {
-                                Text("✓", fontSize = 24.sp, color = Color(0xFFD9A566))
+                                Icon(painterResource(R.drawable.ic_check), contentDescription = null,
+                                    tint = if (c.isDark) Color(0xFFD9A566) else c.accent, modifier = Modifier.size(20.dp))
                             }
                         }
                     }
@@ -246,11 +259,14 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                 },
                 enabled = groupName.isNotBlank() && selectedMembers.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth().height(50.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC77B4F))
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (c.isDark) Color(0xFFC77B4F) else c.primaryBlue,
+                    contentColor = if (c.isDark) Color.White else c.textPrimary
+                )
             ) {
                 Text(
                     s.createGroupButton,
-                    fontSize = 16.sp,
+                    fontSize = 18.sp,
                     fontFamily = JetBrainsMono
                 )
             }
@@ -260,7 +276,7 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
     if (showAvatarPicker) {
         AlertDialog(
             onDismissRequest = { showAvatarPicker = false },
-            title = { Text(s.createGroupAvatarTitle, color = Color.White, fontFamily = JetBrainsMono) },
+            title = { Text(s.createGroupAvatarTitle, color = c.textPrimary, fontFamily = JetBrainsMono) },
             text = {
                 Column {
                     avatarEmojis.chunked(4).forEach { row ->
@@ -271,7 +287,7 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                             row.forEach { emoji ->
                                 Text(
                                     emoji,
-                                    fontSize = 40.sp,
+                                    fontSize = 42.sp,
                                     modifier = Modifier
                                         .clickable {
                                             selectedAvatar = emoji
@@ -285,7 +301,7 @@ fun CreateGroupScreen(onBack: () -> Unit, onGroupCreated: (String) -> Unit) {
                 }
             },
             confirmButton = {},
-            containerColor = Color(0xFF4A151A)
+            containerColor = if (c.isDark) Color(0xFF4A151A) else c.dialog
         )
     }
 }

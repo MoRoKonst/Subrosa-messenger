@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.compose.ui.res.painterResource
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -160,7 +161,7 @@ fun ChannelFeedScreen(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },
                             singleLine = true,
-                            textStyle = TextStyle(color = Color.White, fontSize = 16.sp, fontFamily = JetBrainsMono),
+                            textStyle = TextStyle(color = c.textPrimary, fontSize = 18.sp, fontFamily = JetBrainsMono),
                             cursorBrush = SolidColor(c.accent),
                             modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
                             decorationBox = { inner ->
@@ -168,7 +169,7 @@ fun ChannelFeedScreen(
                                     Text(
                                         s.channelSearchPlaceholder,
                                         color = c.textPrimary.copy(alpha = 0.45f),
-                                        fontSize = 16.sp,
+                                        fontSize = 18.sp,
                                         fontFamily = JetBrainsMono
                                     )
                                 }
@@ -179,16 +180,16 @@ fun ChannelFeedScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Surface(shape = CircleShape, color = c.primaryBlue, modifier = Modifier.size(36.dp)) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    Text(ch?.avatar ?: "📢", fontSize = 18.sp)
+                                    Text(ch?.avatar ?: "📢", fontSize = 20.sp)
                                 }
                             }
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text(
                                     ch?.name ?: s.channelDefault,
-                                    color = Color.White,
+                                    color = c.textPrimary,
                                     fontFamily = JetBrainsMono,
-                                    fontSize = 16.sp,
+                                    fontSize = 18.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
 
@@ -198,14 +199,14 @@ fun ChannelFeedScreen(
                                         Text(
                                             s.channelSubscribers(subCount),
                                             color = c.textPrimary.copy(alpha = 0.6f),
-                                            fontSize = 11.sp,
+                                            fontSize = 13.sp,
                                             fontFamily = JetBrainsMono
                                         )
                                     !ch?.description.isNullOrBlank() ->
                                         Text(
                                             ch!!.description,
                                             color = c.textPrimary.copy(alpha = 0.6f),
-                                            fontSize = 11.sp,
+                                            fontSize = 13.sp,
                                             fontFamily = JetBrainsMono,
                                             maxLines = 1
                                         )
@@ -218,26 +219,27 @@ fun ChannelFeedScreen(
                     IconButton(onClick = {
                         if (searchMode) { searchMode = false; searchQuery = "" } else onBack()
                     }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.back, tint = Color.White)
+                        Icon(painterResource(R.drawable.ic_back_arrow), contentDescription = s.back, tint = c.textPrimary)
                     }
                 },
                 actions = {
 
                     if (!searchMode) {
                         IconButton(onClick = { searchMode = true }) {
-                            Icon(Icons.Default.Search, contentDescription = null, tint = Color.White)
+                            Icon(painterResource(R.drawable.ic_search), contentDescription = null, tint = c.textPrimary)
                         }
                     }
                     if (ch?.isAdmin == true && !searchMode) {
 
-                        IconButton(onClick = {
+                        TextButton(onClick = {
                             scope.launch(Dispatchers.IO) {
                                 val updated = ch.copy(isMuted = !ch.isMuted)
                                 ChannelManager.saveChannel(context, updated)
                                 withContext(Dispatchers.Main) { channel = updated }
                             }
                         }) {
-                            Text(if (ch.isMuted) "🔕" else "🔔", fontSize = 20.sp)
+                            Text(if (ch.isMuted) s.channelUnmute else s.channelMute,
+                                color = c.accent, fontSize = 14.sp, fontFamily = JetBrainsMono)
                         }
 
                         TextButton(onClick = {
@@ -246,7 +248,7 @@ fun ChannelFeedScreen(
                             clipboard.setPrimaryClip(ClipData.newPlainText("channel_link", link))
                             scope.launch { snackbarHostState.showSnackbar(s.channelLinkCopied) }
                         }) {
-                            Text(s.channelCopyLink, color = c.accent, fontSize = 13.sp, fontFamily = JetBrainsMono)
+                            Text(s.channelCopyLink, color = c.accent, fontSize = 15.sp, fontFamily = JetBrainsMono)
                         }
 
                         IconButton(onClick = {
@@ -255,18 +257,19 @@ fun ChannelFeedScreen(
                             editAvatar = ch.avatar
                             showEditChannelDialog = true
                         }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = null, tint = Color.White)
+                            Icon(painterResource(R.drawable.ic_menu), contentDescription = null, tint = c.textPrimary)
                         }
                     } else if (ch != null && !ch.isAdmin && !searchMode) {
 
-                        IconButton(onClick = {
+                        TextButton(onClick = {
                             scope.launch(Dispatchers.IO) {
                                 val updated = ch.copy(isMuted = !ch.isMuted)
                                 ChannelManager.saveChannel(context, updated)
                                 withContext(Dispatchers.Main) { channel = updated }
                             }
                         }) {
-                            Text(if (ch.isMuted) "🔕" else "🔔", fontSize = 20.sp)
+                            Text(if (ch.isMuted) s.channelUnmute else s.channelMute,
+                                color = c.accent, fontSize = 14.sp, fontFamily = JetBrainsMono)
                         }
 
                         TextButton(onClick = {
@@ -280,7 +283,7 @@ fun ChannelFeedScreen(
                                 withContext(Dispatchers.Main) { onBack() }
                             }
                         }) {
-                            Text(s.channelUnsubscribe, color = Color(0xFFFF4444), fontSize = 13.sp, fontFamily = JetBrainsMono)
+                            Text(s.channelUnsubscribe, color = Color(0xFFFF4444), fontSize = 15.sp, fontFamily = JetBrainsMono)
                         }
                     }
                 },
@@ -298,7 +301,8 @@ fun ChannelFeedScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = { imageLauncher.launch("image/*") }) {
-                            Text("📎", fontSize = 22.sp)
+                            Icon(painter = painterResource(R.drawable.ic_attach), contentDescription = null,
+                                tint = c.textPrimary, modifier = Modifier.size(22.dp))
                         }
                         OutlinedTextField(
                             value = postText,
@@ -309,14 +313,14 @@ fun ChannelFeedScreen(
                                     s.channelPostPlaceholder,
                                     color = c.textPrimary.copy(alpha = 0.4f),
                                     fontFamily = JetBrainsMono,
-                                    fontSize = 14.sp
+                                    fontSize = 16.sp
                                 )
                             },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = c.accent,
                                 unfocusedBorderColor = c.textPrimary.copy(alpha = 0.3f),
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
+                                focusedTextColor = c.textPrimary,
+                                unfocusedTextColor = c.textPrimary,
                                 cursorColor = c.accent
                             ),
                             shape = RoundedCornerShape(20.dp),
@@ -352,7 +356,8 @@ fun ChannelFeedScreen(
                                 }
                             }
                         ) {
-                            Text("➤", fontSize = 26.sp, color = c.accent)
+                            Icon(painterResource(R.drawable.ic_send_arrow), contentDescription = "Отправить",
+                                tint = c.accent, modifier = Modifier.size(22.dp))
                         }
                     }
                 }
@@ -394,13 +399,13 @@ fun ChannelFeedScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Text("📢", fontSize = 56.sp)
+                    Text("📢", fontSize = 58.sp)
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         s.chatsNoPosts,
                         color = c.textPrimary.copy(alpha = 0.5f),
                         fontFamily = JetBrainsMono,
-                        fontSize = 16.sp
+                        fontSize = 18.sp
                     )
                     if (ch?.isAdmin == true) {
                         Spacer(modifier = Modifier.height(8.dp))
@@ -408,7 +413,7 @@ fun ChannelFeedScreen(
                             s.channelWriteFirst,
                             color = c.textPrimary.copy(alpha = 0.35f),
                             fontFamily = JetBrainsMono,
-                            fontSize = 13.sp
+                            fontSize = 15.sp
                         )
                     }
                 }
@@ -426,9 +431,9 @@ fun ChannelFeedScreen(
                         item(key = "pinned_${pinnedPost.id}") {
                             Column {
                                 Text(
-                                    "📌 ${s.channelPinned}",
+                                    s.channelPinned,
                                     color = c.accent,
-                                    fontSize = 11.sp,
+                                    fontSize = 13.sp,
                                     fontFamily = JetBrainsMono,
                                     modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
                                 )
@@ -560,7 +565,7 @@ fun ChannelFeedScreen(
         AlertDialog(
             onDismissRequest = { forwardPost = null },
             containerColor = c.card,
-            title = { Text(s.channelForwardTitle, color = Color.White, fontFamily = JetBrainsMono) },
+            title = { Text(s.channelForwardTitle, color = c.textPrimary, fontFamily = JetBrainsMono) },
             text = {
                 if (contacts.isEmpty()) {
                     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -602,51 +607,51 @@ fun ChannelFeedScreen(
         AlertDialog(
             onDismissRequest = { showEditChannelDialog = false; showDeleteChannelConfirm = false },
             containerColor = c.card,
-            title = { Text(s.channelEditTitle, color = Color.White, fontFamily = JetBrainsMono) },
+            title = { Text(s.channelEditTitle, color = c.textPrimary, fontFamily = JetBrainsMono) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = editAvatar,
                         onValueChange = { editAvatar = it },
-                        label = { Text("Avatar", color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono, fontSize = 12.sp) },
+                        label = { Text("Avatar", color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono, fontSize = 14.sp) },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = c.accent,
                             unfocusedBorderColor = c.textPrimary.copy(alpha = 0.3f),
                             focusedLabelColor = c.accent,
                             unfocusedLabelColor = c.textPrimary.copy(alpha = 0.6f),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
+                            focusedTextColor = c.textPrimary,
+                            unfocusedTextColor = c.textPrimary,
                             cursorColor = c.accent
                         )
                     )
                     OutlinedTextField(
                         value = editName,
                         onValueChange = { editName = it },
-                        label = { Text(s.chatsChannelNameLabel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono, fontSize = 12.sp) },
+                        label = { Text(s.chatsChannelNameLabel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono, fontSize = 14.sp) },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = c.accent,
                             unfocusedBorderColor = c.textPrimary.copy(alpha = 0.3f),
                             focusedLabelColor = c.accent,
                             unfocusedLabelColor = c.textPrimary.copy(alpha = 0.6f),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
+                            focusedTextColor = c.textPrimary,
+                            unfocusedTextColor = c.textPrimary,
                             cursorColor = c.accent
                         )
                     )
                     OutlinedTextField(
                         value = editDesc,
                         onValueChange = { editDesc = it },
-                        label = { Text(s.chatsChannelDescLabel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono, fontSize = 12.sp) },
+                        label = { Text(s.chatsChannelDescLabel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono, fontSize = 14.sp) },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = c.accent,
                             unfocusedBorderColor = c.textPrimary.copy(alpha = 0.3f),
                             focusedLabelColor = c.accent,
                             unfocusedLabelColor = c.textPrimary.copy(alpha = 0.6f),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
+                            focusedTextColor = c.textPrimary,
+                            unfocusedTextColor = c.textPrimary,
                             cursorColor = c.accent
                         )
                     )
@@ -685,7 +690,7 @@ fun ChannelFeedScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = c.primaryBlue)
                 ) {
-                    Text(s.save, color = Color.White, fontFamily = JetBrainsMono)
+                    Text(s.save, color = if (c.isDark) Color.White else c.textPrimary, fontFamily = JetBrainsMono)
                 }
             },
             dismissButton = {
@@ -699,8 +704,8 @@ fun ChannelFeedScreen(
             AlertDialog(
                 onDismissRequest = { showDeleteChannelConfirm = false },
                 containerColor = c.card,
-                title = { Text(s.channelDeleteChannelTitle, color = Color.White, fontFamily = JetBrainsMono) },
-                text = { Text(s.channelDeleteChannelText, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 14.sp) },
+                title = { Text(s.channelDeleteChannelTitle, color = c.textPrimary, fontFamily = JetBrainsMono) },
+                text = { Text(s.channelDeleteChannelText, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 16.sp) },
                 confirmButton = {
                     Button(
                         onClick = {
@@ -758,21 +763,21 @@ fun ChannelPostCard(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(channelAvatar, fontSize = 18.sp)
+                Text(channelAvatar, fontSize = 20.sp)
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     channelName,
                     color = c.accent,
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = JetBrainsMono,
-                    fontSize = 13.sp
+                    fontSize = 15.sp
                 )
                 Spacer(modifier = Modifier.weight(1f))
                 Text(
                     dateFormat.format(Date(post.timestamp)),
                     color = c.textPrimary.copy(alpha = 0.45f),
                     fontFamily = JetBrainsMono,
-                    fontSize = 11.sp
+                    fontSize = 13.sp
                 )
             }
             if (post.text.isNotBlank()) {
@@ -781,7 +786,7 @@ fun ChannelPostCard(
                     post.text,
                     color = c.textPrimary,
                     fontFamily = JetBrainsMono,
-                    fontSize = 15.sp,
+                    fontSize = 17.sp,
                     lineHeight = 22.sp
                 )
             }
@@ -815,22 +820,22 @@ fun ChannelSubscribeDialog(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = CircleShape, color = c.topBar, modifier = Modifier.size(48.dp)) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text(linkData.channelAvatar, fontSize = 24.sp)
+                        Text(linkData.channelAvatar, fontSize = 26.sp)
                     }
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
-                    Text(s.channelDefault, color = c.accent, fontSize = 12.sp, fontFamily = JetBrainsMono)
-                    Text(linkData.channelName, color = Color.White, fontWeight = FontWeight.Bold, fontFamily = JetBrainsMono, fontSize = 18.sp)
+                    Text(s.channelDefault, color = c.accent, fontSize = 14.sp, fontFamily = JetBrainsMono)
+                    Text(linkData.channelName, color = c.textPrimary, fontWeight = FontWeight.Bold, fontFamily = JetBrainsMono, fontSize = 20.sp)
                 }
             }
         },
         text = {
-            Text(s.channelSubscribeConfirm, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 14.sp)
+            Text(s.channelSubscribeConfirm, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 16.sp)
         },
         confirmButton = {
             Button(onClick = onSubscribe, colors = ButtonDefaults.buttonColors(containerColor = c.primaryBlue)) {
-                Text(s.channelSubscribeBtn, color = Color.White, fontFamily = JetBrainsMono)
+                Text(s.channelSubscribeBtn, color = if (c.isDark) Color.White else c.textPrimary, fontFamily = JetBrainsMono)
             }
         },
         dismissButton = {

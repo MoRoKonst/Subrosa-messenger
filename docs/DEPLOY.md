@@ -135,6 +135,61 @@ docker-compose logs -f
 |---|---|---|
 | `SUBROSA_HOST` | `0.0.0.0` | Server bind address |
 | `SUBROSA_PORT` | `9000` | Server port (internal, not exposed) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | unset | Path to a Firebase service-account JSON — enables push notifications (FCM). See [Push Notifications](#push-notifications-fcm--deployment-profile) below before setting this. |
+
+### Push Notifications (FCM) — Deployment Profile
+
+Android kills background services without a system-level wake mechanism, so
+reliable message delivery while the app isn't in the foreground needs a push
+provider. Subrosa uses Firebase Cloud Messaging (FCM) for this — the same
+mechanism nearly every Android app relies on. **This is a real, explicit
+deployment choice, not a default you should leave unexamined**, because FCM
+means Google is genuinely in the data path (it sees, at minimum, a
+recipient's FCM token and the timing of a push — never message content,
+which stays end-to-end encrypted, but it is still a third party your firm
+does not control). Pick one of the two profiles below deliberately:
+
+**Profile A — Standard (FCM enabled, recommended for most firms)**
+
+```bash
+# In the server's environment (systemd unit, docker-compose environment:,
+# or .env — GOOGLE_APPLICATION_CREDENTIALS is a filesystem path, not a
+# secret value, so it's fine in any of these):
+GOOGLE_APPLICATION_CREDENTIALS=/opt/beacon/firebase-adminsdk.json
+```
+
+Copy the Firebase service-account JSON to the server, restrict its
+permissions (`chmod 600`), and point this variable at it — `subrosa_doctor.py`
+checks both that the file exists and that its permissions are restrictive.
+Background message delivery is then reliable even when the app isn't in the
+foreground, matching what users expect from a normal messaging app.
+
+**Profile B — Strict No-Third-Party (no FCM)**
+
+Leave `GOOGLE_APPLICATION_CREDENTIALS` unset entirely. The server's FCM code
+path is then inert — no request to Google is ever made, no FCM token is ever
+collected or stored. This is the right choice for a firm whose policy
+requires zero third-party data-path dependencies, full stop, even a metadata-
+only one.
+
+**The trade-off, stated plainly, not glossed over**: without FCM, background
+delivery depends entirely on the app maintaining its own WebSocket
+connection and Android's willingness to keep that connection's service
+alive — which Android does **not** guarantee on its own past a certain point
+(manufacturer-specific background-kill policies, Doze mode, battery
+optimization). In practice this means **messages sent while the recipient's
+app has been backgrounded for a while may arrive late, only once the app is
+next opened or the OS lets the background service reconnect** — not lost
+(everything queues server-side and via the anonymous-token mailbox), but
+materially less reliable as a live communication channel than Profile A.
+This is a genuine reliability cost, not a toggle to flip off casually for a
+"works like a normal messenger" expectation — but it is the correct choice
+for a deployment where the zero-third-party requirement is non-negotiable.
+
+Run [`Server/subrosa_doctor.py`](../Server/subrosa_doctor.py) after choosing
+either profile — it reports which one is active and flags a misconfigured
+Profile A (credentials path set but file missing, or overly permissive
+file permissions).
 
 ### Data Persistence
 

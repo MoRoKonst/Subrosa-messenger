@@ -2,6 +2,7 @@ package com.subrosa.messenger
 
 import android.content.Context
 import android.util.Base64
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -30,6 +31,21 @@ object BackupManager {
         GroupManager.clearAll(context)
         AnonTokenManager.clearAll(context)
         SessionKeyManager.deleteAllSessions()
+        // Found live 2026-08-30: a cached sender_cert (SECURITY.md item 32)
+        // is signed by the server over THIS device's fingerprint — it's
+        // exactly as identity-scoped as the EC keypair itself, but nothing
+        // cleared it here. After a restore swaps in a different identity,
+        // every outgoing sealed packet kept attaching the OLD identity's
+        // cert to messages now claiming to be from the NEW fingerprint —
+        // confirmed live via the recipient's own "sender_cert выписан на
+        // X, а from=Y — не совпадает" warning. Not currently a delivery
+        // blocker (that check is intentionally non-enforcing during
+        // rollout, see item 32's "Deployment gaps" note) but it's live,
+        // incorrect sealed-sender metadata reaching a real recipient, not a
+        // cosmetic log line. MessengerService requests a fresh one from the
+        // server automatically on next connect (see its post-register
+        // request_sender_cert call), same as any device that never had one.
+        SenderCertManager.clear(context)
     }
 
     /** "Я думаю, меня скомпрометировали" — identity-only reset. Deliberately
@@ -50,6 +66,18 @@ object BackupManager {
         AnonTokenManager.clearAll(context)
         SessionKeyManager.deleteAllSessions()
         CryptoManager.deleteKeys()
+        // Same reasoning as wipeCurrentIdentityData() above — a sender_cert
+        // is bound to the fingerprint being abandoned here.
+        SenderCertManager.clear(context)
+
+        // Must run BEFORE the SMK is locked/destroyed below — see
+        // DeviceKeyManager.clear()'s own comment: device_priv is SMK-wrapped,
+        // and the next register() sets up a brand-new SMK from scratch, under
+        // which the current device_priv can never decrypt again. Left
+        // uncleared, it silently rotted into an undecryptable blob instead
+        // of being treated as "no device key yet" for the new identity.
+        // Found in the 2026-09-13 DeviceKeyManager audit.
+        DeviceKeyManager.clear(context)
 
         StorageKeyManager.lock()
         context.deleteSharedPreferences("smk_config")
@@ -62,7 +90,7 @@ object BackupManager {
 
     fun getBackupFileName(): String {
         val sdf = java.text.SimpleDateFormat("yyyy_MM_dd", java.util.Locale.US)
-        return "beacon_backup_${sdf.format(java.util.Date())}.bin"
+        return "subrosa_backup_${sdf.format(java.util.Date())}.bin"
     }
 
     fun exportBackup(context: Context, password: String): String {
@@ -77,9 +105,25 @@ object BackupManager {
         val ecPrefs = EncryptedStorage.getEncryptedPrefs(context, "beacon_ec_keys_enc")
         val privStored = ecPrefs.getString("ec_priv", null)
         val pubB64     = ecPrefs.getString("ec_pub", null)
+        // Found live 2026-08-31: this used to be an `if (privStored != null
+        // && pubB64 != null)` around the "ec_private_key"/"ec_public_key"
+        // put() calls below with no else — if the identity keypair happened
+        // to be missing at export time (any state where CryptoManager.hasKeys()
+        // is false), exportBackup() silently produced a "successful" backup
+        // that just didn't carry the identity. importBackup() then silently
+        // skipped identity restore too (same shape of bug, see the check
+        // around "ec_private_key" further down), and the next connect
+        // silently minted a brand-new keypair — a totally different
+        // fingerprint, with zero indication to the user that anything was
+        // wrong. Failing loudly here is the only safe option: a backup that
+        // can't prove restoring it keeps the same fingerprint isn't a
+        // backup, it's a trap.
+        if (privStored == null || pubB64 == null) {
+            throw IllegalStateException("Не удалось найти ключ личности для бэкапа — обратитесь в поддержку, экспорт отменён во избежание бэкапа без личности")
+        }
 
         val backup = JSONObject().apply {
-            put("version", 6)
+            put("version", 7)
             put("timestamp", System.currentTimeMillis())
             put("totp_enabled", TotpManager.isEnabled(context))
             // Hashes only, not the raw codes — same principle as the secret
@@ -95,11 +139,62 @@ object BackupManager {
             put("username", username)
             put("display_name", displayName)
 
+            // MY_TOKENS — the tokens THIS device generated and handed out for
+            // others to reach it. Without these, a contact who wasn't backed
+            // up at the same time keeps holding tokens this device forgets
+            // the instant wipeCurrentIdentityData() clears its pool on
+            // restore — see AnonTokenManager.restoreMyTokens()'s comment.
+            // Not a new exposure: same reasoning as anon_tokens/mailbox_tag
+            // below, anyone with the backup+password already controls the
+            // full identity.
+            val myTokens = AnonTokenManager.getMyTokens(context)
+            if (myTokens.isNotEmpty()) {
+                put("my_tokens", JSONArray(myTokens))
+            }
+            put("my_mailbox_tag", AnonTokenManager.getOrCreateMyPersistentMailboxTag(context))
+
             if (privStored != null && pubB64 != null) {
                 val privRaw = StorageKeyManager.unwrapBytes(privStored)
                 put("ec_private_key", Base64.encodeToString(privRaw, Base64.NO_WRAP))
                 put("ec_public_key", pubB64)
                 privRaw.fill(0)
+            }
+
+            // Found live 2026-09-02: without this, every restore forces an
+            // unplanned SPK/PQ-KEM rotation with no grace period (the old
+            // one is physically gone — see WipeManager.hardWipe()) — every
+            // contact's already-cached copy of our bundle goes stale with
+            // nothing to bridge the gap, however carefully the "please
+            // refetch" notification is delivered afterward. Carrying the
+            // CURRENT prekey forward means a restore isn't a rotation event
+            // at all from a contact's point of view. See
+            // SessionKeyManager.restorePrekeyFromBackup()'s comment.
+            //
+            // Same "fail loudly, not silently" principle as the ec_priv/
+            // ec_pub check above (2026-08-31): exportCurrentPrekeyForBackup()
+            // returns null only if SessionKeyManager.initialize() never ran
+            // in this process (e.g. exporting before ever successfully
+            // connecting once) — silently producing a backup missing this
+            // block would look identical to a successful v7 export while
+            // quietly falling back to the exact pre-fix behavior on
+            // restore, with nothing telling the user why.
+            val prekey = SessionKeyManager.exportCurrentPrekeyForBackup()
+                ?: throw IllegalStateException("Ключи сессии ещё не готовы — подключитесь к серверу хотя бы раз, прежде чем делать бэкап")
+            put("spk_id", prekey.spkId)
+            put("spk_created_at", prekey.spkCreatedAt)
+            put("spk_public", Base64.encodeToString(prekey.spkPublic, Base64.NO_WRAP))
+            put("spk_private", Base64.encodeToString(prekey.spkPrivate, Base64.NO_WRAP))
+            put("pq_public", Base64.encodeToString(prekey.pqPublic, Base64.NO_WRAP))
+            put("pq_private", Base64.encodeToString(prekey.pqPrivate, Base64.NO_WRAP))
+
+            // Only the OPK id counter is worth carrying forward, not the
+            // actual one-time keypairs — see
+            // SessionKeyManager.restoreOpkCounterFromBackup()'s comment for
+            // why restoring real OPK key material broke on a second
+            // restore of the same file.
+            val opkCounter = SessionKeyManager.exportOpkCounterForBackup()
+            if (opkCounter > 0) {
+                put("opk_counter", opkCounter)
             }
 
             put("servers", JSONArray().apply {
@@ -109,6 +204,20 @@ object BackupManager {
                         put("port", server.port)
                         put("name", server.name)
                         put("enabled", server.enabled)
+                        // Found live 2026-09-02: path/accessCode used to be
+                        // dropped here. toWssUrl() appends `path` to build the
+                        // actual connect URL (e.g. the default server's "ws"
+                        // → ".../ws") — losing it on export meant
+                        // importBackup() below rebuilt this server with
+                        // path="" (the Server data class default), silently
+                        // changing the URL a restored device connects to from
+                        // ".../ws" to the bare origin. That origin doesn't
+                        // upgrade to a WebSocket, so every reconnect after a
+                        // restore failed the handshake ("Expected HTTP 101
+                        // response but was '200 OK'") — not a crypto/identity
+                        // bug, just a wrong URL.
+                        put("path", server.path)
+                        if (server.accessCode != null) put("accessCode", server.accessCode)
                     })
                 }
             })
@@ -121,6 +230,21 @@ object BackupManager {
                         val publicKey = ChatStorage.getContactPublicKey(context, contactId)
                         if (publicKey != null) {
                             put("public_key", publicKey)
+                        }
+                        // Found live 2026-08-30: only the classical EC key was ever
+                        // backed up here — the hybrid ML-KEM (post-quantum) key
+                        // handleFetchedPrekeyBundle() caches per contact
+                        // (ChatStorage.getContactPqPublicKey) was missing entirely.
+                        // sealPacketForRecipient()/sendAnonTokensTo() both require
+                        // it before they can seal anything for this contact, so a
+                        // restored device without it falls back to the slower
+                        // mailbox bootstrap for every single restored contact,
+                        // even ones it already had a fully established channel
+                        // with — until a live get_prekey_bundle round trip happens
+                        // to repopulate it.
+                        val pqPublicKey = ChatStorage.getContactPqPublicKey(context, contactId)
+                        if (pqPublicKey != null) {
+                            put("pq_public_key", Base64.encodeToString(pqPublicKey, Base64.NO_WRAP))
                         }
                         // Anon-routing state for this contact — without it, the
                         // first message to them after a restore has neither a
@@ -168,6 +292,14 @@ object BackupManager {
                         put("admins", JSONArray(group.admins))
                         put("createdBy", group.createdBy)
                         put("createdAt", group.createdAt)
+                        // Was missing entirely — Group.description existed
+                        // on this same data class but was never carried
+                        // into the backup, so exporting then reimporting a
+                        // group on Android itself silently lost its
+                        // description (Desktop's export/import already had
+                        // this field). Found in the 2026-09-13 version-7
+                        // cross-platform format audit.
+                        put("description", group.description)
 
                         if (group.groupKey != null) {
                             put("groupKey", Base64.encodeToString(group.groupKey, Base64.NO_WRAP))
@@ -225,6 +357,54 @@ object BackupManager {
             val backup = JSONObject(String(jsonBytes, Charsets.UTF_8))
             jsonBytes.fill(0)
 
+            // Captured before any of the SMK/UserStorage fixups below run —
+            // distinguishes "genuinely fresh device" (RegisterScreen's import
+            // dialog: no active session, nothing to preserve) from "already
+            // logged in, replacing the active identity with a different
+            // backup" (BackupScreen.kt: there IS an existing device login to
+            // preserve). See the restorePasswordHash() call further down.
+            val wasAlreadyActiveSession = StorageKeyManager.isUnlocked
+            val existingPasswordHash = if (wasAlreadyActiveSession) UserStorage.getPasswordHash(context) else null
+
+            // Found live 2026-08-30: this whole function unconditionally
+            // required StorageKeyManager.isUnlocked (see the TOTP check right
+            // below, and the EC-key restore further down) — fine for the
+            // "already logged in, importing a replacement identity" caller
+            // (BackupScreen.kt): isUnlocked is already true there (you can't
+            // reach Profile>Backup without an active unlocked session), so
+            // none of this block ever runs for that caller — it's scoped to
+            // !isUnlocked below, which an active session never is.
+            //
+            // The ONBOARDING caller (RegisterScreen.kt's import dialog) is
+            // the one that needed this. First attempt (2026-08-30) only
+            // handled the truly-fresh-install case (StorageKeyManager never
+            // set up at all) by calling setup() unconditionally when
+            // !isSetup(). Still failed the same way when isSetup() was
+            // already true but isUnlocked was false — a very common state in
+            // practice during testing: reinstalling the same debug APK over
+            // itself (adb install -r, or just tapping Install again) leaves
+            // the previous install's EncryptedSharedPreferences on disk,
+            // including "smk_config", so isSetup() sees a stale SMK from a
+            // session nobody ever actually unlocked in this process. Handled
+            // properly now: try unlocking the existing SMK with the backup
+            // password first (covers the rare case it happens to match);
+            // if that fails, this can only be onboarding-with-stale-data
+            // (an active logged-in session is never !isUnlocked, so this
+            // branch is unreachable for the already-logged-in caller) — safe
+            // to discard the orphaned SMK nobody has unlocked yet and set up
+            // fresh with the backup's password, which decrypting the backup
+            // just proved the caller actually knows.
+            if (!StorageKeyManager.isUnlocked) {
+                val alreadySetUp = StorageKeyManager.isSetup(context)
+                val unlockedExisting = alreadySetUp && StorageKeyManager.unlockWithPassword(context, password)
+                if (!unlockedExisting) {
+                    if (alreadySetUp) {
+                        context.deleteSharedPreferences("smk_config")
+                    }
+                    StorageKeyManager.setup(context, password)
+                }
+            }
+
             // Decision only, no state mutation yet (external review 2026-08-23):
             // TotpManager.enable()/disable() used to be called right here,
             // before wipeCurrentIdentityData() and before any of the actual
@@ -240,33 +420,49 @@ object BackupManager {
                 if (!StorageKeyManager.isUnlocked) {
                     return Result.failure(IllegalStateException("Приложение заблокировано — сначала разблокируйте его, чтобы импортировать бэкап"))
                 }
-                val recoveryHashes = backup.optJSONArray("totp_recovery_hashes")
-                val recoveryMatch = !recoveryCode.isNullOrBlank() && recoveryHashes != null &&
-                    (0 until recoveryHashes.length()).any { i ->
-                        recoveryHashes.getString(i) == TotpManager.hashRecoveryCode(recoveryCode)
-                    }
-                if (recoveryMatch) {
-                    // Same principle as the server-side device-gated flow's
-                    // recovery-code fallback: a code substitutes for the lost
-                    // secret exactly once, and leaves TOTP protection off
-                    // afterward rather than silently carrying the old,
-                    // now-partially-compromised secret forward — the caller
-                    // is expected to prompt the user to set it up fresh.
-                    // NOTE this "exactly once" is only enforced by whatever
-                    // gates re-registration server-side (device_id) -- this
-                    // local check just compares a hash against the backup
-                    // file's own embedded list, so decrypting the same backup
-                    // file with the same code again reproduces the same
-                    // match every time. Not fixable client-side in a way that
-                    // means anything; flagged, not silently claimed as solved.
-                    recoveryUsed = true
-                } else if (!totpSecret.isNullOrBlank() && !totpCode.isNullOrBlank()) {
-                    if (!TotpManager.verifyCode(totpSecret, totpCode)) {
-                        return Result.failure(IllegalStateException("Неверный TOTP-код"))
-                    }
+                // Order matters (fixed 2026-08-30): the recovery-code check
+                // used to run FIRST, unconditionally taking priority over a
+                // valid secret+code whenever the caller happened to fill in
+                // both — the recovery-code field's label says "or, if the
+                // secret is lost," but nothing in the code actually treated
+                // it as a fallback. A user who filled every field they had
+                // (understandable — the dialog shows all three at once) got
+                // their TOTP protection silently reset and a recovery code
+                // burned, even though their live secret+code were correct
+                // and nothing needed resetting at all. Now secret+code is
+                // tried first when present; recovery-code is only consulted
+                // when secret+code weren't provided or didn't verify.
+                if (!totpSecret.isNullOrBlank() && !totpCode.isNullOrBlank() && TotpManager.verifyCode(totpSecret, totpCode)) {
                     totpSecretToEnable = totpSecret
                 } else {
-                    return Result.failure(IllegalStateException("Этот бэкап защищён TOTP — введите секрет и текущий код, либо один из резервных кодов"))
+                    val recoveryHashes = backup.optJSONArray("totp_recovery_hashes")
+                    val recoveryMatch = !recoveryCode.isNullOrBlank() && recoveryHashes != null &&
+                        (0 until recoveryHashes.length()).any { i ->
+                            recoveryHashes.getString(i) == TotpManager.hashRecoveryCode(recoveryCode)
+                        }
+                    if (recoveryMatch) {
+                        // Same principle as the server-side device-gated flow's
+                        // recovery-code fallback: a code substitutes for the lost
+                        // secret exactly once, and leaves TOTP protection off
+                        // afterward rather than silently carrying the old,
+                        // now-partially-compromised secret forward — the caller
+                        // is expected to prompt the user to set it up fresh.
+                        // NOTE this "exactly once" is only enforced by whatever
+                        // gates re-registration server-side (device_id) -- this
+                        // local check just compares a hash against the backup
+                        // file's own embedded list, so decrypting the same backup
+                        // file with the same code again reproduces the same
+                        // match every time. Not fixable client-side in a way that
+                        // means anything; flagged, not silently claimed as solved.
+                        recoveryUsed = true
+                    } else if (!totpSecret.isNullOrBlank() && !totpCode.isNullOrBlank()) {
+                        // Secret+code were given but didn't verify, and no valid
+                        // recovery code either — a specific, more useful error
+                        // than the generic "nothing was provided" one below.
+                        return Result.failure(IllegalStateException("Неверный TOTP-код"))
+                    } else {
+                        return Result.failure(IllegalStateException("Этот бэкап защищён TOTP — введите секрет и текущий код, либо один из резервных кодов"))
+                    }
                 }
             }
 
@@ -281,6 +477,61 @@ object BackupManager {
             // there yet).
             wipeCurrentIdentityData(context)
 
+            // Restore MY_TOKENS/my mailbox tag exactly as they were at backup
+            // time — must happen right after the wipe above, before
+            // connect()'s next subscribe_tokens call picks up whatever's in
+            // AnonTokenManager. See AnonTokenManager.restoreMyTokens()'s
+            // comment: without this, a contact who wasn't backed up keeps
+            // holding tokens/a mailbox address this device would otherwise
+            // forget and never resubscribe/repoll, silently orphaning them.
+            val myTokensArr = backup.optJSONArray("my_tokens")
+            if (myTokensArr != null) {
+                val myTokens = (0 until myTokensArr.length()).map { myTokensArr.getString(it) }
+                AnonTokenManager.restoreMyTokens(context, myTokens)
+            }
+            backup.optString("my_mailbox_tag", null)?.let { tag ->
+                AnonTokenManager.syncMyPersistentMailboxTag(context, tag)
+            }
+
+            // Found live 2026-08-30, same root cause as the StorageKeyManager
+            // gap above: wipeCurrentIdentityData()'s UserStorage.logout()
+            // deletes the entire user_prefs file (username, password hash,
+            // everything) and nothing recreated it — UserStorage.setUserId()
+            // a bit further down only ever touches the user_id field. Left
+            // isRegistered()/checkPassword() broken after ANY successful
+            // restore, onboarding or already-logged-in alike: on the
+            // onboarding path there was never a registration to begin with;
+            // on the already-logged-in "replace my identity with a different
+            // backup" path, the CURRENT device login silently stopped
+            // working the moment this returned success. Re-registers using
+            // the backup's own saved username and (for now) the backup's own
+            // password — correct as the FINAL state only for the genuinely
+            // fresh-device case; restorePasswordHash() below immediately
+            // undoes the password part for the already-logged-in case.
+            UserStorage.register(context, backup.optString("username", "restored_user"), password)
+
+            // Bug found live 2026-08-30, reported directly ("пароль от
+            // аккаунта после бэка не подходит"): for the already-logged-in
+            // "replace identity" path, StorageKeyManager's SMK is
+            // deliberately left untouched (still wrapped with the device's
+            // EXISTING password — see the isUnlocked guard above, which
+            // skips re-setup entirely when a session is already active). But
+            // register() just above unconditionally overwrote UserStorage's
+            // password hash with the BACKUP's password regardless — leaving
+            // the SMK and the login-check hash wrapped by two DIFFERENT
+            // passwords. Neither password then worked fully on the next
+            // login: the device's old password failed checkPassword()
+            // outright, and the backup's password passed checkPassword() but
+            // then failed to unlock the (untouched) SMK. Restoring the
+            // captured pre-wipe hash here undoes register()'s password
+            // change for this case only — the device's own login password
+            // must not silently change just because the active identity did
+            // (same "device-level, not identity-level" principle already
+            // applied to TOTP/panic-password/wipe-config elsewhere).
+            if (wasAlreadyActiveSession && existingPasswordHash != null) {
+                UserStorage.restorePasswordHash(context, existingPasswordHash)
+            }
+
             val version = backup.optInt("version", 1)
 
             if (version >= 5) {
@@ -290,6 +541,20 @@ object BackupManager {
                 }
             }
 
+            // Found live 2026-08-31: this block used to be silently skipped
+            // whenever the backup lacked "ec_private_key"/"ec_public_key"
+            // (older exports made before commit b686914, or an export hit by
+            // the sibling bug in exportBackup() above) — no error, no
+            // warning, just Result.success("Импортировано успешно") further
+            // down as if nothing was wrong. Identity never got restored;
+            // CryptoManager.hasKeys() stayed false, so the very next connect
+            // silently generated a brand-new keypair (see
+            // MessengerService.kt's `if (!CryptoManager.hasKeys())
+            // generateKeyPair()`) — a completely different fingerprint,
+            // discovered only much later as "contacts can't reach me after
+            // restore." identityRestored below drives an explicit warning in
+            // the final result message instead of a silent no-op.
+            var identityRestored = false
             if (version >= 6 && backup.has("ec_private_key") && backup.has("ec_public_key")) {
                 if (!StorageKeyManager.isUnlocked) {
                     return Result.failure(IllegalStateException("SMK не разблокирован — невозможно безопасно сохранить приватный ключ"))
@@ -306,7 +571,40 @@ object BackupManager {
                     val digest = java.security.MessageDigest.getInstance("SHA-256").digest(pubBytes)
                     val restoredUserId = digest.take(8).joinToString("") { "%02X".format(it) }
                     UserStorage.setUserId(context, restoredUserId)
+                    identityRestored = true
                 } catch (_: Exception) {}
+            }
+
+            // Must run right after the EC identity restore above, while
+            // StorageKeyManager is still guaranteed unlocked (same check),
+            // and before this process's SessionKeyManager.initialize() ever
+            // runs — see restorePrekeyFromBackup()'s comment for why this
+            // is the real fix for the "contacts can't reach me after
+            // restore" BAD_DECRYPT loop, not just a mitigation for it.
+            if (version >= 7 && backup.has("spk_public") && backup.has("pq_public")) {
+                try {
+                    SessionKeyManager.restorePrekeyFromBackup(
+                        context,
+                        SessionKeyManager.PrekeySnapshot(
+                            spkId = backup.getInt("spk_id"),
+                            spkCreatedAt = backup.getLong("spk_created_at"),
+                            spkPublic = Base64.decode(backup.getString("spk_public"), Base64.NO_WRAP),
+                            spkPrivate = Base64.decode(backup.getString("spk_private"), Base64.NO_WRAP),
+                            pqPublic = Base64.decode(backup.getString("pq_public"), Base64.NO_WRAP),
+                            pqPrivate = Base64.decode(backup.getString("pq_private"), Base64.NO_WRAP)
+                        )
+                    )
+                } catch (e: Exception) {
+                    Log.w("BackupManager", "Не удалось восстановить prekey из бэкапа: ${e.message}")
+                }
+            }
+
+            if (version >= 7 && backup.has("opk_counter")) {
+                try {
+                    SessionKeyManager.restoreOpkCounterFromBackup(context, backup.getInt("opk_counter"))
+                } catch (e: Exception) {
+                    Log.w("BackupManager", "Не удалось поднять OPK-счётчик из бэкапа: ${e.message}")
+                }
             }
 
             // Captured only now, after the identity above may have just been
@@ -323,10 +621,12 @@ object BackupManager {
                 for (i in 0 until servers.length()) {
                     val obj = servers.getJSONObject(i)
                     serverList.add(ServerManager.Server(
-                        host    = obj.getString("host"),
-                        port    = obj.getInt("port"),
-                        name    = obj.getString("name"),
-                        enabled = obj.getBoolean("enabled")
+                        host       = obj.getString("host"),
+                        port       = obj.getInt("port"),
+                        name       = obj.getString("name"),
+                        enabled    = obj.getBoolean("enabled"),
+                        path       = obj.optString("path", ""),
+                        accessCode = obj.optString("accessCode", null)
                     ))
                 }
                 ServerManager.saveServers(context, serverList)
@@ -343,6 +643,9 @@ object BackupManager {
 
                     if (obj.has("public_key")) {
                         ChatStorage.saveContactPublicKey(context, contactId, obj.getString("public_key"))
+                    }
+                    if (obj.has("pq_public_key")) {
+                        ChatStorage.saveContactPqPublicKey(context, contactId, Base64.decode(obj.getString("pq_public_key"), Base64.NO_WRAP))
                     }
 
                     val tokensArr = obj.optJSONArray("anon_tokens")
@@ -414,7 +717,8 @@ object BackupManager {
                         admins = admins,
                         createdBy = obj.getString("createdBy"),
                         createdAt = obj.getLong("createdAt"),
-                        groupKey = groupKey
+                        groupKey = groupKey,
+                        description = obj.optString("description", "")
                     )
 
                     GroupManager.saveGroup(context, group)
@@ -452,10 +756,14 @@ object BackupManager {
                 TotpManager.enable(context, totpSecretToEnable)
             }
 
+            val identityWarning = if (!identityRestored) {
+                " ВНИМАНИЕ: этот бэкап не содержал ключ личности — у вас НОВЫЙ фингерпринт, старые контакты вас не найдут, пока вы не обменяетесь с ними инвайт-кодом заново."
+            } else ""
+
             if (recoveryUsed) {
-                Result.success("Импортировано успешно (версия $version). TOTP-защита сброшена резервным кодом — включите её заново в настройках.")
+                Result.success("Импортировано успешно (версия $version). TOTP-защита сброшена резервным кодом — включите её заново в настройках.$identityWarning")
             } else {
-                Result.success("Импортировано успешно (версия $version)")
+                Result.success("Импортировано успешно (версия $version)$identityWarning")
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -535,7 +843,7 @@ object BackupManager {
             gen.generateBytes(passwordChars, key)
             return key
         } finally {
-            passwordChars.fill(' ')
+            passwordChars.fill('\u0000')
         }
     }
 }

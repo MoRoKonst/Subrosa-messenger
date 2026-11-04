@@ -3,14 +3,11 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-
-    <!-- Checkmark: stroke-only V path -->
     <path
-        android:pathData="M4,12 L10,18 L20,6"
+        android:pathData="M5 12l5 5l10 -10"
         android:fillColor="#00000000"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="2.2"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"/>
-
 </vector>

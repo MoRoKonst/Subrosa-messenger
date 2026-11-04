@@ -46,6 +46,7 @@ import android.net.Uri
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.subrosa.messenger.GroupInfoScreen
 import com.google.android.datatransport.BuildConfig
+import com.subrosa.messenger.ui.components.IconTileColors
 
 class MainActivity : FragmentActivity() {
     companion object {
@@ -126,8 +127,29 @@ class MainActivity : FragmentActivity() {
         ParanoidMode.init(this)
         HoneyTokenManager.init(this)
 
-        // TEMP: disabled for local screenshot-based testing this session — MUST be restored before any real build.
-        // window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        // Blocks the system screenshot shortcut, screen-recording apps, and a
+        // live Recents-overview thumbnail of the real UI, unconditionally —
+        // not just under calculator disguise (see docs/SECURITY.md's Screen
+        // Protection section and docs/THREAT_MODEL.md § I).
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+
+        // Calculator disguise must also hold up in the Recents/app-switcher
+        // overview, not just on the home screen — the activity-alias swap in
+        // UserStorage.setCalculatorDisguise() only changes the launcher icon;
+        // it does nothing for an already-running task, whose Recents card
+        // still shows this Activity's real manifest label/icon. FLAG_SECURE
+        // above already blanks the live screenshot itself; setTaskDescription
+        // additionally overrides the Recents card's label/icon to match the
+        // calculator identity — together there's no race with the OS's
+        // screenshot timing to win, unlike swapping the composable's own
+        // screen state. Toggling the pref in WipeSettingsScreen kills and
+        // restarts this process (see setCalculatorDisguise()'s doc comment),
+        // so re-reading it here on every onCreate is sufficient — no reactive
+        // wiring needed.
+        if (UserStorage.getCalculatorDisguise(this)) {
+            val calcIcon = android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher_calc)
+            setTaskDescription(android.app.ActivityManager.TaskDescription("Калькулятор", calcIcon))
+        }
 
         window.decorView.filterTouchesWhenObscured = true
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -202,7 +224,7 @@ class MainActivity : FragmentActivity() {
                         }
                     }
 
-                    val appFont = FontFamily(Font(R.font.jetbrainsmono_regular))
+                    val appFont = com.subrosa.messenger.ui.theme.Inter
                     val result = rootCheckResult
                     val s = LocalStrings.current
 
@@ -212,85 +234,85 @@ class MainActivity : FragmentActivity() {
 
                         signatureTampered -> AlertDialog(
                             onDismissRequest = {},
-                            containerColor = Color(0xFF1a0a0a),
-                            title = { Text(s.tamperTitle, color = Color(0xFFFF4444), fontFamily = appFont) },
+                            containerColor = subrosaColors.dialog,
+                            title = { Text(s.tamperTitle, color = subrosaColors.error, fontFamily = appFont) },
                             text = {
                                 Text(
                                     s.tamperText,
-                                    color = Color(0xFFE0E6FF),
+                                    color = subrosaColors.textPrimary,
                                     fontFamily = appFont,
-                                    fontSize = 14.sp
+                                    fontSize = 16.sp
                                 )
                             },
                             confirmButton = {
                                 TextButton(onClick = { finish() }) {
-                                    Text(s.tamperClose, color = Color(0xFFFF4444), fontFamily = appFont)
+                                    Text(s.tamperClose, color = subrosaColors.error, fontFamily = appFont)
                                 }
                             }
                         )
                         result?.level == RootDetector.RootLevel.DANGER -> AlertDialog(
                             onDismissRequest = {},
-                            containerColor = Color(0xFF1a0a0a),
-                            title = { Text(s.rootDangerTitle, color = Color(0xFFFF4444), fontFamily = appFont) },
+                            containerColor = subrosaColors.dialog,
+                            title = { Text(s.rootDangerTitle, color = subrosaColors.error, fontFamily = appFont) },
                             text = {
                                 Column {
                                     Text(
                                         s.rootDangerText,
-                                        color = Color(0xFFE0E6FF),
+                                        color = subrosaColors.textPrimary,
                                         fontFamily = appFont,
-                                        fontSize = 14.sp
+                                        fontSize = 16.sp
                                     )
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Text(
                                         s.rootDangerReasons(result.reasons.joinToString("\n") { "• ${s.rootReasonText(it)}" }),
-                                        color = Color(0xFFFF8888),
+                                        color = subrosaColors.error.copy(alpha = 0.85f),
                                         fontFamily = appFont,
-                                        fontSize = 13.sp
+                                        fontSize = 15.sp
                                     )
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Text(
                                         s.rootDangerRecommend,
-                                        color = Color(0xFFE0E6FF).copy(alpha = 0.7f),
+                                        color = subrosaColors.textPrimary.copy(alpha = 0.7f),
                                         fontFamily = appFont,
-                                        fontSize = 13.sp
+                                        fontSize = 15.sp
                                     )
                                 }
                             },
                             confirmButton = {
                                 TextButton(onClick = { rootCheckResult = null }) {
-                                    Text(s.rootDangerContinue, color = Color(0xFFFF8888), fontFamily = appFont)
+                                    Text(s.rootDangerContinue, color = subrosaColors.error.copy(alpha = 0.85f), fontFamily = appFont)
                                 }
                             },
                             dismissButton = {
                                 TextButton(onClick = { finish() }) {
-                                    Text(s.close, color = Color(0xFFD9A566), fontFamily = appFont)
+                                    Text(s.close, color = subrosaColors.accent, fontFamily = appFont)
                                 }
                             }
                         )
                         result?.level == RootDetector.RootLevel.WARNING -> AlertDialog(
                             onDismissRequest = { rootCheckResult = null },
-                            containerColor = Color(0xFF4A151A),
-                            title = { Text(s.rootWarningTitle, color = Color(0xFFFFCC00), fontFamily = appFont) },
+                            containerColor = subrosaColors.dialog,
+                            title = { Text(s.rootWarningTitle, color = IconTileColors.warningAmber, fontFamily = appFont) },
                             text = {
                                 Column {
                                     Text(
                                         s.rootWarningText,
-                                        color = Color(0xFFE0E6FF),
+                                        color = subrosaColors.textPrimary,
                                         fontFamily = appFont,
-                                        fontSize = 14.sp
+                                        fontSize = 16.sp
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
                                         "• ${s.rootReasonText(result.reasons.first())}",
-                                        color = Color(0xFFFFCC88),
+                                        color = IconTileColors.warningAmber,
                                         fontFamily = appFont,
-                                        fontSize = 13.sp
+                                        fontSize = 15.sp
                                     )
                                 }
                             },
                             confirmButton = {
                                 TextButton(onClick = { rootCheckResult = null }) {
-                                    Text(s.rootWarningConfirm, color = Color(0xFFD9A566), fontFamily = appFont)
+                                    Text(s.rootWarningConfirm, color = subrosaColors.accent, fontFamily = appFont)
                                 }
                             }
                         )
@@ -459,7 +481,7 @@ class MainActivity : FragmentActivity() {
         android.app.AlertDialog.Builder(this)
             .setTitle(s.spyAppsTitle)
             .setMessage(
-                "⚠️ ${if (UserStorage.getLanguage(this) == "en")
+                "${if (UserStorage.getLanguage(this) == "en")
                     "A service that can read the screen or simulate taps just became active:"
                     else "Только что активирована служба, которая может читать экран или имитировать нажатия:"
                 }\n\n${newThreats.joinToString("\n") { "  • $it" }}"
@@ -552,7 +574,7 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun TorLoadingScreen(progress: Int, status: String) {
     val c = LocalSubrosaColors.current
-    val appFont = FontFamily(Font(R.font.jetbrainsmono_regular))
+    val appFont = com.subrosa.messenger.ui.theme.Inter
 
     Box(
         modifier = Modifier
@@ -564,20 +586,20 @@ fun TorLoadingScreen(progress: Int, status: String) {
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(32.dp)
         ) {
-            Text("🧅", fontSize = 64.sp, modifier = Modifier.padding(bottom = 24.dp))
-
             Text(
                 "Subrosa Messenger",
-                fontSize = 22.sp,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = c.accent,
-                fontFamily = appFont,
+                // App name/brand text — the one heading spot the user
+                // explicitly wants in the serif display face.
+                fontFamily = com.subrosa.messenger.ui.theme.NotoSerifJP,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
             Text(
                 LocalStrings.current.torConnecting,
-                fontSize = 14.sp,
+                fontSize = 16.sp,
                 color = c.textPrimary.copy(alpha = 0.7f),
                 fontFamily = appFont,
                 modifier = Modifier.padding(bottom = 32.dp)
@@ -604,7 +626,7 @@ fun TorLoadingScreen(progress: Int, status: String) {
 
             Text(
                 "$progress%  $status",
-                fontSize = 13.sp,
+                fontSize = 15.sp,
                 color = c.accent,
                 fontFamily = appFont
             )
@@ -613,7 +635,7 @@ fun TorLoadingScreen(progress: Int, status: String) {
 
             Text(
                 LocalStrings.current.torIpHidden,
-                fontSize = 12.sp,
+                fontSize = 14.sp,
                 color = c.textPrimary.copy(alpha = 0.4f),
                 fontFamily = appFont
             )
@@ -691,7 +713,7 @@ private fun RecoveryCodeGate() {
             title = { Text(s.totpMandatoryTitle) },
             text = {
                 Column {
-                    Text(s.totpRecoveryPrompt, fontSize = 13.sp)
+                    Text(s.totpRecoveryPrompt, fontSize = 15.sp)
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = code,
@@ -703,7 +725,7 @@ private fun RecoveryCodeGate() {
                     )
                     if (error) {
                         Spacer(Modifier.height(4.dp))
-                        Text(s.totpRecoveryErr, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                        Text(s.totpRecoveryErr, color = MaterialTheme.colorScheme.error, fontSize = 14.sp)
                     }
                 }
             },
@@ -726,6 +748,7 @@ private fun RecoveryCodeGate() {
 fun AppNavigation() {
     val context = LocalContext.current
     val s = LocalStrings.current
+    val c = LocalSubrosaColors.current
 
     var torReady by remember { mutableStateOf(TorManager.isConnected || !UserStorage.isTorEnabled(context)) }
     var torProgress by remember { mutableStateOf(TorManager.bootstrapProgress) }
@@ -764,6 +787,7 @@ fun AppNavigation() {
     var openedChat by remember { mutableStateOf("") }
     var openedChannelId by remember { mutableStateOf("") }
     var verifyKeyContact by remember { mutableStateOf("") }
+    var pendingChatSearch by remember { mutableStateOf(false) }
 
     var callFromUser  by remember { mutableStateOf("") }
     var callIsVideo   by remember { mutableStateOf(false) }
@@ -953,12 +977,12 @@ fun AppNavigation() {
             }
         })
 
-        "backup" -> BackupScreen(onBack = { screen = "profile" })
-        "servers" -> ServersScreen(onBack = { screen = "profile" })
-        "security_diagnostics" -> SecurityDiagnosticsScreen(onBack = { screen = "profile" })
-        "security_guide" -> SecurityGuideScreen(onBack = { screen = "profile" })
-        "wipe_settings" -> WipeSettingsScreen(onBack = { screen = "profile" })
-        "totp_settings" -> TotpSettingsScreen(onBack = { screen = "profile" })
+        "backup" -> BackupScreen(onBack = { screen = "general_settings" })
+        "servers" -> ServersScreen(onBack = { screen = "general_settings" })
+        "security_diagnostics" -> SecurityDiagnosticsScreen(onBack = { screen = "security_settings" })
+        "security_guide" -> SecurityGuideScreen(onBack = { screen = "security_settings" })
+        "wipe_settings" -> WipeSettingsScreen(onBack = { screen = "security_settings" })
+        "totp_settings" -> TotpSettingsScreen(onBack = { screen = "security_settings" })
 
         "incoming_call" -> IncomingCallScreen(
             from    = callFromUser,
@@ -1006,7 +1030,16 @@ fun AppNavigation() {
 
         "group_info" -> GroupInfoScreen(
             groupId = openedChat,
-            onBack = { screen = "group_chat" }
+            onBack = { screen = "group_chat" },
+            onGroupGone = { screen = "chats" }
+        )
+
+        "contact_info" -> ContactInfoScreen(
+            contactId = openedChat,
+            onBack = { screen = "chat" },
+            onContactGone = { screen = "chats" },
+            onOpenVerify = { verifyKeyContact = openedChat; screen = "verify_key" },
+            onOpenChatSearch = { pendingChatSearch = true; screen = "chat" }
         )
 
         "register" -> RegisterScreen(
@@ -1015,11 +1048,26 @@ fun AppNavigation() {
                 if (CryptoManager.hasKeys()) {
                     context.startForegroundService(Intent(context, MessengerService::class.java))
                 }
-                // Mandatory step, not optional — TOTP for new-device
-                // registration only protects an account once it's actually
-                // set up, so a brand-new account is defenseless until this
-                // runs. See docs/ISSUE_backup_identity_hijack.md.
-                screen = "totp_setup_required"
+                // Mandatory step for a genuinely fresh account — TOTP for
+                // new-device registration only protects an account once it's
+                // actually set up, so a brand-new account is defenseless
+                // until this runs. See docs/ISSUE_backup_identity_hijack.md.
+                //
+                // But NOT unconditional (found live 2026-08-30): this same
+                // callback also fires after a successful backup restore
+                // (RegisterScreen's import dialog), which can ALREADY have
+                // enabled TOTP if the user provided the correct secret+code
+                // (BackupManager.importBackup() calls TotpManager.enable()
+                // right before returning success). Forcing this screen
+                // regardless made the user re-enter the exact TOTP code they
+                // just typed into the import dialog a moment earlier, for no
+                // reason — this mirrors the check the ordinary login path
+                // (onLoggedIn below) already makes.
+                if (!TotpManager.isEnabled(context)) {
+                    screen = "totp_setup_required"
+                } else {
+                    screen = "battery_optimization_prompt"
+                }
             }
         )
 
@@ -1095,6 +1143,8 @@ fun AppNavigation() {
             onOpenChat = { contact -> openedChat = contact; screen = "chat" },
             onOpenProfile = { screen = "profile" },
             onOpenGroupChat = { groupId -> openedChat = groupId; screen = "group_chat" },
+            onOpenGroupInfo = { groupId -> openedChat = groupId; screen = "group_info" },
+            onOpenContactInfo = { contact -> openedChat = contact; screen = "contact_info" },
             onCreateGroup = { screen = "create_group" },
             onOpenChannel = { channelId -> openedChannelId = channelId; screen = "channel_feed" },
             pendingChannelLink = pendingChannelLinkVal,
@@ -1103,27 +1153,39 @@ fun AppNavigation() {
 
         "profile" -> ProfileScreen(
             onBack = { screen = "chats" },
-            onOpenServers = { screen = "servers" },
-            onOpenBackup = { screen = "backup" },
-            onOpenDiagnostics = { screen = "security_diagnostics" },
-            onOpenWipeSettings = { screen = "wipe_settings" },
-            onOpenTotpSettings = { screen = "totp_settings" },
-            onOpenSecurityGuide = { screen = "security_guide" },
-            onOpenChangePassword = { screen = "change_password" }
+            onOpenGeneralSettings = { screen = "general_settings" },
+            onOpenSecuritySettings = { screen = "security_settings" }
         )
 
-        "change_password" -> ChangePasswordScreen(onBack = { screen = "profile" })
+        "security_settings" -> SecuritySettingsScreen(
+            onBack = { screen = "profile" },
+            onOpenSecurityGuide = { screen = "security_guide" },
+            onOpenChangePassword = { screen = "change_password" },
+            onOpenTotpSettings = { screen = "totp_settings" },
+            onOpenDiagnostics = { screen = "security_diagnostics" },
+            onOpenWipeSettings = { screen = "wipe_settings" }
+        )
+
+        "general_settings" -> GeneralSettingsScreen(
+            onBack = { screen = "profile" },
+            onOpenServers = { screen = "servers" },
+            onOpenBackup = { screen = "backup" }
+        )
+
+        "change_password" -> ChangePasswordScreen(onBack = { screen = "security_settings" })
 
         "verify_key" -> VerifyKeyScreen(
             contactId = verifyKeyContact,
-            onBack = { screen = "chat" }
+            onBack = { screen = "contact_info" }
         )
 
         "chat" -> ChatScreen(
             username = UserStorage.getUserId(context),
             recipient = openedChat,
             onBack = { screen = "chats" },
-            onVerifyKey = { verifyKeyContact = openedChat; screen = "verify_key" },
+            onOpenContactInfo = { screen = "contact_info" },
+            initialSearchMode = pendingChatSearch,
+            onSearchModeConsumed = { pendingChatSearch = false },
             onStartCall = { isVideo ->
                 callFromUser = openedChat
                 callIsGroup  = false
@@ -1159,11 +1221,16 @@ fun AppNavigation() {
         exit  = fadeOut(tween(320)) + scaleOut(tween(360), targetScale = 1.06f),
         modifier = Modifier.fillMaxSize()
     ) {
-        val lockFont = FontFamily(Font(R.font.jetbrainsmono_regular))
+        val lockFont = com.subrosa.messenger.ui.theme.Inter
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(Color(0xFF2B0F14), Color(0xFF180A0C)))),
+                // Was a hardcoded dark-burgundy gradient regardless of the
+                // active theme — the lock screen is the first thing a user
+                // sees after unlocking, and stayed permanently dark even
+                // with the LIGHT theme selected. Found in the light-theme
+                // sepia audit, 2026-09-22.
+                .background(Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))),
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -1172,8 +1239,8 @@ fun AppNavigation() {
                     .padding(32.dp)
                     .widthIn(max = 340.dp)
             ) {
-                Text("🔒", fontSize = 64.sp, modifier = Modifier.padding(bottom = 24.dp))
-                Text(s.lockTitle, fontSize = 18.sp, color = Color.White, fontFamily = lockFont)
+                Text(s.lockTitle, fontSize = 20.sp, color = c.textPrimary, fontFamily = lockFont,
+                    modifier = Modifier.padding(bottom = 24.dp))
                 Spacer(modifier = Modifier.height(24.dp))
 
                 OutlinedTextField(
@@ -1215,13 +1282,13 @@ fun AppNavigation() {
                         .fillMaxWidth()
                         .focusRequester(lockFocusRequester),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFFC77B4F),
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                        focusedLabelColor = Color(0xFFC77B4F),
-                        unfocusedLabelColor = Color.White.copy(alpha = 0.5f),
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = Color(0xFFC77B4F),
+                        focusedBorderColor = c.accent,
+                        unfocusedBorderColor = c.textPrimary.copy(alpha = 0.3f),
+                        focusedLabelColor = c.accent,
+                        unfocusedLabelColor = c.textPrimary.copy(alpha = 0.5f),
+                        focusedTextColor = c.textPrimary,
+                        unfocusedTextColor = c.textPrimary,
+                        cursorColor = c.accent,
                         errorBorderColor = Color(0xFFE74C3C),
                         errorLabelColor = Color(0xFFE74C3C)
                     )
@@ -1249,9 +1316,15 @@ fun AppNavigation() {
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC77B4F))
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = c.accent,
+                        // c.accent is bright mint on every theme now; white
+                        // text (Theme.kt's global onPrimary default) stays
+                        // correct on NAVY/DARK but fails contrast in LIGHT.
+                        contentColor = if (c.isDark) Color.White else c.textPrimary
+                    )
                 ) {
-                    Text(s.loginButton, fontFamily = lockFont, fontSize = 16.sp)
+                    Text(s.loginButton, fontFamily = lockFont, fontSize = 18.sp)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1288,9 +1361,9 @@ fun AppNavigation() {
                         biometricPrompt.authenticate(promptInfo)
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.3f))
+                    border = androidx.compose.foundation.BorderStroke(1.dp, c.textPrimary.copy(alpha = 0.3f))
                 ) {
-                    Text(s.lockUnlock, fontFamily = lockFont, fontSize = 16.sp, color = Color.White)
+                    Text(s.lockUnlock, fontFamily = lockFont, fontSize = 18.sp, color = c.textPrimary)
                 }
                 }
             }

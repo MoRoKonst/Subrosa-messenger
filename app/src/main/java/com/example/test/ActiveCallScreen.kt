@@ -157,13 +157,14 @@ fun ActiveCallScreen(
 
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("📞", fontSize = 48.sp)
+                            Icon(painterResource(R.drawable.ic_sound_call), contentDescription = null,
+                                tint = c.textPrimary.copy(alpha = 0.6f), modifier = Modifier.size(48.dp))
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
                                 s.activeWaitingPeers,
                                 color = c.textPrimary.copy(alpha = 0.6f),
                                 fontFamily = JetBrainsMono,
-                                fontSize = 16.sp
+                                fontSize = 18.sp
                             )
                         }
                     }
@@ -240,13 +241,13 @@ fun ActiveCallScreen(
                                 Box(contentAlignment = Alignment.Center) {
                                     Text(
                                         peerName.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                                        fontSize = 38.sp, color = Color.White,
+                                        fontSize = 40.sp, color = if (c.isDark) Color.White else c.textPrimary,
                                         fontWeight = FontWeight.Bold, fontFamily = JetBrainsMono
                                     )
                                 }
                             }
-                            Text(peerName, color = Color.White, fontFamily = JetBrainsMono, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                            Text(s.activeConnecting, color = c.textPrimary.copy(alpha = 0.5f), fontFamily = JetBrainsMono, fontSize = 14.sp)
+                            Text(peerName, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                            Text(s.activeConnecting, color = c.textPrimary.copy(alpha = 0.5f), fontFamily = JetBrainsMono, fontSize = 16.sp)
                         }
                     }
                 }
@@ -282,8 +283,8 @@ fun ActiveCallScreen(
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 peerName.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                                fontSize = 44.sp,
-                                color = Color.White,
+                                fontSize = 46.sp,
+                                color = if (c.isDark) Color.White else c.textPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = JetBrainsMono
                             )
@@ -291,9 +292,9 @@ fun ActiveCallScreen(
                     }
                     Text(
                         peerName,
-                        color = Color.White,
+                        color = c.textPrimary,
                         fontFamily = JetBrainsMono,
-                        fontSize = 22.sp,
+                        fontSize = 24.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -315,9 +316,9 @@ fun ActiveCallScreen(
 
             Text(
                 peerName,
-                color = Color.White,
+                color = c.textPrimary,
                 fontFamily = JetBrainsMono,
-                fontSize = 18.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold
             )
             Spacer(modifier = Modifier.height(4.dp))
@@ -325,7 +326,7 @@ fun ActiveCallScreen(
                 formatDuration(seconds),
                 color = c.accent,
                 fontFamily = JetBrainsMono,
-                fontSize = 14.sp
+                fontSize = 16.sp
             )
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -337,15 +338,15 @@ fun ActiveCallScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 SmallCallButton(
-                    label  = if (isMuted) s.activeUnmute else s.activeMute,
-                    icon   = if (isMuted) "🎙️" else "🔇",
+                    label   = if (isMuted) s.activeUnmute else s.activeMute,
+                    iconRes = if (isMuted) R.drawable.ic_mic else R.drawable.ic_disable_micro,
                     active = isMuted,
                     onClick = { isMuted = CallManager.toggleMute() }
                 )
                 if (isVideo) {
                     SmallCallButton(
-                        label  = if (isCamOff) s.activeCamOn else s.activeCamOff,
-                        icon   = if (isCamOff) "📷" else "🚫",
+                        label   = if (isCamOff) s.activeCamOn else s.activeCamOff,
+                        iconRes = if (isCamOff) R.drawable.ic_video_call else R.drawable.ic_disable_camera,
                         active = isCamOff,
                         onClick = { isCamOff = CallManager.toggleCamera() }
                     )
@@ -360,7 +361,7 @@ fun ActiveCallScreen(
                 }
                 SmallCallButton(
                     label       = if (isSpeaker) s.activeEarpiece else s.activeSpeaker,
-                    icon        = if (isSpeaker) "🔊" else "👂",
+                    iconRes     = R.drawable.ic_sound_call,
                     active      = isSpeaker,
                     activeColor = c.primaryBlue,
                     onClick     = { isSpeaker = CallManager.toggleSpeaker(context) }
@@ -402,14 +403,25 @@ private fun SmallCallButton(
         ) {
             Box(contentAlignment = Alignment.Center) {
                 if (iconRes != null) {
+                    // Background here is either c.cardAlt (inactive, a real themed
+                    // surface) or `activeColor` (active) — the default activeColor is
+                    // a fixed dark navy swatch (always dark regardless of theme, so
+                    // White stays legible), but the speaker button passes c.primaryBlue,
+                    // which is bright mint in LIGHT same as NAVY — hence the nuanced
+                    // conditional only for that case.
+                    val iconTint = when {
+                        !active -> c.textPrimary
+                        activeColor == c.primaryBlue -> if (c.isDark) Color.White else c.textPrimary
+                        else -> Color.White
+                    }
                     Icon(
                         painter = painterResource(iconRes),
                         contentDescription = label,
-                        tint = Color.White,
+                        tint = iconTint,
                         modifier = Modifier.size(22.dp)
                     )
                 } else {
-                    Text(icon, fontSize = 21.sp)
+                    Text(icon, fontSize = 23.sp)
                 }
             }
         }
@@ -418,7 +430,7 @@ private fun SmallCallButton(
             label,
             color = c.textPrimary.copy(alpha = 0.7f),
             fontFamily = JetBrainsMono,
-            fontSize = 10.sp,
+            fontSize = 12.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -438,7 +450,7 @@ private fun HangUpButton(label: String, onClick: () -> Unit) {
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_close),
+                    painter = painterResource(R.drawable.ic_end_call),
                     contentDescription = label,
                     tint = Color.White,
                     modifier = Modifier.size(30.dp)
@@ -450,7 +462,7 @@ private fun HangUpButton(label: String, onClick: () -> Unit) {
             label,
             color = c.textPrimary.copy(alpha = 0.7f),
             fontFamily = JetBrainsMono,
-            fontSize = 10.sp,
+            fontSize = 12.sp,
             maxLines = 1,
             softWrap = false
         )
@@ -486,7 +498,7 @@ private fun RemoteVideoView(track: VideoTrack, label: String, modifier: Modifier
                 label,
                 color = Color.White,
                 fontFamily = JetBrainsMono,
-                fontSize = 12.sp,
+                fontSize = 14.sp,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(8.dp)

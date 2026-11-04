@@ -75,7 +75,19 @@ object ServerManager {
 
             val defaults = getDefaultServers()
             var migrated = servers.map { s ->
-                if (s.host == "beacon-app.org" || s.host == "api.beacon-app.org") defaults.first() else s
+                if (s.host == "beacon-app.org" || s.host == "api.beacon-app.org") defaults.first()
+                // Self-heal a known-default host that's missing its `path`
+                // (e.g. "ws") — found live 2026-09-02: a backup exported
+                // before BackupManager started round-tripping `path` (or
+                // one still on disk here from before that fix) restores as
+                // path="", silently changing the connect URL from
+                // ".../ws" to the bare origin, which never upgrades to a
+                // WebSocket. Same host, same port, only the missing path —
+                // safe to fill in from the current default rather than
+                // requiring the user to re-export/re-import.
+                else if (s.host == defaults.first().host && s.port == defaults.first().port && s.path.isBlank())
+                    s.copy(path = defaults.first().path)
+                else s
             }.toMutableList()
 
             val onionServer = defaults[1]

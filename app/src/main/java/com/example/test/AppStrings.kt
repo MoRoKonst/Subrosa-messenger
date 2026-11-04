@@ -29,8 +29,10 @@ interface IStr2 {
     val registerImportBackup: String; val registerImportTitle: String
     val registerImportHint: String; val registerImportPassword: String
     val registerImportChooseFile: String
+    val registerImportTotpHint: String
     val chatsNoMessages: String; val chatsNoPosts: String
     val chatsEmpty: String; val chatsEmptyHint: String
+    val chatsSearchPlaceholder: String; val chatsSearchNoResults: String
     val chatsDeleteTitle: String; val chatsDeleteText: (String) -> String
     val chatsAddContact: String; val chatsInviteCode: String
     val chatsContactAdded: (String) -> String; val chatsCreateTitle: String
@@ -41,6 +43,16 @@ interface IStr2 {
     val chatsChannelNameLabel: String
     val chatsChannelDescLabel: String; val chatsChannelFillFields: String
     val chatsChannelBadLink: String; val chatsChannelBadge: String
+    val chatsActionsTitle: String; val chatsActionMute: String
+    val chatsActionInfo: String; val chatsActionDelete: String
+    val muteDialogTitle: String; val muteOff: String
+    val mute1h: String; val mute2h: String
+    val mute5h: String; val mute8h: String; val muteForever: String
+    val muteStatusOff: String; val muteStatusForever: String
+    val muteStatusUntil: (String) -> String
+    val contactInfoNotifications: String
+    val muteSoundOnly: String
+    val contactInfoSearch: String
 }
 
 interface IStr3 {
@@ -53,8 +65,13 @@ interface IStr3 {
     val profileBackup: String
     val profileSectionSecurity: String; val profileSectionGeneral: String
     val profileSecurityGuide: String; val profileSecurityGuideSub: String
+    // Trailing button label for Security-settings rows that open their own
+    // full screen, replacing a bare arrow icon.
+    val profileConfigureBtn: String
     val profileInviteCodeOneTimeWarning: String
     val profileHideNotif: String; val profileHideNotifSub: String
+    val profileHideIpCalls: String; val profileHideIpCallsSub: String
+    val profileHideIpCallsFailedNoTurn: String
     val profileAutoLock: String; val profileAutoLockAfter: (String) -> String
     val profileBiometricTitle: String; val profileBiometricSub: String
     val profileBiometricWarningTitle: String; val profileBiometricWarningText: String
@@ -110,6 +127,7 @@ interface IStr4 {
     val serversScanQrPrompt: String; val serversQrInvalid: String; val serversQrNotFound: String
     val serversAccessCodeRequired: String
     val serversRegistrationFull: String
+    val serversDeviceAuthFailed: String
     val groupInfoTitle: String; val groupInfoNotFound: String
     val groupInfoMembersCount: (Int) -> String; val groupInfoDescription: String
     val groupInfoAddDescription: String; val groupInfoNoDescription: String
@@ -167,8 +185,11 @@ interface IStr6 {
     val chatSendBlockedTitle: String; val chatSendBlockedText: String
     val chatSendBlockedConfirm: String
     val chatTyping: String; val chatMenu: String
+    val contactInfoTitle: String
     val chatAudioCall: String; val chatVideoCall: String
     val chatVerifyAction: String; val chatDirectConnection: String
+    val chatRestoreConnection: String; val chatRestoreConnectionStarted: String
+    val chatRestoreConnectionCooldown: (Int) -> String
     val chatContextReply: String; val chatContextCopy: String
     val chatContextReaction: String; val chatContextEdit: String
     val chatContextDeleteOwn: String; val chatContextDeleteAll: String
@@ -178,6 +199,8 @@ interface IStr6 {
     val chatDisappear24h: String; val chatDisappear7d: String
     val chatDisappear1hShort: String; val chatDisappear24hShort: String
     val chatDisappear7dShort: String; val chatReplyPreview: String
+    val chatAutoDeleteMenu: String; val chatAutoDeleteTitle: String
+    val chatAutoDeleteDescription: String; val chatDisappearSyncedNote: String
     val chatEditing: String; val chatAttach: String
     val chatAttachPhoto: String; val chatAttachMedia: String; val chatAttachFile: String
     val chatGeo: String; val chatGeoPermission: String
@@ -245,6 +268,8 @@ interface IStr7 {
     val idsTitle: String; val idsScanBtn: String
     val idsClean: String; val idsThreatFound: String; val idsHoneyTampered: String
     val alertUrlLabel: String; val alertUrlHint: String; val alertUrlSave: String
+    val alertUrlInvalid: String; val alertUrlTestBtn: String
+    val alertUrlTestOk: String; val alertUrlTestFail: String
 }
 
 interface IStr8 {
@@ -281,7 +306,7 @@ interface IStr9 {
     val profileTotp: String
     val totpTitle: String; val totpDescription: String
     val totpStatusEnabled: String; val totpStatusDisabled: String
-    val totpSetupButton: String; val totpDisableButton: String
+    val totpSetupButton: String; val totpDisableButton: String; val totpDisableHint: String
     val totpSecretLabel: String; val totpCodeLabel: String; val totpConfirmButton: String
     val totpErrInvalidCode: String; val totpEnabledSuccess: String
     val serverTotpErrNotConnected: String
@@ -294,6 +319,7 @@ interface IStr9 {
     val totpRecoveryCodesDone: String
     val totpRecoveryPrompt: String; val totpRecoveryFieldLabel: String
     val totpRecoverySubmit: String; val totpRecoveryErr: String
+    val totpReenrollPrompt: String
     val backupTotpSecretLabel: String; val backupTotpCodeLabel: String
     val backupTotpRecoveryOr: String; val backupTotpRecoveryLabel: String
 }
@@ -312,12 +338,25 @@ interface IStr10 {
     val guideTorTitle: String; val guideTorDesc: String
     val guideCoverTitle: String; val guideCoverDesc: String
     val guideCompromisedTitle: String; val guideCompromisedDesc: String
+    val guideDeleteContactTitle: String; val guideDeleteContactDesc: String
     val guideSelfHealTitle: String; val guideSelfHealDesc: String
     val guideParanoidTitle: String; val guideParanoidDesc: String
     val guideDmsTitle: String; val guideDmsDesc: String
     val guideTimeoutWipeTitle: String; val guideTimeoutWipeDesc: String
     val guidePanicButtonTitle: String; val guidePanicButtonDesc: String
     val guideWipeLevelsTitle: String; val guideWipeLevelsDesc: String
+    // Added so every item in the Security settings screen has a matching
+    // guide article — these 6 previously had none. See SecuritySettingsScreen.
+    val guideHideNotifTitle: String; val guideHideNotifDesc: String
+    val guideHideIpCallsTitle: String; val guideHideIpCallsDesc: String
+    val guideBiometricTitle: String; val guideBiometricDesc: String
+    val guideChangePasswordTitle: String; val guideChangePasswordDesc: String
+    val guideDiagnosticsTitle: String; val guideDiagnosticsDesc: String
+    val guideServiceNotifTitle: String; val guideServiceNotifDesc: String
+    // Added so the two remaining ungrouped items in WipeSettingsScreen
+    // (wipe-on-breach, calculator disguise) also have a guide article.
+    val guideWipeOnBreachTitle: String; val guideWipeOnBreachDesc: String
+    val guideCalcDisguiseTitle: String; val guideCalcDisguiseDesc: String
 }
 
 data class AppStrings(
@@ -356,10 +395,10 @@ private val ru1 = object : IStr1 {
     override val loginEnterPassword = "Введите пароль"
     override val loginWrongPassword = "Неверный пароль"
     override val loginButton = "Войти"
-    override val loginBiometric = "🔐 Биометрия"
+    override val loginBiometric = "Биометрия"
     override val loginWaitingBiometric = "Ожидание биометрии..."
     override val loginNotMe = "Это не я — сбросить"
-    override val loginNotMeTitle = "⚠️ Сбросить всё?"
+    override val loginNotMeTitle = "Сбросить всё?"
     override val loginNotMeText = "Это удалит ВСЕ данные навсегда!"
     override val loginNotMeConfirm = "Да, удалить всё"
 }
@@ -377,25 +416,28 @@ private val ru2 = object : IStr2 {
     override val registerErrorPasswordCommon = "Этот пароль слишком предсказуем (например, простая последовательность цифр) — выберите менее очевидный"
     override val registerErrorPasswordMatch = "Пароли не совпадают"
     override val registerButton = "Создать аккаунт"
-    override val registerImportBackup = "📥 Восстановить из бэкапа"
+    override val registerImportBackup = "Восстановить из бэкапа"
     override val registerImportTitle = "Восстановить из бэкапа"
-    override val registerImportHint = "Введите пароль которым был зашифрован бэкап, затем выберите файл .backup"
+    override val registerImportHint = "Файл выбран. Введите пароль, которым он был зашифрован"
     override val registerImportPassword = "Пароль бэкапа"
-    override val registerImportChooseFile = "Выбрать файл"
+    override val registerImportChooseFile = "Импортировать"
+    override val registerImportTotpHint = "Если бэкап защищён TOTP — введите секрет и текущий код из приложения-аутентификатора, либо один из резервных кодов ниже. Не обязательно, если TOTP не был включён на исходном устройстве."
     override val chatsNoMessages = "Нет сообщений"
     override val chatsNoPosts = "Нет записей"
     override val chatsEmpty = "Нет чатов"
-    override val chatsEmptyHint = "Нажми ➕ чтобы добавить контакт\nили создать группу"
+    override val chatsEmptyHint = "Нажми + чтобы добавить контакт\nили создать группу"
+    override val chatsSearchPlaceholder = "Поиск по всем чатам..."
+    override val chatsSearchNoResults = "Ничего не найдено"
     override val chatsDeleteTitle = "Удалить чат?"
     override val chatsDeleteText: (String) -> String = { "Удалить переписку с $it? Все сообщения и медиафайлы будут удалены безвозвратно." }
     override val chatsAddContact = "Добавить контакт"
     override val chatsInviteCode = "Invite-код"
     override val chatsContactAdded: (String) -> String = { "Контакт добавлен: $it" }
     override val chatsCreateTitle = "Создать"
-    override val chatsCreateContact = "👤 Добавить контакт"
-    override val chatsCreateGroup = "👥 Создать группу"
-    override val chatsSubscribeChannel = "📢 Подписаться на канал"
-    override val chatsCreateChannel = "📡 Создать канал"
+    override val chatsCreateContact = "Добавить контакт"
+    override val chatsCreateGroup = "Создать группу"
+    override val chatsSubscribeChannel = "Подписаться на канал"
+    override val chatsCreateChannel = "Создать канал"
     override val chatsChannelSubscribeTitle = "Подписаться на канал"
     override val chatsChannelLinkLabel = "Ссылка beacon://channel?..."
     override val chatsChannelCreateTitle = "Создать канал"
@@ -404,19 +446,36 @@ private val ru2 = object : IStr2 {
     override val chatsChannelFillFields = "Укажите название канала"
     override val chatsChannelBadLink = "Неверная ссылка"
     override val chatsChannelBadge = "канал"
+    override val chatsActionsTitle = "Чат"
+    override val chatsActionMute = "Отключить звук"
+    override val chatsActionInfo = "Открыть профиль"
+    override val chatsActionDelete = "Удалить чат"
+    override val muteDialogTitle = "Отключить уведомления"
+    override val muteOff = "Не отключать"
+    override val mute1h = "На 1 час"
+    override val mute2h = "На 2 часа"
+    override val mute5h = "На 5 часов"
+    override val mute8h = "На 8 часов"
+    override val muteForever = "Навсегда"
+    override val muteStatusOff = "Не отключены"
+    override val muteStatusForever = "Отключены навсегда"
+    override val muteStatusUntil: (String) -> String = { "Отключены до $it" }
+    override val contactInfoNotifications = "Уведомления"
+    override val muteSoundOnly = "Отключить звук уведомлений"
+    override val contactInfoSearch = "Поиск по чату"
 }
 
 private val ru3 = object : IStr3 {
     override val profileTitle = "Профиль"
     override val profileFingerprint = "Ваш отпечаток"
-    override val profileFingerprintHint = "Попросите собеседника сравнить эти эмодзи со своим экраном"
+    override val profileFingerprintHint = "Попросите собеседника сравнить эти эмодзи с экраном в верификации чата"
     override val profileInviteCode = "Ваш Invite-код"
     override val profileShareCode = "Поделиться кодом"
     override val profileHideQr = "Скрыть QR"
     override val profileShowQr = "Показать QR-код"
     override val profileScanQr = "Сканировать QR"
     override val profileQrHint = "Пусть собеседник отсканирует этот код"
-    override val profileCodeCopied = "✓ код скопирован"
+    override val profileCodeCopied = "код скопирован"
     override val profileSendHint = "Отправьте этот код другу, чтобы он мог добавить вас в контакты"
     override val profileServers = "Серверы"
     override val profileBackup = "Резервное копирование"
@@ -424,9 +483,13 @@ private val ru3 = object : IStr3 {
     override val profileSectionGeneral  = "Основное"
     override val profileSecurityGuide = "Гид по защите"
     override val profileSecurityGuideSub = "Что делает каждая функция безопасности"
-    override val profileInviteCodeOneTimeWarning = "После отправки этого кода НЕ нажимайте «Копировать»/«Поделиться»/QR повторно, пока собеседник не подключится — это молча аннулирует ещё не использованный код без ошибки с любой из сторон. Для следующего человека нажимайте заново только после того, как этот уже подключился."
+    override val profileConfigureBtn = "Настроить"
+    override val profileInviteCodeOneTimeWarning = "Код полностью одноразовый: он действует до активации либо до повторного нажатия «Копировать», «Поделиться» или «Показать QR»"
     override val profileHideNotif = "Скрывать текст в уведомлениях"
     override val profileHideNotifSub = "Показывать только «Новое сообщение»"
+    override val profileHideIpCalls = "Скрывать IP во время звонков"
+    override val profileHideIpCallsSub = "Звонок только через relay-сервер"
+    override val profileHideIpCallsFailedNoTurn = "Не удалось начать звонок: relay-сервер недоступен, а в этом режиме прямое соединение запрещено"
     override val profileAutoLock = "Автоблокировка"
     override val profileAutoLockAfter: (String) -> String = { "Блокировать через: $it" }
     override val profileBiometricTitle = "Разблокировка по биометрии"
@@ -465,13 +528,13 @@ private val ru3 = object : IStr3 {
     override val profileTorEnabled = "Использовать Tor"
     override val profileTorEnabledSub = "Соединение через Orbot вместо прямого. Запуск Orbot при старте может занять до 10-15 секунд"
     override val profileBatteryUnrestricted = "Игнорировать оптимизацию батареи"
-    override val profileBatteryUnrestrictedSub = "Без этого оболочка телефона (особенно MIUI и подобные) может тихо душить фоновое соединение — сообщения и квитанции перестают доходить без каких-либо ошибок"
+    override val profileBatteryUnrestrictedSub = "Помогает фоновому соединению работать стабильнее"
     override val batteryPromptTitle = "Не дайте оболочке душить связь"
     override val batteryPromptText = "На многих телефонах (особенно MIUI и подобных) при сворачивании приложения фоновое соединение тихо глушится — сообщения и квитанции перестают доходить без единой ошибки. Разрешите приложению игнорировать оптимизацию батареи, чтобы связь оставалась надёжной даже в фоне. Это можно включить позже в Профиле."
     override val batteryPromptAllow = "Разрешить"
     override val batteryPromptSkip = "Пропустить"
     override val profileServiceNotifVisible = "Показывать значок сервиса"
-    override val profileServiceNotifVisibleSub = "По умолчанию выключено — значка Subrosa в шторке нет, чтобы не выдавать, что мессенджер работает. Включите, если важнее стабильность соединения в фоне: на некоторых прошивках (MIUI и аналогичных) полностью скрытое уведомление повышает риск, что система остановит фоновое соединение вместе с ним"
+    override val profileServiceNotifVisibleSub = "Скрыть значок сервиса из строки состояния"
     override val profilePanicTitle = "Panic Password"
     override val profilePanicSub = "Пароль для экстренного удаления всех данных"
     override val profilePanicSetStatus = "Установлен"
@@ -480,7 +543,7 @@ private val ru3 = object : IStr3 {
     override val profilePanicFieldLabel = "Panic пароль"
     override val profileLanguageToggle = "English"
     override val profileThemeLabel = "Тема"
-    override val profileThemeNavy = "Бордовая"
+    override val profileThemeNavy = "Изумрудная"
     override val profileThemeDark = "Тёмная"
     override val profileThemeLight = "Светлая"
     override val profileInvalidCodeFormat = "Неверный формат кода"
@@ -499,7 +562,7 @@ private val ru3 = object : IStr3 {
     override val backupImportWipeTitle = "Внимание"
     override val backupImportWipeText = "Импорт полностью заменит данные этого устройства новой identity из бэкапа: текущие контакты, сообщения и группы будут безвозвратно удалены. Это не откат к старой истории переписки — старые данные не сохранятся ни в каком виде. Возможны сбои при первой синхронизации после импорта. Продолжить?"
     override val backupSaveChooser = "Сохранить резервную копию"
-    override val backupCreated = "✓ Резервная копия создана"
+    override val backupCreated = "Резервная копия создана"
     override val backupErrEnterPassword = "Введите пароль"
     override val backupErrPasswordMatch = "Пароли не совпадают"
     override val backupErrPasswordLength = "Пароль должен быть минимум 8 символов"
@@ -525,16 +588,17 @@ private val ru4 = object : IStr4 {
     override val serversQrNotFound = "QR-код не найден на фото"
     override val serversAccessCodeRequired = "Этот сервер требует код доступа для регистрации — попроси у оператора QR-код или ссылку"
     override val serversRegistrationFull = "Этот сервер достиг лимита аккаунтов и сейчас не принимает новые регистрации"
+    override val serversDeviceAuthFailed = "Не удалось подтвердить это устройство. Попробуй перезайти или обратись в поддержку"
     override val serversPort = "Порт"
     override val groupInfoTitle = "Информация о группе"
     override val groupInfoNotFound = "Группа не найдена"
     override val groupInfoMembersCount: (Int) -> String = { "$it участников" }
     override val groupInfoDescription = "Описание"
-    override val groupInfoAddDescription = "Нажмите ✏️ чтобы добавить описание"
+    override val groupInfoAddDescription = "Нажмите чтобы добавить описание"
     override val groupInfoNoDescription = "Нет описания"
     override val groupInfoMembersSection = "Участники"
-    override val groupInfoCreator = "👑 Создатель"
-    override val groupInfoAdmin = "⭐ Администратор"
+    override val groupInfoCreator = "Создатель"
+    override val groupInfoAdmin = "Администратор"
     override val groupInfoPromoteAdmin = "Сделать админом"
     override val groupInfoRemoveMember = "Удалить из группы"
     override val groupInfoLeave = "Покинуть группу"
@@ -552,7 +616,7 @@ private val ru4 = object : IStr4 {
     override val groupInfoEmojiTitle = "Выбрать аватар"
     override val groupInfoDescTitle = "Описание группы"
     override val groupInfoDescLabel = "Описание (до 300 символов)"
-    override val groupInfoChangeAvatar = "✏️ сменить"
+    override val groupInfoChangeAvatar = "сменить"
     override val createGroupTitle = "Создать группу"
     override val createGroupTapAvatar = "Нажми для выбора аватара"
     override val createGroupNameLabel = "Название группы"
@@ -563,7 +627,7 @@ private val ru4 = object : IStr4 {
 
 private val ru5 = object : IStr5 {
     override val channelDefault = "Канал"
-    override val channelCopyLink = "🔗 Ссылка"
+    override val channelCopyLink = "Ссылка"
     override val channelUnsubscribe = "Отписаться"
     override val channelPostPlaceholder = "Написать в канал..."
     override val channelLinkCopied = "Ссылка скопирована"
@@ -571,14 +635,14 @@ private val ru5 = object : IStr5 {
     override val channelWriteFirst = "Напишите первую запись ниже"
     override val channelSubscribeConfirm = "Подписаться на этот канал?"
     override val channelSubscribeBtn = "Подписаться"
-    override val channelMute = "🔕 Выключить уведомления"
-    override val channelUnmute = "🔔 Включить уведомления"
+    override val channelMute = "Выключить уведомления"
+    override val channelUnmute = "Включить уведомления"
     override val channelSubscribers: (Int) -> String = { "$it подписчиков" }
     override val channelSearchPlaceholder = "Поиск по постам..."
-    override val channelPinPost = "📌 Закрепить"
-    override val channelUnpinPost = "📌 Открепить"
+    override val channelPinPost = "Закрепить"
+    override val channelUnpinPost = "Открепить"
     override val channelPinned = "Закреплено"
-    override val channelDeletePost = "🗑 Удалить пост"
+    override val channelDeletePost = "Удалить пост"
     override val channelForwardPost = "↗ Переслать"
     override val channelForwardTitle = "Переслать в чат..."
     override val channelForwardSent = "Переслано"
@@ -630,9 +694,13 @@ private val ru6 = object : IStr6 {
     override val chatSendBlockedConfirm = "Понятно"
     override val chatTyping = "печатает..."
     override val chatMenu = "Меню"
+    override val contactInfoTitle = "Профиль"
     override val chatAudioCall = "Аудиозвонок"
     override val chatVideoCall = "Видеозвонок"
     override val chatVerifyAction = "Верификация"
+    override val chatRestoreConnection = "Восстановить связь"
+    override val chatRestoreConnectionStarted = "Отправлен запрос на восстановление связи — попросите собеседника нажать то же самое"
+    override val chatRestoreConnectionCooldown = { min: Int -> "Подождите ещё ${min} мин перед повторной попыткой" }
     override val chatDirectConnection = "Прямое подключение — без Tor. Установите Orbot для анонимности."
     override val chatContextReply = "Ответить"
     override val chatContextCopy = "Копировать"
@@ -651,6 +719,10 @@ private val ru6 = object : IStr6 {
     override val chatDisappear24hShort = " · ⏱1д"
     override val chatDisappear7dShort = " · ⏱7д"
     override val chatReplyPreview = "Ответ на сообщение"
+    override val chatAutoDeleteMenu = "Автоудаление (только на этом устройстве)"
+    override val chatAutoDeleteTitle = "Автоудаление сообщений"
+    override val chatAutoDeleteDescription = "Сообщения старше выбранного времени будут удалены только с этого устройства. Собеседник и его копия переписки не затрагиваются — это не то же самое, что «Исчезающие сообщения»."
+    override val chatDisappearSyncedNote = "Синхронизировано с собеседником — удаляет у обеих сторон"
     override val chatEditing = "Редактирование"
     override val chatAttach = "Прикрепить"
     override val chatAttachPhoto = "Фото"
@@ -743,7 +815,7 @@ private val ru7 = object : IStr7 {
     override val emergencyInfoOpenSettings = "Спец. возможности"
     override val emergencyInfoOpenAppSettings = "Настройки приложения"
     override val emergencyInfoWarning = "Нажмите 5 раз УБАВИТЬ ГРОМКОСТЬ за 3 секунды — " +
-        "приложение немедленно удалит все ключи и переписки.\n⚠️ Без подтверждения!"
+        "приложение немедленно удалит все ключи и переписки.\nБез подтверждения!"
     override val emergencyInfoStepLabel: (Int) -> String = { n -> "Шаг $n" }
     override val emergencyInfoStep1Desc = "Откройте настройки приложения, затем ⋮ (вверху справа) → «Доступ к огр. настройкам»"
     override val emergencyInfoStep2Desc = "Спец. возможности → Subrosa Emergency Wipe → включить"
@@ -790,12 +862,16 @@ private val ru7 = object : IStr7 {
     override val paranoidModeActive = "Активен"
     override val idsTitle = "IDS — Детектор вторжений"
     override val idsScanBtn = "Сканировать"
-    override val idsClean = "✓ Угроз не обнаружено"
+    override val idsClean = "Угроз не обнаружено"
     override val idsThreatFound = "Обнаружены угрозы"
     override val idsHoneyTampered = "Файл-приманка изменён"
     override val alertUrlLabel = "Alert URL (необязательно)"
     override val alertUrlHint = "https://your-server/alert"
     override val alertUrlSave = "Сохранить"
+    override val alertUrlInvalid = "Нужен адрес по HTTPS (http:// не пройдёт из-за политики шифрования трафика)"
+    override val alertUrlTestBtn = "Тест"
+    override val alertUrlTestOk = "Доставлено"
+    override val alertUrlTestFail = "Не доставлено — проверьте адрес и сеть"
 }
 
 private val ru8 = object : IStr8 {
@@ -807,8 +883,8 @@ private val ru8 = object : IStr8 {
     override val groupChatCopy = "Копировать"
     override val groupChatReactionLabel = "Реакция"
     override val groupChatEditAction = "Редактировать"
-    override val groupChatDeleteOwn = "🗑  Удалить у себя"
-    override val groupChatDeleteAll = "🗑  Удалить у всех"
+    override val groupChatDeleteOwn = "Удалить у себя"
+    override val groupChatDeleteAll = "Удалить у всех"
     override val groupChatPickReaction = "Выбери реакцию"
     override val groupChatEditing = "Редактирование"
     override val groupChatAttach = "Прикрепить"
@@ -855,13 +931,14 @@ private val ru9 = object : IStr9 {
     override val calcUnlockCodeLabel = "Код разблокировки (число-результат)"
     override val calcUnlockCodeHint = "Например: 42"
     override val calcUnlockCodeSave = "Сохранить и включить"
-    override val profileTotp = "Двухфакторная защита бэкапа"
-    override val totpTitle = "TOTP-защита бэкапа"
-    override val totpDescription = "Дополнительный фактор защиты аккаунта: код потребуется и при восстановлении бэкапа на новом устройстве, и при попытке зайти под этим же fingerprint'ом с нового устройства (device_id), которое сервер раньше не видел — это перекрывает риск, что кто-то с украденным бэкапом или ключом просто зарегистрируется от вашего имени. Секрет нужно сохранить отдельно (например, в KeePass) — он не хранится внутри самого бэкапа, поэтому одного файла бэкапа и пароля к нему будет недостаточно, чтобы угнать identity."
+    override val profileTotp = "Двухфакторная защита (TOTP)"
+    override val totpTitle = "Двухфакторная защита (TOTP)"
+    override val totpDescription = "Дополнительный фактор защиты аккаунта: код потребуется и при восстановлении бэкапа на новом устройстве, и при попытке зайти под этим же fingerprint'ом с нового устройства (device_id), которое сервер раньше не видел — это перекрывает риск, что кто-то с украденным бэкапом или ключом просто зарегистрируется от вашего имени. Секрет нужно сохранить отдельно (например, в KeePass) — он не хранится внутри самого бэкапа, поэтому одного файла бэкапа и пароля к нему будет недостаточно, чтобы угнать identity. Если сменили аутентификатор или подозреваете утечку секрета — здесь же можно выпустить новый (нужен текущий код)."
     override val totpStatusEnabled = "Включено"
     override val totpStatusDisabled = "Выключено"
     override val totpSetupButton = "Настроить"
-    override val totpDisableButton = "Выключить"
+    override val totpDisableButton = "Сменить секрет"
+    override val totpDisableHint = "Понадобится текущий код из аутентификатора. Сразу после подтверждения откроется настройка нового секрета — окно без защиты займёт лишь пару шагов, а не останется висеть выключенным."
     override val totpSecretLabel = "Секрет (сохраните его отдельно, не рядом с бэкапом)"
     override val totpCodeLabel = "Код из приложения-аутентификатора"
     override val totpConfirmButton = "Подтвердить и включить"
@@ -882,6 +959,7 @@ private val ru9 = object : IStr9 {
     override val totpRecoveryFieldLabel = "Резервный код"
     override val totpRecoverySubmit = "Отправить"
     override val totpRecoveryErr = "Код не принят — проверьте и попробуйте снова"
+    override val totpReenrollPrompt = "На этом аккаунте уже настроена TOTP-защита с другого устройства. Если вы только что вошли по резервному коду — введите ещё один резервный код ниже, чтобы заменить защиту на эту новую."
     override val backupTotpSecretLabel = "TOTP-секрет (если был включён на исходном устройстве)"
     override val backupTotpCodeLabel = "Текущий TOTP-код"
     override val backupTotpRecoveryOr = "— или, если секрет утерян —"
@@ -895,7 +973,7 @@ private val ru10 = object : IStr10 {
     override val guideKeyVerifyTitle = "Верификация пользователя"
     override val guideKeyVerifyDesc = "Последовательность из 5 эмодзи, полученная из хэша публичного ключа собеседника. Сверьте её с собеседником лично или по другому каналу — если совпадает, вы точно говорите с ним, а не с кем-то, кто подменил ключ (атака «человек посередине»)."
     override val guideTotpTitle = "Двухфакторная защита (TOTP)"
-    override val guideTotpDesc = "Обязательный код из приложения-аутентификатора (как Google Authenticator), без которого этот аккаунт нельзя зарегистрировать на новом устройстве, даже если ключи и пароль украдены. Сохраните резервные коды, выданные при настройке, отдельно от телефона."
+    override val guideTotpDesc = "Обязательный код из приложения-аутентификатора (как Google Authenticator), без которого этот аккаунт нельзя зарегистрировать на новом устройстве, даже если ключи и пароль украдены. Сохраните резервные коды, выданные при настройке, отдельно от телефона. Резервный код пускает на новое устройство, если аутентификатор потерян, но не отключает защиту сам по себе — сразу после входа настройте TOTP заново на этом устройстве (для этого понадобится ещё один резервный код)."
     override val guidePanicTitle = "Panic password"
     override val guidePanicDesc = "Второй пароль для входа, отличный от основного. Введённый вместо основного, он показывает правдоподобный фейковый мессенджер с выдуманными чатами, а настоящие ключи и переписка в это время безвозвратно удаляются в фоне — используйте, если вас заставляют разблокировать Subrosa."
     override val guideEmergencyTitle = "Тревожная кнопка"
@@ -905,15 +983,17 @@ private val ru10 = object : IStr10 {
     override val guideBackupTitle = "Резервное копирование"
     override val guideBackupDesc = "Зашифрованный файл со всеми ключами и историей сообщений. Защищён паролем, а восстановление на новом устройстве дополнительно требует TOTP-секрет — одного файла и пароля к нему недостаточно. Храните файл, пароль и TOTP-секрет в разных местах."
     override val guideTorTitle = "Tor"
-    override val guideTorDesc = "Маршрутизация соединения с сервером через сеть Tor (нужен установленный Orbot), скрывает ваш IP-адрес от самого сервера. Выключен по умолчанию — включение добавляет 10-15 секунд к запуску приложения."
+    override val guideTorDesc = "Маршрутизация соединения с сервером через сеть Tor (нужен установленный Orbot), скрывает ваш IP-адрес от самого сервера. Выключен по умолчанию — включение добавляет 10-15 секунд к запуску приложения.\n\nВажно: это касается только соединения с сервером (вход, сообщения, сигнализация звонков — кто кому звонит). Сама аудио/видео-передача звонка через Tor не идёт: WebRTC не умеет ходить через SOCKS-прокси Orbot и соединяется напрямую или через relay-сервер в обход него. За IP именно во время звонка отвечает отдельная настройка «Скрывать IP во время звонков» — Tor и она не мешают друг другу, но и не заменяют одна другую: включайте обе, если нужна защита и там, и там."
     override val guideCoverTitle = "Постоянный трафик"
     override val guideCoverDesc = "Приложение шлёт пакеты-пустышки через равные интервалы, даже когда вы ничего не отправляете, — так внешний наблюдатель не может по паттерну трафика понять, переписываетесь вы сейчас или нет. Расходует немного батареи и интернета."
     override val guideCompromisedTitle = "Смена identity"
     override val guideCompromisedDesc = "Если подозреваете, что ваш ключ украли — это полностью уничтожает текущие ключи, контакты и переписку на этом устройстве и выдаёт новые. Перед удалением приложение также сообщает серверу отозвать старую identity — старый ключ больше не сможет пройти регистрацию, даже если он попал в чужие руки. Контактам нужно будет заново обменяться с вами свежим инвайт-кодом, чтобы перейти на новую identity. Необратимо."
+    override val guideDeleteContactTitle = "Удаление контакта"
+    override val guideDeleteContactDesc = "Удаление контакта — не просто очистка списка. Приложение сразу отзывает у него все ещё не потраченные токены (писать вам старыми уже не получится) и блокирует новые попытки связаться с этим человеком — даже если он пришлёт новый запрос на сессию, устройство молча его проигнорирует. Блокировка снимается сама, если вы позже добавите тот же контакт заново по свежему инвайт-коду. Это быстрый способ отрезать контакта, чьё устройство вы считаете скомпрометированным."
     override val guideSelfHealTitle = "Самовосстановление связи"
     override val guideSelfHealDesc = "Приложение специально не раскрывает серверу, кто с кем переписывается — это сильно повышает приватность, но иногда означает, что после сбоя (например, долгого отсутствия сети) переписка или звонок восстанавливаются не мгновенно, а через какое-то время. Это не значит, что что-то сломано: канал связи умеет чиниться сам. Если сообщение не идёт — обычно достаточно подождать. Мы продолжаем тестировать и сокращать эти задержки."
     override val guideParanoidTitle = "Режим паранои и Alert URL"
-    override val guideParanoidDesc = "Включает постоянную проверку устройства на слежку (шпионские Accessibility-сервисы, подозрительные права администратора, оверлеи поверх экрана и вмешательство в honey-токен). При обнаружении угрозы: если задан «тревожный URL» (Диагностика безопасности → поле URL) — на него молча уходит POST-запрос с ID устройства и списком угроз, в обход обычного канала мессенджера (если вас раскрыли, ему нельзя доверять). Дальше — либо автоматическое удаление данных (если включён «вайп при взломе»), либо стелс-режим с фейковым экраном, как у пароля под принуждением."
+    override val guideParanoidDesc = "Включает постоянную проверку устройства на слежку (шпионские Accessibility-сервисы, подозрительные права администратора, оверлеи поверх экрана и вмешательство в honey-токен). При обнаружении угрозы: если задан «тревожный URL» (Диагностика безопасности → поле URL) — на него молча уходит POST-запрос с ID устройства и списком угроз, в обход обычного канала мессенджера (если вас раскрыли, ему нельзя доверять). Дальше — либо автоматическое удаление данных (если включён «вайп при взломе»), либо стелс-режим с фейковым экраном, как у пароля под принуждением.\n\nКакая ссылка нужна: обычный HTTPS-адрес (http:// заблокирован политикой трафика и просто не уйдёт, кроме localhost/эмулятора/.onion), принимающий POST-запрос с телом вида {\"device_id\":\"...\",\"threats\":\"...\",\"ts\":1234567890} — без заголовков авторизации, значит принимающая сторона должна просто уметь принять POST и как-то показать вам этот JSON.\n\nМинимальный принимающий вариант без своего сервера: приложение ntfy (ntfy.sh) — поставьте его на телефон или откройте web-версию, подпишитесь на приватную тему с непредсказуемым именем (например ntfy.sh/xk7q-мойличныйканал) и укажите этот адрес как Alert URL. ntfy не разбирает чужой JSON — просто покажет его текстом как push-уведомление, этого достаточно, чтобы увидеть ID устройства, список угроз и время. Кнопкой «Тест» на экране диагностики можно сразу проверить доставку, не дожидаясь реальной угрозы."
     override val guideDmsTitle = "Мёртвая рука (Dead Man's Switch)"
     override val guideDmsDesc = "Таймер самопроверки: от 15 минут до 3 суток. Если вы не нажали «Я на связи» до истечения интервала — приложение считает, что с вами что-то случилось, отзывает вашу identity на сервере (старый ключ перестаёт проходить регистрацию) и уничтожает данные максимально жёстким уровнем (Nuclear), без дополнительных подтверждений. Полезно, если вас могут задержать/лишить доступа к телефону надолго и вы не сможете сами инициировать удаление."
     override val guideTimeoutWipeTitle = "Таймаут пароля"
@@ -922,6 +1002,22 @@ private val ru10 = object : IStr10 {
     override val guidePanicButtonDesc = "Третий, отдельный способ экстренного удаления (помимо пароля под принуждением и кнопок громкости) — постоянное уведомление с кнопкой «Удалить всё», видной сразу, без разворачивания, в том числе на заблокированном экране. Всё равно требует хотя бы одного касания экрана — кнопки громкости остаются единственным способом сработать полностью вслепую, вообще не глядя на экран. Можно включить тот же фейковый экран вместо мгновенного закрытия приложения — настраивается отдельно."
     override val guideWipeLevelsTitle = "Уровни уничтожения (Hard / Nuclear)"
     override val guideWipeLevelsDesc = "Hard удаляет все ключи, файлы и данные приложения, но намеренно сохраняет в скрытом месте хеш пароля — это нужно, чтобы после удаления приложение всё ещё могло узнать владельца по decoy-паролю. Nuclear делает то же самое без единого исключения: это системный вызов Android «Очистить данные», который гарантированно стирает вообще всё, включая ту запись, которую Hard оставляет — после Nuclear восстановить доступ через decoy-пароль уже нельзя. Разные функции экстренного удаления используют разные уровни по умолчанию (например, «мёртвая рука» всегда бьёт максимально жёстко — Nuclear, ей компромисс с decoy-восстановлением не нужен)."
+    override val guideHideNotifTitle = "Скрывать текст в уведомлениях"
+    override val guideHideNotifDesc = "Уведомление о новом сообщении показывает только «Новое сообщение» без имени отправителя и текста — если кто-то посмотрит на экран заблокированного телефона или уведомление увидят на умных часах/в шторке, содержимое переписки не раскроется. Сами сообщения по-прежнему приходят и сохраняются как обычно — скрывается только то, что показывается в уведомлении."
+    override val guideHideIpCallsTitle = "Скрывать IP во время звонков"
+    override val guideHideIpCallsDesc = "По умолчанию звонок пытается соединиться напрямую (P2P) для минимальной задержки — но для этого оба устройства обмениваются реальными IP-адресами напрямую друг с другом. С этой опцией звонок идёт только через relay-сервер: собеседник видит адрес сервера, а не ваш. Плата — более высокая задержка и нагрузка на relay, особенно на слабом канале.\n\nЭто скрывает IP от собеседника, но не от самого relay-сервера — он видит оба реальных адреса, так как пересылает трафик между вами. Включённый Tor эту часть не усиливает: он прикрывает только сигнальный канал (запрос на звонок), а сама медиа-часть идёт напрямую, в обход Tor."
+    override val guideBiometricTitle = "Разблокировка по биометрии"
+    override val guideBiometricDesc = "Отпечаток или лицо вместо пароля при входе — быстрее, но физически проще получить принудительно: заставить приложить палец или показать лицо проще, чем заставить назвать пароль, а в ряде юрисдикций принудительная биометрия юридически защищена слабее принудительного раскрытия пароля. Если в вашей модели угроз есть физическое или юридическое принуждение — оставьте только пароль; он остаётся рабочим способом входа даже при включённой биометрии."
+    override val guideChangePasswordTitle = "Смена пароля"
+    override val guideChangePasswordDesc = "Пароль защищает не только вход в приложение, но и шифрование всех ключей и переписки на диске (storage-encryption) — со сменой пароля это шифрование перешифровывается новым паролем, старый пароль перестаёт подходить. Меняйте пароль, если подозреваете, что его мог увидеть кто-то посторонний, или просто периодически как гигиену."
+    override val guideDiagnosticsTitle = "Диагностика безопасности"
+    override val guideDiagnosticsDesc = "Набор живых проверок устройства и приложения: root/tamper-детекция, целостность хранилища ключей, состояние TLS-пиннинга и другие сигналы компрометации — каждая проверка возвращает pass/fail с пояснением. Здесь же живут режим паранои (постоянный мониторинг слежки) и разовое IDS-сканирование на аномалии — если что-то не проходит проверку, стоит разобраться, прежде чем продолжать переписку с этого устройства."
+    override val guideServiceNotifTitle = "Значок фонового сервиса"
+    override val guideServiceNotifDesc = "Android требует постоянное уведомление, пока фоновый сервис Subrosa поддерживает соединение и принимает сообщения, — само уведомление убрать нельзя. Эта настройка скрывает только его значок из строки состояния: уведомление становится беззвучным и уходит в свёрнутый раздел «Тихие уведомления» шторки, не привлекая внимания на первый взгляд."
+    override val guideWipeOnBreachTitle = "Wipe при взломе"
+    override val guideWipeOnBreachDesc = "Если система обнаружения вторжений (IDS) фиксирует критическую угрозу — например, срабатывание режима паранои или взлом honey-токена — приложение автоматически уничтожает данные без дополнительного подтверждения, тем же уровнем (Hard или Nuclear), который вы выбрали заранее. Это последняя линия защиты на случай, если у вас физически не будет возможности нажать кнопку паники самостоятельно."
+    override val guideCalcDisguiseTitle = "Маскировка под калькулятор"
+    override val guideCalcDisguiseDesc = "Меняет иконку и название приложения на «Калькулятор» — при беглом осмотре телефона мессенджер не бросается в глаза среди других приложений. Открывается вводом заданного вами числового выражения, результат которого равен вашему секретному коду; обычный калькулятор при этом продолжает работать как обычно для любых других вычислений."
 }
 
 val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9, ru10)
@@ -970,23 +1066,26 @@ private val en2 = object : IStr2 {
     override val registerButton = "Create account"
     override val registerImportBackup = "Restore from backup"
     override val registerImportTitle = "Restore from backup"
-    override val registerImportHint = "Enter the password used to encrypt the backup, then choose the .backup file"
+    override val registerImportHint = "File selected. Enter the password it was encrypted with"
     override val registerImportPassword = "Backup password"
-    override val registerImportChooseFile = "Choose file"
+    override val registerImportChooseFile = "Import"
+    override val registerImportTotpHint = "If the backup is protected by TOTP — enter the secret and current code from your authenticator app, or one of the recovery codes below. Not required if TOTP wasn't enabled on the original device."
     override val chatsNoMessages = "No messages"
     override val chatsNoPosts = "No posts"
     override val chatsEmpty = "No chats"
-    override val chatsEmptyHint = "Tap ➕ to add a contact\nor create a group"
+    override val chatsEmptyHint = "Tap + to add a contact\nor create a group"
+    override val chatsSearchPlaceholder = "Search all chats..."
+    override val chatsSearchNoResults = "No results"
     override val chatsDeleteTitle = "Delete chat?"
     override val chatsDeleteText: (String) -> String = { "Delete conversation with $it? All messages and media will be permanently removed." }
     override val chatsAddContact = "Add contact"
     override val chatsInviteCode = "Invite code"
     override val chatsContactAdded: (String) -> String = { "Contact added: $it" }
     override val chatsCreateTitle = "Create"
-    override val chatsCreateContact = "👤 Add contact"
-    override val chatsCreateGroup = "👥 Create group"
-    override val chatsSubscribeChannel = "📢 Subscribe to channel"
-    override val chatsCreateChannel = "📡 Create channel"
+    override val chatsCreateContact = "Add contact"
+    override val chatsCreateGroup = "Create group"
+    override val chatsSubscribeChannel = "Subscribe to channel"
+    override val chatsCreateChannel = "Create channel"
     override val chatsChannelSubscribeTitle = "Subscribe to channel"
     override val chatsChannelLinkLabel = "Link beacon://channel?..."
     override val chatsChannelCreateTitle = "Create channel"
@@ -995,19 +1094,36 @@ private val en2 = object : IStr2 {
     override val chatsChannelFillFields = "Enter a channel name"
     override val chatsChannelBadLink = "Invalid link"
     override val chatsChannelBadge = "channel"
+    override val chatsActionsTitle = "Chat"
+    override val chatsActionMute = "Mute"
+    override val chatsActionInfo = "Open info"
+    override val chatsActionDelete = "Delete chat"
+    override val muteDialogTitle = "Mute notifications"
+    override val muteOff = "Don't mute"
+    override val mute1h = "For 1 hour"
+    override val mute2h = "For 2 hours"
+    override val mute5h = "For 5 hours"
+    override val mute8h = "For 8 hours"
+    override val muteForever = "Forever"
+    override val muteStatusOff = "Not muted"
+    override val muteStatusForever = "Muted forever"
+    override val muteStatusUntil: (String) -> String = { "Muted until $it" }
+    override val contactInfoNotifications = "Notifications"
+    override val muteSoundOnly = "Mute notification sound"
+    override val contactInfoSearch = "Search in chat"
 }
 
 private val en3 = object : IStr3 {
     override val profileTitle = "Profile"
     override val profileFingerprint = "Your fingerprint"
-    override val profileFingerprintHint = "Ask your contact to compare these emojis with their screen"
+    override val profileFingerprintHint = "Ask your contact to compare these emojis with chats's verification screen"
     override val profileInviteCode = "Your Invite code"
     override val profileShareCode = "Share code"
     override val profileHideQr = "Hide QR"
     override val profileShowQr = "Show QR code"
     override val profileScanQr = "Scan QR"
     override val profileQrHint = "Let your contact scan this code"
-    override val profileCodeCopied = "✓ code copied"
+    override val profileCodeCopied = "code copied"
     override val profileSendHint = "Send this code to a friend so they can add you as a contact"
     override val profileServers = "Servers"
     override val profileBackup = "Backup"
@@ -1015,9 +1131,13 @@ private val en3 = object : IStr3 {
     override val profileSectionGeneral  = "General"
     override val profileSecurityGuide = "Security guide"
     override val profileSecurityGuideSub = "What each security feature actually does"
-    override val profileInviteCodeOneTimeWarning = "After sending this code, do NOT tap Copy/Share/QR again until the other person has connected — doing so silently invalidates their not-yet-used code, with no error on either side. Only generate a new one for the next person after this one has connected."
+    override val profileConfigureBtn = "Configure"
+    override val profileInviteCodeOneTimeWarning = "This code is fully one-time: it's valid until activation, or until you tap Copy, Share, or Show QR again."
     override val profileHideNotif = "Hide text in notifications"
     override val profileHideNotifSub = "Show only \"New message\""
+    override val profileHideIpCalls = "Hide IP during calls"
+    override val profileHideIpCallsSub = "Call only through the relay server"
+    override val profileHideIpCallsFailedNoTurn = "Couldn't start the call: the relay server is unavailable, and this mode doesn't allow a direct connection"
     override val profileAutoLock = "Auto-lock"
     override val profileAutoLockAfter: (String) -> String = { "Lock after: $it" }
     override val profileBiometricTitle = "Biometric unlock"
@@ -1056,13 +1176,13 @@ private val en3 = object : IStr3 {
     override val profileTorEnabled = "Use TOR"
     override val profileTorEnabledSub = "Route through Orbot instead of a direct connection. Starting Orbot can take up to 10-15 seconds"
     override val profileBatteryUnrestricted = "Ignore battery optimization"
-    override val profileBatteryUnrestrictedSub = "Without this, the phone's OEM shell (especially MIUI and similar) can silently choke the background connection — messages and receipts stop arriving with no visible error"
+    override val profileBatteryUnrestrictedSub = "Helps the background connection stay reliable"
     override val batteryPromptTitle = "Don't let the shell choke your connection"
     override val batteryPromptText = "On many phones (especially MIUI and similar), backgrounding the app silently throttles the background connection — messages and receipts stop arriving with no error at all. Allow the app to ignore battery optimization so the connection stays reliable even in the background. You can also turn this on later from Profile."
     override val batteryPromptAllow = "Allow"
     override val batteryPromptSkip = "Skip"
     override val profileServiceNotifVisible = "Show service icon"
-    override val profileServiceNotifVisibleSub = "Off by default — no Subrosa icon in the notification shade, so nothing gives away that the messenger is running. Turn it on if background reliability matters more: on some device firmware (MIUI and similar), a fully hidden notification increases the risk of the system terminating the background connection along with it"
+    override val profileServiceNotifVisibleSub = "Hide the service icon from the status bar"
     override val profilePanicTitle = "Panic Password"
     override val profilePanicSub = "Password for emergency data deletion"
     override val profilePanicSetStatus = "Set"
@@ -1071,7 +1191,7 @@ private val en3 = object : IStr3 {
     override val profilePanicFieldLabel = "Panic password"
     override val profileLanguageToggle = "Русский"
     override val profileThemeLabel = "Theme"
-    override val profileThemeNavy = "Burgundy"
+    override val profileThemeNavy = "Emerald"
     override val profileThemeDark = "Dark"
     override val profileThemeLight = "Light"
     override val profileInvalidCodeFormat = "Invalid code format"
@@ -1090,7 +1210,7 @@ private val en3 = object : IStr3 {
     override val backupImportWipeTitle = "Warning"
     override val backupImportWipeText = "Importing will completely replace this device's data with the new identity from the backup: current contacts, messages and groups will be permanently deleted. This is not a rollback to old chat history - old data won't survive in any form. Some hiccups are possible during the first sync after import. Continue?"
     override val backupSaveChooser = "Save backup"
-    override val backupCreated = "✓ Backup created"
+    override val backupCreated = "Backup created"
     override val backupErrEnterPassword = "Enter password"
     override val backupErrPasswordMatch = "Passwords don't match"
     override val backupErrPasswordLength = "Password must be at least 8 characters"
@@ -1116,16 +1236,17 @@ private val en4 = object : IStr4 {
     override val serversQrNotFound = "No QR code found in the photo"
     override val serversAccessCodeRequired = "This server requires an access code to register — ask the operator for a QR code or link"
     override val serversRegistrationFull = "This server has reached its account limit and isn't accepting new registrations right now"
+    override val serversDeviceAuthFailed = "Couldn't verify this device. Try reconnecting or contact support"
     override val serversPort = "Port"
     override val groupInfoTitle = "Group info"
     override val groupInfoNotFound = "Group not found"
     override val groupInfoMembersCount: (Int) -> String = { "$it members" }
     override val groupInfoDescription = "Description"
-    override val groupInfoAddDescription = "Tap ✏️ to add a description"
+    override val groupInfoAddDescription = "Tap to add a description"
     override val groupInfoNoDescription = "No description"
     override val groupInfoMembersSection = "Members"
-    override val groupInfoCreator = "👑 Creator"
-    override val groupInfoAdmin = "⭐ Admin"
+    override val groupInfoCreator = "Creator"
+    override val groupInfoAdmin = "Admin"
     override val groupInfoPromoteAdmin = "Make admin"
     override val groupInfoRemoveMember = "Remove from group"
     override val groupInfoLeave = "Leave group"
@@ -1143,7 +1264,7 @@ private val en4 = object : IStr4 {
     override val groupInfoEmojiTitle = "Choose avatar"
     override val groupInfoDescTitle = "Group description"
     override val groupInfoDescLabel = "Description (up to 300 characters)"
-    override val groupInfoChangeAvatar = "✏️ change"
+    override val groupInfoChangeAvatar = "change"
     override val createGroupTitle = "Create group"
     override val createGroupTapAvatar = "Tap to choose avatar"
     override val createGroupNameLabel = "Group name"
@@ -1154,7 +1275,7 @@ private val en4 = object : IStr4 {
 
 private val en5 = object : IStr5 {
     override val channelDefault = "Channel"
-    override val channelCopyLink = "🔗 Link"
+    override val channelCopyLink = "Link"
     override val channelUnsubscribe = "Unsubscribe"
     override val channelPostPlaceholder = "Write to channel..."
     override val channelLinkCopied = "Link copied"
@@ -1162,14 +1283,14 @@ private val en5 = object : IStr5 {
     override val channelWriteFirst = "Write the first post below"
     override val channelSubscribeConfirm = "Subscribe to this channel?"
     override val channelSubscribeBtn = "Subscribe"
-    override val channelMute = "🔕 Mute notifications"
-    override val channelUnmute = "🔔 Unmute notifications"
+    override val channelMute = "Mute notifications"
+    override val channelUnmute = "Unmute notifications"
     override val channelSubscribers: (Int) -> String = { "$it subscribers" }
     override val channelSearchPlaceholder = "Search posts..."
-    override val channelPinPost = "📌 Pin"
-    override val channelUnpinPost = "📌 Unpin"
+    override val channelPinPost = "Pin"
+    override val channelUnpinPost = "Unpin"
     override val channelPinned = "Pinned"
-    override val channelDeletePost = "🗑 Delete post"
+    override val channelDeletePost = "Delete post"
     override val channelForwardPost = "↗ Forward"
     override val channelForwardTitle = "Forward to chat..."
     override val channelForwardSent = "Forwarded"
@@ -1209,7 +1330,7 @@ private val en6 = object : IStr6 {
     override val chatSearchPlaceholder = "Search in chat..."
     override val chatOnline = "online"
     override val chatOffline = "offline"
-    override val chatKeyWarningTitle = "⚠️ WARNING!"
+    override val chatKeyWarningTitle = "WARNING!"
     override val chatKeyWarningText = "The contact's encryption key has changed!\n\nThis may indicate:\n• App reinstallation\n• New device\n• MITM attack\n\nContact this person through another channel!"
     override val chatKeyWarningConfirm = "I verified, it's OK"
     override val chatKeyWarningLeave = "Leave chat"
@@ -1221,9 +1342,13 @@ private val en6 = object : IStr6 {
     override val chatSendBlockedConfirm = "Got it"
     override val chatTyping = "typing..."
     override val chatMenu = "Menu"
+    override val contactInfoTitle = "Profile"
     override val chatAudioCall = "Audio call"
     override val chatVideoCall = "Video call"
     override val chatVerifyAction = "Verify"
+    override val chatRestoreConnection = "Restore connection"
+    override val chatRestoreConnectionStarted = "Restore request sent — ask your contact to press the same button"
+    override val chatRestoreConnectionCooldown = { min: Int -> "Please wait ${min} more min before trying again" }
     override val chatDirectConnection = "Direct connection — no Tor. Install Orbot for anonymity."
     override val chatContextReply = "↩Reply"
     override val chatContextCopy = "Copy"
@@ -1242,6 +1367,10 @@ private val en6 = object : IStr6 {
     override val chatDisappear24hShort = " · ⏱1d"
     override val chatDisappear7dShort = " · ⏱7d"
     override val chatReplyPreview = "Replying to"
+    override val chatAutoDeleteMenu = "Auto-delete (this device only)"
+    override val chatAutoDeleteTitle = "Auto-delete messages"
+    override val chatAutoDeleteDescription = "Messages older than the selected time will be deleted only from this device. The other party and their copy of the conversation are not affected — this is not the same as \"Disappearing messages\"."
+    override val chatDisappearSyncedNote = "Synced with the other party — deletes on both sides"
     override val chatEditing = "Editing"
     override val chatAttach = "Attach"
     override val chatAttachPhoto = "Photo"
@@ -1334,7 +1463,7 @@ private val en7 = object : IStr7 {
     override val emergencyInfoOpenSettings = "Accessibility"
     override val emergencyInfoOpenAppSettings = "App settings"
     override val emergencyInfoWarning = "Press VOLUME DOWN 5 times within 3 seconds — " +
-        "the app will immediately delete all keys and messages.\n⚠️ Without confirmation!"
+        "the app will immediately delete all keys and messages.\nWithout confirmation!"
     override val emergencyInfoStepLabel: (Int) -> String = { n -> "Step $n" }
     override val emergencyInfoStep1Desc = "Open app settings, then ⋮ (top right) → \"Allow restricted settings\""
     override val emergencyInfoStep2Desc = "Accessibility → Subrosa Emergency Wipe → enable"
@@ -1362,7 +1491,7 @@ private val en7 = object : IStr7 {
     override val notifTapToRead = "Tap to read"
     override val notifMessageCount: (Int) -> String = { "$it messages" }
     override val notifGroupFallback = "Group"
-    override val notifNewGroupMessage = "👥 New group message"
+    override val notifNewGroupMessage = "New group message"
     override val notifMissedVideoCall = "Missed video call"
     override val notifMissedCall = "Missed call"
     override val notifFromCaller: (String) -> String = { "From: $it" }
@@ -1381,12 +1510,16 @@ private val en7 = object : IStr7 {
     override val paranoidModeActive = "Active"
     override val idsTitle = "IDS — Intrusion Detector"
     override val idsScanBtn = "Scan"
-    override val idsClean = "✓ No threats detected"
-    override val idsThreatFound = "⚠ Threats detected"
-    override val idsHoneyTampered = "⚠ Honey file tampered"
+    override val idsClean = "No threats detected"
+    override val idsThreatFound = "Threats detected"
+    override val idsHoneyTampered = "Honey file tampered"
     override val alertUrlLabel = "Alert URL (optional)"
     override val alertUrlHint = "https://your-server/alert"
     override val alertUrlSave = "Save"
+    override val alertUrlInvalid = "Needs an HTTPS address (http:// is blocked by the cleartext-traffic policy)"
+    override val alertUrlTestBtn = "Test"
+    override val alertUrlTestOk = "Delivered"
+    override val alertUrlTestFail = "Not delivered — check the address and network"
 }
 
 private val en8 = object : IStr8 {
@@ -1446,13 +1579,14 @@ private val en9 = object : IStr9 {
     override val calcUnlockCodeLabel = "Unlock code (result number)"
     override val calcUnlockCodeHint = "e.g. 42"
     override val calcUnlockCodeSave = "Save & enable"
-    override val profileTotp = "Backup two-factor protection"
-    override val totpTitle = "TOTP backup protection"
-    override val totpDescription = "An extra layer of account protection: a code is required both when restoring a backup on a new device and when this fingerprint tries to log in from a new device (device_id) the server hasn't seen before — closing the gap where someone with a stolen backup or key could just register as you. Save the secret separately (e.g. in KeePass) — it isn't stored inside the backup itself, so the backup file and its password alone won't be enough to hijack the identity."
+    override val profileTotp = "Two-factor protection (TOTP)"
+    override val totpTitle = "Two-factor protection (TOTP)"
+    override val totpDescription = "An extra layer of account protection: a code is required both when restoring a backup on a new device and when this fingerprint tries to log in from a new device (device_id) the server hasn't seen before — closing the gap where someone with a stolen backup or key could just register as you. Save the secret separately (e.g. in KeePass) — it isn't stored inside the backup itself, so the backup file and its password alone won't be enough to hijack the identity. Switched authenticators or suspect the secret leaked? You can issue a new one right here (needs your current code)."
     override val totpStatusEnabled = "Enabled"
     override val totpStatusDisabled = "Disabled"
     override val totpSetupButton = "Set up"
-    override val totpDisableButton = "Disable"
+    override val totpDisableButton = "Change secret"
+    override val totpDisableHint = "Needs your current authenticator code. Setting up a new secret opens right after you confirm — the unprotected window is a couple of taps, not a state you're left in."
     override val totpSecretLabel = "Secret (save it separately, not next to the backup)"
     override val totpCodeLabel = "Code from your authenticator app"
     override val totpConfirmButton = "Confirm and enable"
@@ -1473,6 +1607,7 @@ private val en9 = object : IStr9 {
     override val totpRecoveryFieldLabel = "Recovery code"
     override val totpRecoverySubmit = "Submit"
     override val totpRecoveryErr = "Code not accepted — check it and try again"
+    override val totpReenrollPrompt = "This account already has TOTP protection set up from another device. If you just logged in with a recovery code, enter one more recovery code below to replace it with this new one."
     override val backupTotpSecretLabel = "TOTP secret (if it was enabled on the source device)"
     override val backupTotpCodeLabel = "Current TOTP code"
     override val backupTotpRecoveryOr = "— or, if the secret is lost —"
@@ -1486,7 +1621,7 @@ private val en10 = object : IStr10 {
     override val guideKeyVerifyTitle = "Key verification"
     override val guideKeyVerifyDesc = "A sequence of 5 emoji derived from a hash of your contact's public key. Compare it with them in person or over another channel — if it matches, you're really talking to them, not someone who swapped in a different key (man-in-the-middle attack)."
     override val guideTotpTitle = "Two-factor protection (TOTP)"
-    override val guideTotpDesc = "A mandatory code from an authenticator app (like Google Authenticator), without which this account can't be registered on a new device even if the keys and password are stolen. Save the recovery codes shown during setup somewhere separate from the phone."
+    override val guideTotpDesc = "A mandatory code from an authenticator app (like Google Authenticator), without which this account can't be registered on a new device even if the keys and password are stolen. Save the recovery codes shown during setup somewhere separate from the phone. A recovery code gets you into a new device if you lose the authenticator, but it doesn't turn protection off by itself — set TOTP up again right away on the device you just logged into (that takes one more recovery code)."
     override val guidePanicTitle = "Panic password"
     override val guidePanicDesc = "A second login password, different from your real one. Entering it instead of the real password shows a convincing fake messenger full of made-up chats, while your real keys and messages are irreversibly wiped in the background — use it if you're being forced to unlock your phone."
     override val guideEmergencyTitle = "Emergency deletion"
@@ -1496,15 +1631,17 @@ private val en10 = object : IStr10 {
     override val guideBackupTitle = "Backup"
     override val guideBackupDesc = "An encrypted file with all your keys and message history. Password-protected, and restoring on a new device also requires the TOTP secret — the file and password alone aren't enough. Store the file, password, and TOTP secret in different places."
     override val guideTorTitle = "Tor"
-    override val guideTorDesc = "Routes your connection to the server through the Tor network (requires Orbot installed), hiding your IP address even from the server itself. Off by default — enabling it adds 10-15 seconds to app startup."
+    override val guideTorDesc = "Routes your connection to the server through the Tor network (requires Orbot installed), hiding your IP address even from the server itself. Off by default — enabling it adds 10-15 seconds to app startup.\n\nImportant: this only covers the connection to the server (login, messages, call signaling — who's calling whom). The actual audio/video of a call does NOT go through Tor: WebRTC can't route through Orbot's SOCKS proxy, and connects directly or via the relay server instead. IP protection specifically during a call is a separate setting, \"Hide IP during calls\" — Tor and it don't conflict, but they don't substitute for each other either: turn both on if you want coverage for both."
     override val guideCoverTitle = "Cover traffic"
     override val guideCoverDesc = "The app sends dummy packets at a steady interval even when you're not sending anything — so an outside observer can't tell from traffic patterns whether you're actively messaging or not. Uses a bit of battery and data."
     override val guideCompromisedTitle = "Identity reset"
     override val guideCompromisedDesc = "If you suspect your key was stolen — this permanently destroys your current keys, contacts, and messages on this device and issues new ones. Before deleting anything, the app also tells the server to revoke the old identity — the old key can no longer register, even if it ended up in someone else's hands. Contacts will need to exchange a fresh invite code with you to move to the new identity. Irreversible."
+    override val guideDeleteContactTitle = "Deleting a contact"
+    override val guideDeleteContactDesc = "Deleting a contact isn't just a list cleanup. The app immediately revokes every still-unspent token you gave them (they can't message you with old ones anymore) and blocks any new attempt to reach you from that person — even a fresh session request from them is silently ignored. The block lifts on its own if you later re-add the same contact via a fresh invite code. Use this as a quick way to cut off a contact whose device you believe is compromised."
     override val guideSelfHealTitle = "Self-healing connections"
     override val guideSelfHealDesc = "The app deliberately never tells the server who's talking to whom — great for privacy, but it means that after a disruption (like a long stretch offline), a chat or call can take a little while to reconnect instead of instantly. That's not a sign anything's broken — the channel is designed to repair itself. If a message isn't going through, usually just waiting a bit is enough. We keep testing to shrink these delays further."
     override val guideParanoidTitle = "Paranoid mode & alert URL"
-    override val guideParanoidDesc = "Turns on continuous scanning for surveillance on the device (spyware Accessibility services, suspicious device-admin grants, screen overlays, and honey-token tampering). On detection: if an \"alert URL\" is set (Security Diagnostics → URL field), a silent POST request with the device ID and threat list is sent there, bypassing the messenger's own channel entirely (if you've been exposed, that channel can't be trusted). After that — either automatic data wipe (if \"wipe on breach\" is on), or a stealth mode showing a fake screen, same idea as the duress password."
+    override val guideParanoidDesc = "Turns on continuous scanning for surveillance on the device (spyware Accessibility services, suspicious device-admin grants, screen overlays, and honey-token tampering). On detection: if an \"alert URL\" is set (Security Diagnostics → URL field), a silent POST request with the device ID and threat list is sent there, bypassing the messenger's own channel entirely (if you've been exposed, that channel can't be trusted). After that — either automatic data wipe (if \"wipe on breach\" is on), or a stealth mode showing a fake screen, same idea as the duress password.\n\nWhat the URL needs to be: a plain HTTPS address (http:// is blocked by the traffic policy and will just silently fail to send, except for localhost/emulator/.onion) that accepts a POST with a body like {\"device_id\":\"...\",\"threats\":\"...\",\"ts\":1234567890} — no auth header, so the receiving side just needs to accept a POST and show you that JSON somehow.\n\nMinimal receiver with no server of your own: the ntfy app (ntfy.sh) — install it on a phone or use the web app, subscribe to a private topic with an unguessable name (e.g. ntfy.sh/xk7q-my-own-channel), and put that address in as the alert URL. ntfy doesn't parse unrecognized JSON — it just shows it as plain text in the push notification, which is enough to see the device ID, threat list, and timestamp. Use the \"Test\" button on the diagnostics screen to confirm delivery without waiting for a real threat."
     override val guideDmsTitle = "Dead Man's Switch"
     override val guideDmsDesc = "A check-in timer from 15 minutes to 3 days. If you don't tap \"I'm okay\" before it runs out, the app assumes something happened to you, revokes your identity on the server (the old key stops being able to register), and wipes everything at the harshest level (Nuclear), no further confirmation. Useful if you might be detained or lose access to your phone for a while and can't trigger a wipe yourself."
     override val guideTimeoutWipeTitle = "Inactivity wipe"
@@ -1513,6 +1650,22 @@ private val en10 = object : IStr10 {
     override val guidePanicButtonDesc = "A third, separate emergency-deletion method (besides the duress password and the volume buttons) — a persistent notification with a \"Delete everything\" action, visible right away with no need to expand it, including from the lock screen. Still needs at least one tap on the screen, though — the volume buttons remain the only fully blind option, no need to even look at the screen. Can be set to show the same fake screen instead of just closing the app — configured separately."
     override val guideWipeLevelsTitle = "Destruction levels (Hard / Nuclear)"
     override val guideWipeLevelsDesc = "Hard deletes all keys, files, and app data, but deliberately keeps a hidden password hash — needed so the app can still recognize its owner via the decoy password afterward. Nuclear does the same with no exceptions at all: it's the Android system's own \"clear data\" call, guaranteed to erase absolutely everything, including the one record Hard keeps — recovering access via the decoy password won't be possible after Nuclear. Different emergency-deletion features default to different levels (the dead man's switch, for example, always goes straight to Nuclear, since it doesn't need the decoy-recovery trade-off)."
+    override val guideHideNotifTitle = "Hide text in notifications"
+    override val guideHideNotifDesc = "A new-message notification shows only \"New message\", with no sender name or text — so if someone glances at your locked phone's screen, or the notification shows up on a smartwatch or in the shade, the conversation's content stays private. Messages still arrive and get stored normally; only what the notification displays is hidden."
+    override val guideHideIpCallsTitle = "Hide IP during calls"
+    override val guideHideIpCallsDesc = "By default a call tries to connect directly (P2P) for the lowest latency — but that means both devices exchange real IP addresses with each other. With this on, the call only ever routes through the relay server: your contact sees the server's address, not yours. The trade-off is higher latency and load on the relay, especially on a weak connection.\n\nThis hides your IP from your contact, but not from the relay server itself — it sees both real addresses since it's forwarding the traffic between you. Having Tor on doesn't add coverage here: Tor only wraps the signaling channel (the call request), the media itself travels directly, bypassing Tor."
+    override val guideBiometricTitle = "Biometric unlock"
+    override val guideBiometricDesc = "Fingerprint or face instead of a password at login — faster, but physically easier to compel: it's easier to force someone to press a finger or show their face than to force them to reveal a password, and in several jurisdictions compelled biometric unlock has weaker legal protection than compelled password disclosure. If physical or legal coercion is part of your threat model, keep password-only — your password stays a valid way to unlock even with biometrics enabled."
+    override val guideChangePasswordTitle = "Changing your password"
+    override val guideChangePasswordDesc = "Your password doesn't just gate the login screen — it also protects the on-disk encryption of every key and message (storage encryption). Changing it re-encrypts that storage under the new password; the old password stops working. Change it if you suspect someone else may have seen it, or just periodically as hygiene."
+    override val guideDiagnosticsTitle = "Security diagnostics"
+    override val guideDiagnosticsDesc = "A set of live checks on the device and app: root/tamper detection, key-storage integrity, TLS-pinning status, and other compromise signals — each check reports pass/fail with an explanation. This is also where paranoid mode (continuous surveillance monitoring) and a one-off IDS scan for anomalies live. If something fails, it's worth investigating before continuing to use this device for messaging."
+    override val guideServiceNotifTitle = "Background service icon"
+    override val guideServiceNotifDesc = "Android requires a persistent notification for as long as Subrosa's background service keeps your connection alive and receives messages — the notification itself can't be removed. This setting only hides its icon from the status bar: the notification goes silent and moves into the shade's collapsed \"Silent notifications\" section, so it doesn't draw attention at a glance."
+    override val guideWipeOnBreachTitle = "Wipe on breach"
+    override val guideWipeOnBreachDesc = "If the intrusion-detection system (IDS) flags a critical threat — for example paranoid mode triggering, or a honey-token being tampered with — the app automatically wipes your data with no further confirmation, at whichever level (Hard or Nuclear) you preselected. This is a last line of defense for when you physically can't reach a panic button yourself."
+    override val guideCalcDisguiseTitle = "Calculator disguise"
+    override val guideCalcDisguiseDesc = "Swaps the app's icon and name for \"Calculator\" — a quick glance at your phone won't reveal the messenger among your other apps. It opens when you enter a numeric expression whose result equals your chosen code; the calculator otherwise keeps working normally for any other calculation."
 }
 
 val enStrings = AppStrings("en", en1, en2, en3, en4, en5, en6, en7, en8, en9, en10)

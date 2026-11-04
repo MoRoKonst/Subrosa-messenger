@@ -31,9 +31,12 @@ import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
+import com.subrosa.messenger.ui.theme.Inter
 import kotlinx.coroutines.delay
+import androidx.compose.ui.res.painterResource
 
-private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
+// App-wide font swap 2026-09-22 — name kept for API stability.
+private val AppFont = Inter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,12 +126,12 @@ fun ServersScreen(onBack: () -> Unit) {
                 title = { Text(s.serversTitle, color = c.textPrimary, fontFamily = AppFont) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back, tint = c.textPrimary)
+                        Icon(painterResource(R.drawable.ic_back_arrow), s.back, tint = c.textPrimary)
                     }
                 },
                 actions = {
                     IconButton(onClick = { showAddDialog = true }) {
-                        Icon(Icons.Default.Add, s.serversAdd, tint = c.accent)
+                        Icon(painterResource(R.drawable.ic_plus), s.serversAdd, tint = c.accent)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
@@ -155,13 +158,13 @@ fun ServersScreen(onBack: () -> Unit) {
                             color = c.textPrimary,
                             fontFamily = AppFont,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
+                            fontSize = 17.sp
                         )
                         Text(
                             if (fixedMode) "Закреплено — нажми на сервер в списке, чтобы выбрать" else "Автопереключение между пирами",
                             color = c.textPrimary.copy(alpha = 0.6f),
                             fontFamily = AppFont,
-                            fontSize = 12.sp
+                            fontSize = 14.sp
                         )
                     }
                     Switch(
@@ -188,7 +191,7 @@ fun ServersScreen(onBack: () -> Unit) {
                             color = c.textPrimary,
                             fontFamily = AppFont,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
+                            fontSize = 17.sp
                         )
                         Text(
                             when (coverMode) {
@@ -198,7 +201,7 @@ fun ServersScreen(onBack: () -> Unit) {
                             },
                             color = c.textPrimary.copy(alpha = 0.6f),
                             fontFamily = AppFont,
-                            fontSize = 12.sp
+                            fontSize = 14.sp
                         )
                     }
 
@@ -306,29 +309,36 @@ fun ServersScreen(onBack: () -> Unit) {
                                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (isActive) Text(
-                                    if (isReallyConnected) "🟢 " else "🟡 ",
-                                    fontSize = 16.sp
-                                )
+                                if (isActive) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .background(
+                                                if (isReallyConnected) Color(0xFF3FB950) else Color(0xFFD29922),
+                                                androidx.compose.foundation.shape.CircleShape
+                                            )
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                }
 
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         server.name.ifEmpty { s.serversDefault(index + 1) },
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 16.sp,
+                                        fontSize = 18.sp,
                                         color = c.textPrimary,
                                         fontFamily = AppFont
                                     )
                                     Text(
                                         server.toWssUrl(),
-                                        fontSize = 14.sp,
+                                        fontSize = 16.sp,
                                         color = c.textPrimary.copy(alpha = 0.6f),
                                         fontFamily = AppFont
                                     )
                                     if (isActive) {
                                         Text(
                                             if (isReallyConnected) s.serversConnected else s.serversConnecting,
-                                            fontSize = 12.sp,
+                                            fontSize = 14.sp,
                                             color = if (isReallyConnected) c.accent else Color(0xFFFFAA00),
                                             fontWeight = FontWeight.Bold,
                                             fontFamily = AppFont
@@ -339,7 +349,7 @@ fun ServersScreen(onBack: () -> Unit) {
                                     ServerManager.removeServer(context, index)
                                     servers = ServerManager.getServers(context)
                                 }) {
-                                    Icon(Icons.Default.Delete, s.delete, tint = c.error)
+                                    Icon(painterResource(R.drawable.ic_delete), s.delete, tint = c.error)
                                 }
                             }
                         }
@@ -354,7 +364,14 @@ fun ServersScreen(onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { showCoverWarning = false },
             containerColor = c.dialog,
-            title = { Text("⚠️ Постоянный трафик", color = c.textPrimary, fontFamily = AppFont) },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(painterResource(R.drawable.ic_warning), contentDescription = null,
+                        tint = c.textPrimary, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Постоянный трафик", color = c.textPrimary, fontFamily = AppFont)
+                }
+            },
             text = {
                 Text(
                     "Режим \"${if (mode == UserStorage.CoverTrafficMode.MODERATE) "Умеренный" else "Агрессивный"}\" создаёт непрерывный поток пакетов.\n\n" +
@@ -363,7 +380,7 @@ fun ServersScreen(onBack: () -> Unit) {
                     "Это повысит расход трафика и батареи даже когда вы не отправляете сообщений. Включать рекомендуется только при высоком уровне угрозы.",
                     color = c.textPrimary.copy(alpha = 0.85f),
                     fontFamily = AppFont,
-                    fontSize = 14.sp
+                    fontSize = 16.sp
                 )
             },
             confirmButton = {
@@ -450,7 +467,7 @@ fun ServersScreen(onBack: () -> Unit) {
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text(s.serversScanQrButton, color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
+                        ) { Text(s.serversScanQrButton, color = c.accent, fontFamily = AppFont, fontSize = 14.sp) }
 
                         OutlinedButton(
                             onClick = {
@@ -458,12 +475,12 @@ fun ServersScreen(onBack: () -> Unit) {
                                 pickQrImageLauncher.launch("image/*")
                             },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text(s.serversUploadQrButton, color = c.accent, fontFamily = AppFont, fontSize = 12.sp) }
+                        ) { Text(s.serversUploadQrButton, color = c.accent, fontFamily = AppFont, fontSize = 14.sp) }
                     }
 
                     if (addDialogError.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(addDialogError, color = c.error, fontFamily = AppFont, fontSize = 12.sp)
+                        Text(addDialogError, color = c.error, fontFamily = AppFont, fontSize = 14.sp)
                     }
                 }
             },

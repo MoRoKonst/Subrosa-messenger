@@ -27,7 +27,7 @@ Subrosa is a self-hosted encrypted messenger built for adversarial environments.
 The server never has access to plaintext messages, private keys, or call content — all cryptographic operations happen on the client, and it doesn't learn who a given message is *for* (see [Privacy Architecture](#privacy-architecture) below for exactly what routing metadata it does and doesn't see). It does see each connection's authenticated public key/fingerprint at login, and persists which fingerprints have ever registered — that's not a civil identity, but it isn't nothing either; see [SECURITY.md](docs/SECURITY.md) for the precise threat model.
 
 **Min Android:** 8.0 (API 26)  
-**Target SDK:** 34  
+**Compile SDK:** 37 (no explicit `targetSdk` is declared, so it defaults to this)  
 **Language:** Kotlin (Jetpack Compose), Python 3 (server)
 
 ---
@@ -241,9 +241,17 @@ No rebuild required. In the app:
 ## Build Instructions
 
 ### Prerequisites
-- Android Studio Hedgehog (2023.1) or newer
-- JDK 17
-- Android SDK with API 34
+- Android Studio recent enough to open an AGP 9.1 project (the bundled JBR is what the project is developed against)
+- JDK 21
+- Android SDK with API 37
+
+> The project builds with AGP 9.1.1 / Gradle 9.3.1 / Kotlin 2.0.21 and `compileSdk = 37`.
+> (Corrected 2026-11-03 — this section previously said Android Studio Hedgehog / JDK 17 / API 34,
+> none of which can build the current toolchain.)
+>
+> **Windows note:** AGP refuses to apply its plugin when the project path contains non-ASCII
+> characters, and even with `android.overridePathCheck=true` in `gradle.properties` the JVM unit-test
+> worker still fails to start. Keep the checkout on an ASCII-only path.
 
 ### Steps
 
@@ -334,3 +342,5 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system design and module ref
 Subrosa Messenger is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0) — see [LICENSE](LICENSE) for the full text.
 
 In short: you're free to run, study, modify, and redistribute this software, including commercially. If you run a modified version as a network service that others interact with remotely (for example, hosting Subrosa for clients), AGPL-3.0 §13 requires you to make the corresponding source of your modified version available to those users, free of charge. Every official Subrosa client offers this by default via an in-app "Source code" link (Profile → About) pointing to this repository.
+
+Bundled fonts/icons and every third-party library compiled into the shipped binaries — see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for the full list and each one's license.

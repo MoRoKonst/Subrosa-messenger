@@ -8,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -79,22 +80,48 @@ object ParanoidMode {
     private fun sendAlert(context: Context, threats: String) {
         val url = UserStorage.getAlertUrl(context)
         if (url.isBlank()) return
-        val payload = JSONObject().apply {
+        alertScope.launch {
+            postAlert(url, buildPayload(context, threats))
+        }
+    }
+
+    /** Fires a real request against [url] and reports whether it was delivered,
+     *  so the settings screen can confirm a configured webhook actually works
+     *  instead of relying on the silent fire-and-forget path used for real alerts. */
+    suspend fun testAlert(context: Context, url: String): Boolean =
+        postAlert(url, buildPayload(context, "test"))
+
+    private fun buildPayload(context: Context, threats: String): String =
+        JSONObject().apply {
             put("device_id", UserStorage.getDeviceId(context))
             put("threats", threats)
             put("ts", System.currentTimeMillis())
         }.toString()
-        alertScope.launch {
-            try {
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(5, TimeUnit.SECONDS)
-                    .readTimeout(5, TimeUnit.SECONDS)
-                    .build()
-                val body = payload.toRequestBody("application/json".toMediaType())
-                val req = Request.Builder().url(url).post(body).build()
-                client.newCall(req).execute().close()
-            } catch (_: Exception) {}
-        }
+
+    private suspend fun postAlert(url: String, payload: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(5, TimeUnit.SECONDS)
+                .build()
+            val body = payload.toRequestBody("application/json".toMediaType())
+            val req = Request.Builder().url(url).post(body).build()
+            client.newCall(req).execute().use { it.isSuccessful }
+        } catch (_: Exception) { false }
+    }
+
+    /** Alert URLs must be HTTPS (or one of the network_security_config loopback/
+     *  .onion exceptions) — anything else silently fails every send because
+     *  cleartext traffic is blocked app-wide, which would otherwise look "saved
+     *  and armed" to the user while never actually delivering a breach alert. */
+    fun isValidAlertUrl(url: String): Boolean {
+        if (url.isBlank()) return true
+        val parsed = try { java.net.URI(url) } catch (_: Exception) { return false }
+        val host = parsed.host ?: return false
+        if (parsed.scheme == "https") return true
+        return parsed.scheme == "http" && (
+            host == "localhost" || host == "127.0.0.1" || host == "10.0.2.2" || host.endsWith(".onion")
+        )
     }
 }
 

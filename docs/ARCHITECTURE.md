@@ -4,7 +4,7 @@
 
 This document describes the system design, module structure, and data flows of Subrosa Messenger.
 
-> **Note:** The Channels feature (broadcast channels: `ChannelManager`, `ChannelFeedScreen`, `channel_*` message types and DB tables referenced below) is currently **disabled at the UI layer** on both clients — it didn't fit the product's purpose as a resilient private communication tool rather than a broadcast/social tool, and its metadata wasn't anonymized. The underlying code is left in place, unreachable, in case it's revisited later.
+> **Note:** The Channels feature (broadcast channels: `ChannelManager`, `ChannelFeedScreen`, `channel_*` message types and DB tables referenced below) is currently **disabled at the UI layer** on both clients — it didn't fit the product's purpose as a resilient private communication tool rather than a broadcast/social tool, and its metadata wasn't anonymized. The underlying code is left in place, unreachable, in case it's revisited later. The `channel_*` message types were additionally removed from the server's own allowlist (SCOPE-01) — a client sending one today gets the generic unknown-type rejection, not just a UI-level dead end.
 
 ---
 
@@ -193,6 +193,13 @@ Manages per-contact Double Ratchet session states. Initialized at app start (bef
 
 > SPK, OPK, PQ (ML-KEM) private keys, and Double Ratchet session state are SMK-wrapped (`SessionKeyManager.wrapKeyBytes()`/`saveSession()`, see [SECURITY.md](SECURITY.md)). The cold-start case (background service resumed before the user unlocks) is handled without leaving keys unwrapped: `tryUnwrapKeyBytes()` returns `null` rather than throwing when the SMK isn't available yet, callers treat that as "not available yet" and skip gracefully, and `wrapKeyBytes()` falls back to plain Base64 only for writes made while locked (so incoming-traffic-triggered saves still work) — reads of already-wrapped values while locked stay unavailable until unlock, they aren't silently stored unwrapped.
 
+**Prekey lifecycle** (see [PROTOCOL_STATE_MACHINE.md](PROTOCOL_STATE_MACHINE.md) §7 for the full state machine):
+- **SPK (Signed PreKey)**: rotated every `SPK_ROTATION_INTERVAL_MS` (7 days). The previous SPK stays valid for `SPK_GRACE_PERIOD_MS` (14 days) after rotation, so a contact whose cached prekey bundle hasn't refreshed yet can still complete X3DH against it — `generateOrRotateSpk()` is the only place that mints a new one, and it always keeps one graced predecessor, never rotates to a bare replacement with no fallback.
+- **OPK (One-Time PreKey)**: single-use by protocol design — consumed exactly once during X3DH (`receiveSession()`'s `consumeOpk()`), the pool is topped back up to 10 (`refillOpkPool()`) as OPKs get spent. `opkIdCounter` only ever increases, so ids are never reused across the pool's lifetime.
+- **Backup interaction**: `exportCurrentPrekeyForBackup()`/`restorePrekeyFromBackup()` carry the *current* SPK+PQ keypair (not the OPK pool) into a backup, restored into storage before `initialize()` runs on the new install — this makes a post-restore SPK look like an ordinary scheduled rotation to `generateOrRotateSpk()` instead of an unplanned, ungraced one, so contacts' already-cached bundle for this identity keeps decrypting correctly with no re-handshake needed. OPKs are **not** restored as key material (they're one-time — replaying a frozen keypair risks reissuing an id already consumed for real); only the issuance counter (`exportOpkCounterForBackup()`/`restoreOpkCounterFromBackup()`, monotonic via `maxOf`) carries forward, so freshly generated post-restore OPKs never collide with one a contact might still reference.
+
+**DH ratchet epoch tracking**: `nextRecvKey()` steps the ratchet (`performDHRatchetStep()`) whenever an incoming message's `dh` header differs from the currently-tracked `recvRatchetPub` — but only once per epoch. `SessionState.previousRecvRatchetPubs` (last 5) records keys already stepped past, so a redelivered message from an old epoch (the server's `token_pending` fallback resends anything not yet acked) is recognized as stale and rejected without state mutation, instead of being mistaken for a genuine forward step and rolling the live session back to old key material. A gap between the expected and actual counter within the *current* epoch is bridged via a skipped-key buffer (`MAX_SKIPPED_KEYS` = 100 entries, `SKIPPED_KEY_TTL_MS` = 7 days), for messages that arrive out of order rather than out of epoch.
+
 #### `GroupManager.kt`
 Manages encrypted group state.
 
@@ -205,7 +212,9 @@ Key lifecycle:
 
 Message encryption: `AES/GCM/NoPadding`, 12-byte IV prepended.
 
-Key rotation is triggered on member removal.
+Key rotation is triggered on member removal **and** member addition (fixed 2026-09-25, closing
+`KNOWN_SECURITY_ISSUES.md` OPEN-7 — this line previously said removal-only, which went stale when
+addition-side rotation shipped; see `docs/PROTOCOL_STATE_MACHINE.md` §5 for the full flow).
 
 #### `StorageKeyManager.kt`
 Second encryption layer for at-rest data. The Storage Master Key (SMK) is a 256-bit random key that lives in memory only and is zeroed on lock or wipe.
@@ -263,7 +272,8 @@ Generates and verifies ECDSA-signed contact invitations as a binary blob, prefix
 Exports all user data to an encrypted binary blob:
 - Key derivation: **Argon2id** (BouncyCastle `Argon2BytesGenerator`) — 64 MB memory, 3 iterations, parallelism 1
 - Encryption: AES-256-GCM
-- Includes: messages, contacts, group keys, channel subscriptions, settings
+- Current format is version 7. Includes, precisely: the EC identity keypair (export **throws** rather than silently omitting it if absent — see [SECURITY_INVARIANTS.md](SECURITY_INVARIANTS.md)); the current SPK+PQ prekey snapshot and OPK issuance counter (v7+, see `SessionKeyManager.kt` above — **not** the OPK pool itself); configured servers including `path`/`accessCode` (a pre-v7 bug omitted these, breaking the WebSocket URL after restore); anon token pool; messages, contacts, group keys, channel subscriptions, settings. The TOTP secret is deliberately **excluded** — only the `totp_enabled` flag is — so a stolen backup can't also defeat the TOTP gate that restoring it depends on.
+- **Known limitation**: a *first* restore of a given backup file reliably resumes live messaging with no further action. Restoring the *same* file a second time (e.g. testing, or recovering twice from one export) is only guaranteed to recover message history — anon-token spent-history isn't preserved across the file, so live delivery after a repeat restore of the same file is not guaranteed. Exporting a fresh backup after each successful restore avoids this; it is not a data-loss risk, only a delivery-continuity one.
 
 > Not to be confused with `UserStorage`'s login password hash (PBKDF2-SHA256, 100 000 iterations) or `StorageKeyManager`'s SMK wrapping (PBKDF2-SHA256, 300 000 iterations) below — three different KDFs for three different purposes. Backup export specifically uses Argon2id, chosen for its memory-hardness against GPU/ASIC brute-force on a file an attacker could copy and attack offline indefinitely.
 
@@ -299,7 +309,7 @@ Where Android and Desktop diverge architecturally:
 |---|---|---|
 | Persistent storage | `EncryptedSharedPreferences` (AndroidKeyStore-backed) | `DesktopStorage.kt` — a single AES-256-GCM encrypted JSON blob at `%APPDATA%\BeaconMessenger\storage.enc` |
 | Key storage | `AndroidKeyStore` | `DesktopKeyStore.kt` — a PKCS12 keystore (`BEACON.p12`), password machine-derived (see [Machine-Bound Keystore](#machine-bound-keystore)) |
-| Anonymity network | Orbot (system-level Tor VPN) | `DesktopTorManager.kt` — local SOCKS5 proxy detection, no VPN (see [Tor Support](#tor-support)) |
+| Anonymity network | `TorManager.kt` — same local SOCKS5 proxy approach as Desktop, talks to Orbot's SOCKS port rather than relying on Orbot's optional VPN mode (see [Tor Support](#tor-support)) | `DesktopTorManager.kt` — local SOCKS5 proxy detection, no VPN (see [Tor Support](#tor-support)) |
 | WebRTC | `stream-webrtc-android` | `webrtc-java` (JNI wrapper around native libwebrtc), Windows-only native binaries currently bundled |
 | Screen-capture / anti-forensics | OS-level `FLAG_SECURE`, root/ADB detection | `NativeProtection.kt` (JNA): `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` on Windows, `VirtualLock`/`VirtualUnlock` for non-pageable SMK storage; Linux/macOS support is partial |
 
@@ -344,7 +354,7 @@ Cryptography, X3DH/Double-Ratchet session logic, the hybrid ML-KEM-768 post-quan
 
 ### Tor Support
 
-Android reaches Tor via Orbot, a system-level VPN that transparently routes all app traffic — no in-app SOCKS handling needed. Desktop has no VPN layer available, so it implements SOCKS5 proxying directly in `WebSocketClient.kt`:
+**Corrected 2026-08-30** (was wrong — this previously said Android relies purely on Orbot's system-level VPN to transparently route all app traffic, "no in-app SOCKS handling needed"; checked against the actual code and that's not what happens). Android *can* run Orbot as a VPN, but `MessengerService.kt` does its own explicit per-connection SOCKS5 routing regardless, the same fundamental approach as Desktop below: `TorManager.kt`'s `buildOkHttpClient(useTor = true)` builds a dedicated OkHttp client (`wsTorClient`/`anonWsTorClient`, kept separate from the non-Tor `wsClient`/`anonWsClient` — see [SECURITY.md item 32](SECURITY.md#known-limitations) for why the anon-channel pair specifically needs its own instances) whose custom `SocketFactory` connects through `127.0.0.1:9050` with `InetSocketAddress.createUnresolved()`, so hostname resolution (including `.onion` addresses) happens inside the Tor circuit, never via the local/system DNS resolver — same technique and same reason as Desktop's approach just below. `activeWsClient()`/`activeAnonWsClient()` pick between the Tor and non-Tor client pair based on whether Orbot's local SOCKS port is actually reachable right now. **A real bug existed here until 2026-08-30**: the code path for `.onion` server URLs specifically used the *non*-Tor client unconditionally, which has no SOCKS proxy configured at all and cannot resolve an `.onion` hostname through Android's normal DNS by any means — this silently broke connectivity for anyone using the bundled `.onion` server preset (`ServerManager.kt`) with Tor enabled, manifesting as "a Tor user's traffic doesn't arrive" (their own main socket couldn't reliably establish, so the server never saw them as online to route anything to). Fixed by using the dedicated Tor client for the `.onion` branch, matching the non-`.onion` path's existing logic. Desktop has no VPN layer available, so it implements SOCKS5 proxying directly in `WebSocketClient.kt`:
 
 - `DesktopTorManager.detectSocksPort()` probes `127.0.0.1:9050` (standalone Tor) and `127.0.0.1:9150` (Tor Browser's bundled Tor) and returns whichever is listening.
 - When the configured server URL is a `.onion` address, `WebSocketClient` builds a second OkHttp client (`torClient`) whose socket factory routes through `Proxy(Proxy.Type.SOCKS, ...)` using a raw `Socket(proxy).connect(InetSocketAddress.createUnresolved(host, port), ...)` — deliberately using the *unresolved* address form so hostname resolution (including the `.onion` address itself) happens inside the Tor circuit, never via the local/system DNS resolver.
@@ -388,27 +398,77 @@ revoked_fingerprints:    identities revoked via "I've been compromised" / DMS �
 user_totp:               per-account TOTP secrets (device-gated registration)
 totp_recovery_codes:     one-time recovery codes for the above
 server_access_codes:     invite-style codes for SERVER_ACCESS_PROTECTED deployments
+authorized_devices:      per-fingerprint device allowlist (device_id + pinned
+                         device_pubkey) — added 2026-09-03, see SECURITY.md §
+                         Device-Gated TOTP; this is what makes the device gate
+                         durable and cryptographically bound, not just an
+                         in-memory "is this the live session's device" check
+anon_token_state:        anon-token ownership/lifecycle (ACTIVE/IN_FLIGHT/
+                         SPENT/REVOKED) + bootstrap-reservation state — added
+                         2026-09-03, replacing what used to be RAM-only
+                         (token_owner/spent_tokens/bootstrap_reserved below);
+                         see PROTOCOL_STATE_MACHINE.md §1 for the full state
+                         machine and why this had to become durable
+second_factor_guard:     durable per-fingerprint TOTP/recovery-code brute-force
+                         guard (5 attempts / rolling 5-minute window, then a
+                         15-minute lock) — added S6-18 (2026-09-04), see
+                         SECURITY.md § Device-Gated TOTP
+anon_token_claim_guard:  durable per-owner new-anon-token-issuance quota —
+                         added S6-44 (2026-09-05)
+pending_messages_meta:   auxiliary bookkeeping paired with pending_messages
+channels, channel_posts,
+channel_subscribers,
+channel_posts_meta:      channel data model — UI-disabled client-side (see
+                         above), and channel_create/channel_post/etc. were
+                         removed from the server's own allowed message types
+                         (SCOPE-01); tables remain, hardened as recently as
+                         S6-47 (2026-09-05, byte/row caps)
+user_avatars,
+user_avatars_meta:       durable avatar storage — hardened S6-50 (2026-09-06)
 ```
+
+*(Added 2026-09-25, documentation audit: the six tables above existed in the code but were missing
+from this list entirely — some because they were added after this section was last revisited,
+`channels`/`channel_posts` because the doc's own note below promising channel tables "referenced
+below" was never actually followed through.)*
 
 **In-memory only** — lost on restart, by design (tied to a live connection
-or deliberately short-lived):
+or deliberately short-lived) or intentionally kept as a fast cache in front
+of the durable table above, never the record of truth itself:
 
 ```
-authenticated_users: {ws → username}
-clients:            {username → {ws, name, public_key}}
-token_to_ws:         {anon_token → ws}                 — anonymous routing table
-token_pending:       {anon_token → [queued anon_delivery]} — TTL 24h, watchdog-swept
-known_tokens:        {anon_token}                      — registered-but-not-yet-routed
-active_calls:        {username → {peer, call_id}}
-rate_limits:         {username → {message, reaction, typing, prekey_fetch, ...}}
-banned_ips:          {ip → ban_expiry}
+authenticated_users:    {ws → username}
+clients:                {username → {ws, name, public_key}}
+token_to_ws:            {anon_token → ws}         — LIVE routing only, never
+                        reconstructed from anon_token_state on restart —
+                        a token whose owner hasn't reconnected yet correctly
+                        has no live route, same as any other offline recipient
+token_pending:          {anon_token → [queued anon_delivery]} — TTL 24h,
+                        watchdog-swept; deliberately still RAM-only even
+                        though the token's own STATE is durable — see
+                        MESSAGE_DELIVERY.md's "Deliberate RAM-only exception"
+token_owner/spent_tokens/anon_token_state_cache:
+                        fast RAM caches mirroring anon_token_state (SQLite) —
+                        kept in sync on every write, but the SQLite table is
+                        the actual source of truth as of 2026-09-03; a
+                        terminal (SPENT/REVOKED) cache entry is a checked
+                        invariant that must never be overwritten by a
+                        non-terminal write (SECURITY_INVARIANTS.md #27)
+active_calls:           {username → {peer, call_id}}
+rate_limits:            {username → {message, reaction, typing, prekey_fetch, ...}}
+banned_ips:             {ip → ban_expiry}
 ```
 
 A server restart therefore does **not** wipe identities, TOTP protection,
-revocations, or the access-code allowlist — but it does drop live
-WebSocket connections (clients reconnect automatically) and any
-anonymous-routing state in flight (queued `anon_message` deliveries not
-yet acknowledged, which is bounded to 24h by a watchdog, not indefinite).
+revocations, the access-code allowlist, anonymous-token ownership/spent
+state, or authorized-device pins — the last two were RAM-only until
+2026-09-03 (see `PROTOCOL_STATE_MACHINE.md` §1/§8) and are now durable like
+everything else in this list. What a restart still drops: live WebSocket
+connections (clients reconnect automatically) and any queued-but-not-yet-
+delivered `anon_message` payload itself (`token_pending`'s contents,
+specifically — the *token* those payloads were riding on is durably closed
+to SPENT on restart rather than left re-spendable, a deliberate
+security-over-reliability trade-off, not an oversight).
 
 ### Message Protocol
 
@@ -421,20 +481,20 @@ All messages are JSON objects over WebSocket. Every message has a `type` field.
 | `register` | Initial authentication with ECDSA handshake response |
 | `message` | Encrypted 1-on-1 message |
 | `group_message` | Encrypted group message |
-| `channel_post` | Admin post to channel |
-| `call_invite` | WebRTC offer to peer |
+| `call_offer` | WebRTC offer to peer (corrected 2026-09-25 — this row previously said `call_invite`, which isn't a real message type) |
 | `call_answer` | WebRTC answer |
-| `ice_candidate` | WebRTC ICE candidate |
+| `call_ice` | WebRTC ICE candidate (corrected 2026-09-25 — previously said `ice_candidate`) |
 | `call_end` | Terminate call |
-| `fetch_prekey_bundle` | Request OPK bundle for X3DH |
+| `get_prekey_bundle` | Request OPK bundle for X3DH (corrected 2026-09-25 — previously said `fetch_prekey_bundle`) |
 | `get_prekey_bundles_batch` | Anonymized prekey fetch: real target padded with decoy fingerprints (own contacts) so the server can't tell which one is real; see [SECURITY.md](SECURITY.md) item 11 |
-| `upload_prekeys` | Push new OPK bundle to server |
+| `publish_prekey_bundle` | Push new OPK bundle to server (corrected 2026-09-25 — previously said `upload_prekeys`) |
 | `typing` | Typing indicator |
 | `reaction` | Message reaction |
-| `checkin` | Dead Man's Switch check-in |
 | `subscribe_tokens` | Register the client's pool of ~50 anonymous single-use tokens against this connection |
-| `anon_message` | Anything routed anonymously (1:1 text, typing, read receipts, reactions, edits, deletes, file/voice/video chunks, call signaling) wrapped in `{token, payload}` instead of being fingerprint-addressed — this is the actual carrier for most client→client traffic, not the `message`/`typing`/`reaction` rows above (those apply when a message is sent to a group or otherwise can't go anonymous) |
+| `unsubscribe_tokens` | Explicit, immediate revocation of specific previously-subscribed tokens — added 2026-08-29 for the "contact compromised" case; see [SECURITY.md](SECURITY.md) item 33 |
+| `anon_message` | Anything routed anonymously (1:1 text, typing, read receipts, reactions, edits, deletes, file/voice/video chunks, call signaling) wrapped in `{token, payload}` instead of being fingerprint-addressed — this is the actual carrier for most client→client traffic, not the `message`/`typing`/`reaction` rows above (those apply when a message is sent to a group or otherwise can't go anonymous). As of 2026-08-29, submitted over the identity-less `anon_channel` connection where possible — see [Authentication Handshake](#authentication-handshake) |
 | `anon_delivery_ack` | Recipient confirms it actually processed an `anon_delivery` payload — only after this does the server drop its fallback copy; see [SECURITY_CHANGELOG.md](SECURITY_CHANGELOG.md) item 18 |
+| `request_sender_cert` | Ask the server to sign a short-lived certificate binding this (already-authenticated) connection's fingerprint to its identity key — sent over the normal main socket, not `anon_channel`; see [SECURITY.md](SECURITY.md) item 32 |
 | `revoke_identity` | Authenticated client asks the server to mark its own fingerprint as revoked (persisted, survives restart) |
 
 **Server → Client (selected types):**
@@ -454,8 +514,10 @@ All messages are JSON objects over WebSocket. Every message has a `type` field.
 | `prekey_bundle_response` / `prekey_bundles_batch_response` | Prekey bundle(s) for X3DH |
 | `prekey_bundle_request` | Server asks this client to republish its OPK pool (running low) |
 | `anon_delivery` | The other side of `anon_message` — payload delivered to whichever connection currently owns the token, without the sender's fingerprint ever appearing |
-| `registration_full` | `register` rejected — `MAX_REGISTERED_USERS` cap reached (optional, off by default) |
-| `pow_required` | `register` rejected — this fingerprint's first-ever registration needs a `pow_nonce` solved against the handshake challenge (optional, off by default) |
+| `sender_cert` | `{cert, signature}` response to `request_sender_cert` — cached client-side, later embedded inside the sealed envelope of an `anon_message` so the recipient (not the server) can verify who sent it; see [SECURITY.md](SECURITY.md) item 32 |
+| `anon_channel_ok` | Acknowledges the identity-less `anon_channel` handshake — see [Authentication Handshake](#authentication-handshake) |
+| `registration_full` | `register` rejected — `MAX_REGISTERED_USERS` cap reached (operator-configurable, unlimited by default — though `REGISTERED_ACCOUNTS_HARD_MAX_ROWS`, default 1,000,000, still applies underneath as an always-on hard ceiling) |
+| `pow_required` | `register` rejected — this fingerprint's first-ever registration needs a `pow_nonce` solved against the handshake challenge (`POW_DIFFICULTY_BITS`, **defaults to 18**, real friction on by default — operator-disableable via `=0`) |
 | `identity_revoked` | `register` rejected — this fingerprint was revoked (via `revoke_identity` or Dead Man's Switch) |
 
 ### Rate Limiting
@@ -495,13 +557,17 @@ Client                              Server
   │                                   │
   │──── register {name, public_key,   │
   │      device_id, totp_code?,       │
-  │      access_code?} ─────────────► │
+  │      access_code?,                │
+  │      device_public_key?,          │
+  │      device_signature?} ────────► │
   │◄─── turn_config ──────────────────│
 ```
 
 `register`'s `public_key` must match exactly the key just proven in `challenge_response` — mismatches are rejected. `totp_code`/`access_code` are optional, only checked by the server under the conditions in [SECURITY.md](SECURITY.md#device-gated-totp--recovery-codes) (new device_id on an account with TOTP enabled; a private/business server with the access-code allowlist on).
 
-For a fingerprint's very first-ever registration, two more (optional, off by default) checks can apply before any of the above: `MAX_REGISTERED_USERS` (a hard cap on total identities ever registered — rejects with `registration_full` above the cap) and `POW_DIFFICULTY_BITS` (proof-of-work — rejects with `pow_required`, client solves it against the handshake challenge and resends `register` with a `pow_nonce`). Neither ever applies to a reconnect of an already-known fingerprint. See [SECURITY.md](SECURITY.md) item 26.
+`device_public_key`/`device_signature` (added 2026-09-03) are a **separate** device-local keypair, not the identity key above — `device_signature` is an ECDSA signature over `SUBROSA_DEVICE_V1 || challenge || username || device_id`, using the same per-connection `challenge` bytes. Only actually checked server-side when the account has TOTP enabled (harmless to send unconditionally otherwise, and the current client does — same "let the server decide" principle as `totp_code`/`access_code`). See [SECURITY.md § Device-Gated TOTP](SECURITY.md#device-gated-totp--recovery-codes) and [PROTOCOL_STATE_MACHINE.md §8](PROTOCOL_STATE_MACHINE.md) for why this exists (device_id alone is not a credential) and the full state machine. **Android and Desktop both send these** (corrected 2026-09-25 — this previously said Desktop didn't yet; that was true when written but Desktop's `DeviceKeyManager.kt` port went stale-undocumented, not actually missing).
+
+For a fingerprint's very first-ever registration, two more checks can apply before any of the above: `MAX_REGISTERED_USERS` (a hard cap on total identities ever registered, unlimited by default — rejects with `registration_full` above the cap) and `POW_DIFFICULTY_BITS` (proof-of-work, **defaults to 18** — rejects with `pow_required`, client solves it against the handshake challenge and resends `register` with a `pow_nonce`). Neither ever applies to a reconnect of an already-known fingerprint. See [SECURITY.md](SECURITY.md) item 26.
 
 ### One-to-One Messaging
 
@@ -510,7 +576,7 @@ For a fingerprint's very first-ever registration, two more (optional, off by def
 ```
 Sender                              Server                  Recipient
   │                                   │                         │
-  │── fetch_prekey_bundle(recipient) ►│                         │
+  │── get_prekey_bundle(recipient) ──►│                         │
   │◄─ prekey_bundle {IK, SPK, OPK} ──│                         │
   │                                   │                         │
   │  1. ECDH(mySK, recipientIK)       │                         │
@@ -527,6 +593,8 @@ Sender                              Server                  Recipient
 ```
 
 **Subsequent messages:** Double Ratchet advances session key. Each message uses a new symmetric key derived from the ratchet state.
+
+> **Simplified diagram** — in practice `message` is rarely sent fingerprint-addressed like this; both the first message and subsequent ones normally go out as `anon_message {token, payload}` instead (token-routed, sealed `from`/`to`, and — as of 2026-08-29 — submitted over the identity-less `anon_channel` connection, see the "`anon_channel`" subsection under [Authentication Handshake](#authentication-handshake) above). See [SECURITY.md](SECURITY.md) items 11/12/31/32 for what's actually anonymized and what isn't.
 
 ### Group Messaging
 
@@ -570,10 +638,10 @@ Sender                          Server                    Recipient
 ```
 Caller              Server              Callee
   │                   │                   │
-  │── call_invite ───►│── call_invite ───►│
+  │── call_offer ────►│── call_offer ────►│
   │◄── call_answer ───│◄── call_answer ───│
-  │── ice_candidate ─►│── ice_candidate ─►│
-  │◄─ ice_candidate ──│◄─ ice_candidate ──│
+  │── call_ice ──────►│── call_ice ──────►│
+  │◄─ call_ice ───────│◄─ call_ice ───────│
   │                   │                   │
   │◄═══════ P2P media (WebRTC) ══════════►│
   │         (via TURN if direct UDP blocked)
@@ -607,6 +675,14 @@ Client                          Server
 ```
 
 Timeout: 15 seconds. If authentication is not completed in time (or the signature fails verification), the server closes the connection without sending a distinct rejection message. `register` is a separate step from `challenge_response` — see the Registration flow above for what happens there (device-gating, access-code allowlist, session_conflict).
+
+#### `anon_channel` — de-identified second connection (sealed sender, 2026-08-29)
+
+A third handshake response, alongside `challenge_response` and `federation_auth`: the client responds to the initial `challenge` with `{"type": "anon_channel"}` — no public key, no signature. The server marks the connection `is_anon_channel = true`, never assigns it a `username`, and restricts it server-side to exactly one message type for its entire lifetime: `anon_message` (anything else closes the connection immediately). See [SECURITY.md item 32](SECURITY.md#known-limitations) for why this exists — the ordinary `challenge_response` handshake already hands the server a public key in the clear (fingerprint = `sha256(public_key)[:8]`, trivially computable even before `register`), so a second identity-proving connection would give up nothing; only a connection that never proves an identity at all closes that channel.
+
+Each authenticated client also maintains one of these per session — opened after a randomized 0–3s delay following the main connection's `handshake_ok`/`register` sequence (deliberate: a fixed, near-immediate open interval would itself be a correlation signal — see [SECURITY.md item 32](SECURITY.md#known-limitations)), using its own separate `OkHttpClient` instance (no shared TLS session cache with the main socket) and its own reconnect logic (`connectAnonChannel()`/`doConnectAnonChannel()` in `MessengerService.kt`), independent of the main socket's. `anon_message` sends (both real traffic and AGGRESSIVE-mode cover-traffic decoys) go out over this connection instead of the main one. **There is no fallback to the main (identified) socket when `anon_channel` isn't ready** — an earlier version of this code did fall back, silently sending real `anon_message` traffic fully identified; that fail-open was removed 2026-08-29. Instead, a send while the channel isn't ready queues (`anonChannelPendingQueue`) and flushes once `anon_channel_ok` arrives — the caller waits, the connection never silently downgrades. One deliberate exception: `sendAnonTokensToLocked()`'s resupply message stays on the main socket, because its preceding `subscribe_tokens` call must be processed by the server strictly before that message arrives, a guarantee only a single connection's send-order provides.
+
+Anti-abuse on this connection can't use `rate_limit_check(username, ...)` (no username exists) — it's a per-connection message-count cap (`ANON_CHANNEL_MAX_PER_MINUTE`) instead, on top of the pre-existing cheap `is_known`/`is_spent` rejection for garbage tokens.
 
 ---
 

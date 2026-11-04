@@ -190,6 +190,10 @@ object ChatStorage {
                 .putString("contacts", array.toString())
                 .apply()
         }
+        // A redeemed invite is an explicit, fresh trust decision — see
+        // unblockContact()'s comment for why this has to run here rather
+        // than nowhere at all.
+        unblockContact(context, username)
     }
 
     fun removeContact(context: Context, contactId: String) {
@@ -199,6 +203,59 @@ object ChatStorage {
             EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
                 .edit()
                 .putString("contacts", array.toString())
+                .apply()
+        }
+    }
+
+    /** Local-only block list (Sealed Sender follow-up, 2026-08-29) — never
+     *  sent to the server. See MessengerService.processSessionInit(), which
+     *  checks this first thing, before any side effect (saving the sender's
+     *  key, establishing a session, fetching a prekey bundle). A server-side
+     *  block list was considered and rejected: it would require explicitly
+     *  telling the server "I know and am blocking fingerprint X" — a direct,
+     *  permanent admission of a relationship, worse than the metadata leak
+     *  sealed-sender exists to close. This can only ever reduce what a
+     *  blocked sender's packets do to THIS device; the server still
+     *  physically delivers them (it has no way to know who's blocked), the
+     *  block just makes the local handling a cheap decrypt-and-drop instead
+     *  of a full session establishment. */
+    fun getBlockedContacts(context: Context): MutableList<String> {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val json = prefs.getString("blocked_contacts", "[]") ?: "[]"
+        val array = JSONArray(json)
+        val list = mutableListOf<String>()
+        for (i in 0 until array.length()) {
+            list.add(array.getString(i))
+        }
+        return list
+    }
+
+    fun isBlocked(context: Context, fingerprint: String): Boolean =
+        getBlockedContacts(context).contains(fingerprint)
+
+    fun blockContact(context: Context, fingerprint: String) {
+        val blocked = getBlockedContacts(context)
+        if (!blocked.contains(fingerprint)) {
+            blocked.add(fingerprint)
+            EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+                .edit()
+                .putString("blocked_contacts", JSONArray(blocked).toString())
+                .apply()
+        }
+    }
+
+    /** Called automatically from addContact() — redeeming a fresh invite
+     *  code for this fingerprint is itself an explicit, new trust decision,
+     *  so a stale block from a previous relationship with the same
+     *  fingerprint (delete-then-reinvite is a supported flow, see
+     *  MessengerService.forgetContact()) must not silently keep blocking
+     *  them forever with no way to undo it short of editing storage. */
+    fun unblockContact(context: Context, fingerprint: String) {
+        val blocked = getBlockedContacts(context)
+        if (blocked.remove(fingerprint)) {
+            EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+                .edit()
+                .putString("blocked_contacts", JSONArray(blocked).toString())
                 .apply()
         }
     }
@@ -238,9 +295,17 @@ object ChatStorage {
         prefs.edit()
             .remove(chatKey(username, recipient))
             .remove("key_$recipient")
+            .remove("pqkey_$recipient")
             .remove("avatar_$recipient")
             .remove("name_$recipient")
             .apply()
+
+        // TOFU key history (KeyHistoryManager) is a separate on-disk store,
+        // keyed by contactId, tracking every key this fingerprint has ever
+        // presented plus its verified flag — same "survives delete" bug
+        // class as the classical/PQ key caches above, just missed because
+        // it lives in a different file entirely.
+        KeyHistoryManager.clearHistory(context, recipient)
 
         val contacts = getContacts(context)
         contacts.remove(recipient)
@@ -287,6 +352,20 @@ object ChatStorage {
     fun setDisappearTimer(context: Context, myUserId: String, recipientUserId: String, seconds: Long) {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         prefs.edit().putLong("disappear_${chatKey(myUserId, recipientUserId)}", seconds).apply()
+    }
+
+    // Local-only, timestamp-based sweep of old messages from this device —
+    // distinct from getDisappearTimer/setDisappearTimer above, which is the
+    // synced-with-peer ephemeral-messaging timer. Mirrors Desktop's
+    // UserStorage.getChatAutoDelete/setChatAutoDelete (was missing on
+    // Android entirely; ported to give parity).
+    fun getAutoDelete(context: Context, myUserId: String, recipientUserId: String): Long {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        return prefs.getLong("auto_delete_${chatKey(myUserId, recipientUserId)}", 0L)
+    }
+    fun setAutoDelete(context: Context, myUserId: String, recipientUserId: String, seconds: Long) {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        prefs.edit().putLong("auto_delete_${chatKey(myUserId, recipientUserId)}", seconds).apply()
     }
 
     fun markDelivered(context: Context, myUserId: String, recipientUserId: String, messageId: String) {
@@ -389,6 +468,17 @@ object ChatStorage {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val b64 = prefs.getString("pqkey_$contactId", null) ?: return null
         return try { Base64.decode(b64, Base64.NO_WRAP) } catch (e: Exception) { null }
+    }
+
+    /** Forces the next resolvePqKey(contactId) call (MessengerService) to miss
+     *  and refetch a fresh prekey bundle — call when this device knows its own
+     *  cached copy of [contactId]'s SPK/PQ-KEM can no longer be trusted (e.g.
+     *  on receiving session_reset FROM them: their identity's ephemeral prekey
+     *  material rotated to something we haven't seen, and the stale cached
+     *  key would otherwise keep sealing outgoing messages they can never
+     *  decrypt, with no error on our end to reveal it). */
+    fun clearContactPqPublicKey(context: Context, contactId: String) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME).edit().remove("pqkey_$contactId").apply()
     }
 
     fun saveContactAvatar(context: Context, contactId: String, base64: String) {

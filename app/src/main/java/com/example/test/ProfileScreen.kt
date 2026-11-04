@@ -56,12 +56,18 @@ import kotlin.math.absoluteValue
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import com.subrosa.messenger.ui.theme.SubrosaTheme
 import com.subrosa.messenger.ui.theme.subrosaColorsFor
+import com.subrosa.messenger.ui.theme.Inter
+import com.subrosa.messenger.ui.theme.NotoSerifJP
+import com.subrosa.messenger.ui.components.IconTile
+import com.subrosa.messenger.ui.components.IconTileColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
+// App-wide font swap 2026-09-22 — name kept for API stability. NotoSerifJP
+// is used separately at specific heading/name call sites in this file.
+private val AppFont = Inter
 
 private fun extractFingerprint(inviteCode: String): String? {
     return try {
@@ -70,26 +76,40 @@ private fun extractFingerprint(inviteCode: String): String? {
 }
 
 @Composable
-private fun PSection(label: String) {
+internal fun PSection(
+    label: String,
+    // Optional leading color-tile icon (see ui/components/IconTile.kt).
+    leading: (@Composable () -> Unit)? = null
+) {
     val c = LocalSubrosaColors.current
-    Text(
-        text = label.uppercase(),
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 20.dp, top = 24.dp, bottom = 8.dp),
-        fontSize = 11.sp,
-        fontFamily = AppFont,
-        fontWeight = FontWeight.SemiBold,
-        color = c.textPrimary.copy(alpha = 0.45f),
-        letterSpacing = 1.sp
-    )
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (leading != null) {
+            leading()
+            Spacer(modifier = Modifier.width(10.dp))
+        }
+        Text(
+            text = label.uppercase(),
+            fontSize = 13.sp,
+            fontFamily = AppFont,
+            fontWeight = FontWeight.SemiBold,
+            color = c.textPrimary.copy(alpha = 0.45f),
+            letterSpacing = 1.sp
+        )
+    }
 }
 
 @Composable
-private fun PRow(
+internal fun PRow(
     title: String,
     titleColor: Color? = null,
     subtitle: String? = null,
+    // Optional leading color-tile icon (see ui/components/IconTile.kt).
+    leading: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     trailing: @Composable () -> Unit = {}
 ) {
@@ -101,10 +121,14 @@ private fun PRow(
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (leading != null) {
+            leading()
+            Spacer(modifier = Modifier.width(14.dp))
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                fontSize = 15.sp,
+                fontSize = 17.sp,
                 fontFamily = AppFont,
                 color = titleColor ?: c.textPrimary
             )
@@ -112,7 +136,7 @@ private fun PRow(
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
-                    fontSize = 12.sp,
+                    fontSize = 14.sp,
                     fontFamily = AppFont,
                     color = c.textPrimary.copy(alpha = 0.5f)
                 )
@@ -123,7 +147,7 @@ private fun PRow(
 }
 
 @Composable
-private fun PDivider() {
+internal fun PDivider() {
     val c = LocalSubrosaColors.current
     HorizontalDivider(
         modifier = Modifier.padding(horizontal = 20.dp),
@@ -133,14 +157,31 @@ private fun PDivider() {
 }
 
 @Composable
-private fun PChevron() {
+internal fun PChevron() {
     val c = LocalSubrosaColors.current
     Icon(
-        imageVector = Icons.Default.KeyboardArrowRight,
+        painter = painterResource(R.drawable.ic_arrow_right),
         contentDescription = null,
         tint = c.textPrimary.copy(alpha = 0.30f),
         modifier = Modifier.size(20.dp)
     )
+}
+
+/** Trailing button for Security-settings rows that open their own full
+ *  screen — a plain "Настроить" label reads as more informative than a
+ *  bare arrow when several rows in a row all navigate somewhere. */
+@Composable
+internal fun PConfigureButton(onClick: () -> Unit) {
+    val c = LocalSubrosaColors.current
+    val s = LocalStrings.current
+    TextButton(onClick = onClick) {
+        Text(
+            text = s.profileConfigureBtn,
+            fontSize = 14.sp,
+            fontFamily = AppFont,
+            color = c.accent
+        )
+    }
 }
 
 /** One numbered step in the emergency-wipe setup instructions — replaces the
@@ -160,9 +201,10 @@ private fun EmergencyStepRow(label: String, desc: String, done: Boolean, emphasi
         ) {
             Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 if (done) {
-                    Text("✓", color = c.textPrimary.copy(alpha = 0.5f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Icon(painterResource(R.drawable.ic_check), contentDescription = null,
+                        tint = c.textPrimary.copy(alpha = 0.5f), modifier = Modifier.size(12.dp))
                 } else {
-                    Text(label.filter { it.isDigit() }, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(label.filter { it.isDigit() }, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -171,14 +213,14 @@ private fun EmergencyStepRow(label: String, desc: String, done: Boolean, emphasi
                 label,
                 color = if (done) c.textPrimary.copy(alpha = 0.4f) else c.textPrimary,
                 fontFamily = AppFont,
-                fontSize = 12.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold
             )
             Text(
                 desc,
                 color = if (done) c.textPrimary.copy(alpha = 0.4f) else c.textPrimary.copy(alpha = 0.85f),
                 fontFamily = AppFont,
-                fontSize = 12.sp,
+                fontSize = 14.sp,
                 lineHeight = 16.sp
             )
         }
@@ -215,13 +257,8 @@ fun isIgnoringBatteryOptimizations(context: android.content.Context): Boolean {
 @Composable
 fun ProfileScreen(
     onBack: () -> Unit,
-    onOpenServers: () -> Unit,
-    onOpenBackup: () -> Unit,
-    onOpenDiagnostics: () -> Unit,
-    onOpenWipeSettings: () -> Unit = {},
-    onOpenTotpSettings: () -> Unit = {},
-    onOpenSecurityGuide: () -> Unit = {},
-    onOpenChangePassword: () -> Unit = {}
+    onOpenGeneralSettings: () -> Unit = {},
+    onOpenSecuritySettings: () -> Unit = {}
 ) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
@@ -234,70 +271,11 @@ fun ProfileScreen(
     var showCompromisedConfirm by remember { mutableStateOf(false) }
     var showQr             by remember { mutableStateOf(false) }
     var showCopied         by remember { mutableStateOf(false) }
-    var showLockDialog     by remember { mutableStateOf(false) }
-    var showPanicDialog    by remember { mutableStateOf(false) }
-    var panicPassword      by remember { mutableStateOf("") }
-    var hideNotif          by remember { mutableStateOf(UserStorage.getHideNotificationContent(context)) }
-    var currentLock        by remember { mutableStateOf(UserStorage.getAutoLockTimeout(context)) }
-    var biometricEnabled   by remember { mutableStateOf(UserStorage.getBiometricUnlockEnabled(context)) }
-    var showBiometricWarning by remember { mutableStateOf(false) }
-    var emergencyEnabled        by remember { mutableStateOf(UserStorage.isEmergencyWipeEnabled(context) && isEmergencyServiceEnabled(context)) }
-    var showEmergencyInfoDialog by remember { mutableStateOf(false) }
-    var torEnabled              by remember { mutableStateOf(UserStorage.isTorEnabled(context)) }
-    var batteryUnrestricted     by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
-    var serviceNotifVisible     by remember { mutableStateOf(UserStorage.isServiceNotificationVisible(context)) }
 
     val displayName      = UserStorage.getUserDisplayName(context)
     val userId           = UserStorage.getUserId(context)
     val clipboardManager = LocalClipboardManager.current
     val currentTheme     by MainActivity.currentTheme.collectAsState()
-
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                val active = isEmergencyServiceEnabled(context)
-                // Found live: the toast said "already enabled" (active==true)
-                // but the switch stayed off — emergencyEnabled requires BOTH
-                // active AND the separate isEmergencyWipeEnabled() preference
-                // (the user's own "I want this" intent flag, deliberately kept
-                // apart from the raw OS service state — see the Switch's
-                // onCheckedChange below), and this dialog flow never set that
-                // preference on success. Safe to set it here specifically
-                // because showEmergencyInfoDialog being true means the user
-                // got here by toggling the switch ON in the first place — the
-                // dialog only opens from that intent, so this isn't opting
-                // them into anything they didn't ask for.
-                if (active && showEmergencyInfoDialog) {
-                    UserStorage.setEmergencyWipeEnabled(context, true)
-                }
-                emergencyEnabled = active && UserStorage.isEmergencyWipeEnabled(context)
-                if (!active) UserStorage.setEmergencyWipeEnabled(context, false)
-                // Auto-close the step-by-step instructions once the service is
-                // genuinely on — verified via isEmergencyServiceEnabled(), not
-                // just "the user came back from Settings" (which proves
-                // nothing about what they actually did there).
-                if (active && showEmergencyInfoDialog) {
-                    showEmergencyInfoDialog = false
-                    Toast.makeText(context, s.emergencyInfoDone, Toast.LENGTH_SHORT).show()
-                }
-                // Re-sync after returning from the system battery-optimization
-                // dialog too — it's a single Allow/Deny prompt, no multi-step
-                // navigation, so this just picks up whatever the user chose.
-                batteryUnrestricted = isIgnoringBatteryOptimizations(context)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    val lockLabels = mapOf(
-        0    to s.profileLockOff,
-        60   to s.profileLock1min,
-        300  to s.profileLock5min,
-        900  to s.profileLock15min,
-        1800 to s.profileLock30min
-    )
 
     fun resolveInviteCode(): String {
         return try {
@@ -391,6 +369,13 @@ fun ProfileScreen(
         }
     }
 
+    // Decoded but not-yet-cropped picked photo — shown via AvatarCropScreen
+    // below. Was previously stretched straight into a 128x128 square with
+    // Bitmap.createScaledBitmap(bmp, 128, 128, true), distorting the aspect
+    // ratio of any non-square photo; the crop screen now lets the user pick
+    // which part to keep before it's scaled down.
+    var pendingAvatarBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+
     val galleryLauncher = rememberLauncherForActivityResult(GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         MainScope().launch {
@@ -405,21 +390,29 @@ fun ProfileScreen(
                         @Suppress("DEPRECATION")
                         android.provider.MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
                     }
-                    val scaled = android.graphics.Bitmap.createScaledBitmap(bmp, 128, 128, true)
-                    val out = java.io.ByteArrayOutputStream()
-                    scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
-                    val b64 = android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
-                    withContext(Dispatchers.Main) {
-                        myAvatarBitmap = scaled
-                        AvatarStore.avatars[userId] = scaled
-                        context.startService(
-                            android.content.Intent(context, MessengerService::class.java).apply {
-                                putExtra("avatar_update", b64)
-                            }
-                        )
-                    }
+                    withContext(Dispatchers.Main) { pendingAvatarBitmap = bmp }
                 } catch (e: Exception) {
                     android.util.Log.e("ProfileScreen", "Ошибка загрузки фото: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun applyCroppedAvatar(cropped: android.graphics.Bitmap) {
+        pendingAvatarBitmap = null
+        MainScope().launch {
+            withContext(Dispatchers.IO) {
+                val out = java.io.ByteArrayOutputStream()
+                cropped.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                val b64 = android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+                withContext(Dispatchers.Main) {
+                    myAvatarBitmap = cropped
+                    AvatarStore.avatars[userId] = cropped
+                    context.startService(
+                        android.content.Intent(context, MessengerService::class.java).apply {
+                            putExtra("avatar_update", b64)
+                        }
+                    )
                 }
             }
         }
@@ -488,9 +481,9 @@ fun ProfileScreen(
                     ) {
                         IconButton(onClick = onBack) {
                             Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
+                                painterResource(R.drawable.ic_back_arrow),
                                 contentDescription = s.back,
-                                tint = Color.White
+                                tint = c.textPrimary
                             )
                         }
                     }
@@ -540,7 +533,7 @@ fun ProfileScreen(
                                     Box(contentAlignment = Alignment.Center) {
                                         Text(
                                             text = displayName.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                                            fontSize = 40.sp,
+                                            fontSize = 42.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color.White,
                                             fontFamily = AppFont
@@ -561,7 +554,13 @@ fun ProfileScreen(
                             Icon(
                                 painter = painterResource(R.drawable.ic_camera_circle),
                                 contentDescription = null,
-                                tint = Color.White,
+                                // c.primaryBlue is a bright mint in every
+                                // theme now — white icons stay correct on
+                                // dark themes (unchanged), but need a dark
+                                // icon for AA contrast on the light theme's
+                                // equally-bright mint. See the identical
+                                // pattern a few sites below.
+                                tint = if (c.isDark) Color.White else c.textPrimary,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -571,10 +570,10 @@ fun ProfileScreen(
 
                     Text(
                         text = displayName,
-                        fontSize = 22.sp,
+                        fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        fontFamily = AppFont
+                        color = c.textPrimary,
+                        fontFamily = NotoSerifJP
                     )
 
                     if (emojiFingerprint != null) {
@@ -585,14 +584,14 @@ fun ProfileScreen(
                         ) {
                             Text(
                                 text = emojiFingerprint,
-                                fontSize = 22.sp,
+                                fontSize = 24.sp,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                             )
                         }
                         Spacer(modifier = Modifier.height(5.dp))
                         Text(
                             text = s.profileFingerprintHint,
-                            fontSize = 11.sp,
+                            fontSize = 15.sp,
                             color = c.textPrimary.copy(alpha = 0.55f),
                             fontFamily = AppFont,
                             textAlign = TextAlign.Center,
@@ -601,7 +600,15 @@ fun ProfileScreen(
                     }
                 }
 
-                PSection(s.profileInviteCode)
+                PSection(
+                    s.profileInviteCode,
+                    leading = {
+                        IconTile(
+                            iconRes = R.drawable.ic_qr_code,
+                            tileColor = IconTileColors.mintGreen
+                        )
+                    }
+                )
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     shape = RoundedCornerShape(16.dp),
@@ -617,31 +624,51 @@ fun ProfileScreen(
                         ) {
                             Text(
                                 text = inviteCode.take(30) + "…",
-                                fontSize = 12.sp,
+                                fontSize = 14.sp,
                                 fontFamily = AppFont,
                                 color = c.accent,
                                 maxLines = 1,
                                 modifier = Modifier.weight(1f)
                             )
-                            IconButton(onClick = {
-                                regenerateInviteCode()
-                                clipboardManager.setText(AnnotatedString(inviteCode))
-                                showCopied = true
-                            }) { Text("📋", fontSize = 18.sp) }
-                            IconButton(onClick = {
-                                regenerateInviteCode()
-                                val i = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_TEXT, inviteCode)
-                                }
-                                context.startActivity(Intent.createChooser(i, s.profileShareCode))
-                            }) { Text("📤", fontSize = 18.sp) }
+                            IconButton(
+                                onClick = {
+                                    regenerateInviteCode()
+                                    clipboardManager.setText(AnnotatedString(inviteCode))
+                                    showCopied = true
+                                },
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Icon(
+                                    painterResource(R.drawable.ic_copy),
+                                    contentDescription = s.totpCopySecret,
+                                    tint = c.accent,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    regenerateInviteCode()
+                                    val i = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, inviteCode)
+                                    }
+                                    context.startActivity(Intent.createChooser(i, s.profileShareCode))
+                                },
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Icon(
+                                    painterResource(R.drawable.ic_share),
+                                    contentDescription = s.profileShareCode,
+                                    tint = c.accent,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
                         }
                         if (showCopied) {
                             LaunchedEffect(Unit) { kotlinx.coroutines.delay(2000); showCopied = false }
                             Text(
                                 text = s.profileCodeCopied,
-                                fontSize = 13.sp,
+                                fontSize = 15.sp,
                                 color = Color(0xFF27AE60),
                                 fontFamily = AppFont,
                                 modifier = Modifier.padding(start = 20.dp, bottom = 8.dp)
@@ -658,7 +685,7 @@ fun ProfileScreen(
                         // user debug a "why doesn't it work" days later.
                         Text(
                             text = s.profileInviteCodeOneTimeWarning,
-                            fontSize = 11.sp,
+                            fontSize = 15.sp,
                             color = Color(0xFFFFA726),
                             fontFamily = AppFont,
                             lineHeight = 15.sp,
@@ -682,7 +709,7 @@ fun ProfileScreen(
                             trailing = {
                                 Text(
                                     if (showQr) "▲" else "▼",
-                                    fontSize = 11.sp,
+                                    fontSize = 13.sp,
                                     color = c.textPrimary.copy(alpha = 0.4f)
                                 )
                             }
@@ -710,7 +737,7 @@ fun ProfileScreen(
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
                                     s.profileQrHint,
-                                    fontSize = 11.sp,
+                                    fontSize = 13.sp,
                                     color = c.textPrimary.copy(alpha = 0.5f),
                                     fontFamily = AppFont,
                                     textAlign = TextAlign.Center,
@@ -741,7 +768,15 @@ fun ProfileScreen(
                     }
                 }
 
-                PSection(s.profileThemeLabel)
+                PSection(
+                    s.profileThemeLabel,
+                    leading = {
+                        IconTile(
+                            iconRes = R.drawable.ic_palette,
+                            tileColor = IconTileColors.mutedPurple
+                        )
+                    }
+                )
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     shape = RoundedCornerShape(16.dp),
@@ -761,6 +796,22 @@ fun ProfileScreen(
                             ).forEach { (theme, label) ->
                                 val isSelected = theme == currentTheme
                                 val previewColors = subrosaColorsFor(theme)
+                                // Each button previously took its background
+                                // from the PREVIEWED theme's own gradientEnd
+                                // (a different color per button — NAVY's dark
+                                // red, DARK's near-black, LIGHT's cream) —
+                                // three visually unrelated buttons rather
+                                // than one coherent selector, and the
+                                // hardcoded white selected-label text was
+                                // unreadable once a light-themed button's bg
+                                // was itself light. Selected/unselected state
+                                // now derives entirely from the CURRENT
+                                // theme's own accent, so all three buttons
+                                // share one base look and the selection
+                                // highlight always matches the live theme.
+                                // The small accent dot still previews each
+                                // theme's own accent color — that's a
+                                // legitimate content preview, not a bug.
                                 Surface(
                                     modifier = Modifier
                                         .weight(1f)
@@ -770,9 +821,7 @@ fun ProfileScreen(
                                             MainActivity.currentTheme.value = theme
                                         },
                                     shape = RoundedCornerShape(10.dp),
-                                    color = previewColors.gradientEnd.copy(
-                                        alpha = if (isSelected) 0.55f else 0.18f
-                                    ),
+                                    color = if (isSelected) c.accent.copy(alpha = 0.18f) else c.card,
                                     border = if (isSelected)
                                         androidx.compose.foundation.BorderStroke(1.5.dp, c.accent)
                                     else null
@@ -790,9 +839,9 @@ fun ProfileScreen(
                                         Spacer(Modifier.width(5.dp))
                                         Text(
                                             text = label,
-                                            fontSize = 11.sp,
+                                            fontSize = 13.sp,
                                             fontFamily = AppFont,
-                                            color = if (isSelected) Color.White
+                                            color = if (isSelected) c.accent
                                                     else c.textPrimary.copy(alpha = 0.7f),
                                             maxLines = 1,
                                             softWrap = false
@@ -804,6 +853,12 @@ fun ProfileScreen(
                         PDivider()
                         PRow(
                             title = s.profileLanguageToggle,
+                            leading = {
+                                IconTile(
+                                    iconRes = R.drawable.ic_translate,
+                                    tileColor = IconTileColors.neutralGrayBrown
+                                )
+                            },
                             onClick = {
                                 val newLang = if (s.langCode == "ru") "en" else "ru"
                                 UserStorage.setLanguage(context, newLang)
@@ -814,150 +869,255 @@ fun ProfileScreen(
                     }
                 }
 
-                PSection(s.profileSectionSecurity)
+                Spacer(modifier = Modifier.height(8.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = c.card)
                 ) {
-                    Column {
-                        PRow(
-                            title = s.profileSecurityGuide,
-                            subtitle = s.profileSecurityGuideSub,
-                            onClick = onOpenSecurityGuide,
-                            trailing = { PChevron() }
-                        )
-                        PDivider()
-                        PRow(
-                            title = s.profileHideNotif,
-                            subtitle = s.profileHideNotifSub,
-                            trailing = {
-                                Switch(
-                                    checked = hideNotif,
-                                    onCheckedChange = {
-                                        hideNotif = it
-                                        UserStorage.setHideNotificationContent(context, it)
-                                    },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = c.accent,
-                                        checkedTrackColor = c.accent.copy(alpha = 0.35f)
-                                    )
-                                )
-                            }
-                        )
-                        PDivider()
-                        PRow(
-                            title = s.profileAutoLock,
-                            subtitle = s.profileAutoLockAfter(
-                                lockLabels[currentLock] ?: s.profileLockOff
-                            ),
-                            onClick = { showLockDialog = true },
-                            trailing = { PChevron() }
-                        )
-                        if (BiometricHelper.isBiometricAvailable(context)) {
-                            PDivider()
-                            PRow(
-                                title = s.profileBiometricTitle,
-                                subtitle = s.profileBiometricSub,
-                                trailing = {
-                                    Switch(
-                                        checked = biometricEnabled,
-                                        onCheckedChange = { wantEnabled ->
-                                            if (wantEnabled) {
-                                                // Don't flip the pref until the user explicitly
-                                                // acknowledges the coercion-risk warning below.
-                                                showBiometricWarning = true
-                                            } else {
-                                                biometricEnabled = false
-                                                UserStorage.setBiometricUnlockEnabled(context, false)
-                                            }
-                                        },
-                                        colors = SwitchDefaults.colors(
-                                            checkedThumbColor = c.accent,
-                                            checkedTrackColor = c.accent.copy(alpha = 0.35f)
-                                        )
-                                    )
-                                }
+                    PRow(
+                        title = s.profileSectionSecurity,
+                        leading = {
+                            IconTile(
+                                iconRes = R.drawable.ic_shield_check,
+                                tileColor = IconTileColors.mutedBurgundy
                             )
-                        }
-                        PDivider()
-                        PRow(
-                            title = s.profileChangePassword,
-                            onClick = onOpenChangePassword,
-                            trailing = { PChevron() }
-                        )
-                        PDivider()
-                        PRow(
-                            title = s.profilePanicTitle,
-                            subtitle = s.profilePanicSub,
-                            onClick = { showPanicDialog = true },
-                            trailing = {
-                                if (UserStorage.hasPanicPassword(context)) {
-                                    Text(
-                                        s.profilePanicSetStatus,
-                                        fontSize = 12.sp,
-                                        color = Color(0xFF4CAF50),
-                                        fontFamily = AppFont
-                                    )
-                                } else {
-                                    Text(
-                                        s.setAction,
-                                        fontSize = 13.sp,
-                                        color = c.accent,
-                                        fontFamily = AppFont
-                                    )
-                                }
-                            }
-                        )
-                        PDivider()
-                        PRow(
-                            title = s.profileEmergencyBtn,
-                            subtitle = s.profileEmergencyBtnSub,
-                            trailing = {
-                                Switch(
-                                    checked = emergencyEnabled,
-                                    onCheckedChange = { wantEnabled ->
-                                        if (wantEnabled) {
-                                            if (isEmergencyServiceEnabled(context)) {
-                                                emergencyEnabled = true
-                                                UserStorage.setEmergencyWipeEnabled(context, true)
-                                            } else {
+                        },
+                        onClick = onOpenSecuritySettings,
+                        trailing = { PChevron() }
+                    )
+                }
 
-                                                showEmergencyInfoDialog = true
-                                            }
-                                        } else {
-                                            emergencyEnabled = false
-                                            UserStorage.setEmergencyWipeEnabled(context, false)
-                                        }
-                                    },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color(0xFFEF5350),
-                                        checkedTrackColor = Color(0xFFEF5350).copy(alpha = 0.35f)
-                                    )
-                                )
-                            }
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = c.card)
+                ) {
+                    PRow(
+                        title = s.profileSectionGeneral,
+                        leading = {
+                            IconTile(
+                                iconRes = R.drawable.ic_gear,
+                                tileColor = IconTileColors.neutralGrayBrown
+                            )
+                        },
+                        onClick = onOpenGeneralSettings,
+                        trailing = { PChevron() }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0x18EF5350))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showNotMeConfirm = true }
+                            .padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            s.profileNotMe,
+                            fontSize = 19.sp,
+                            fontFamily = AppFont,
+                            color = Color(0xFFEF5350),
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
 
-                PSection(s.profileSectionGeneral)
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0x18EF5350))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showCompromisedConfirm = true }
+                            .padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            s.profileCompromised,
+                            fontSize = 19.sp,
+                            fontFamily = AppFont,
+                            color = Color(0xFFEF5350),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(40.dp))
+            }
+        }
+    }
+
+    if (showNotMeConfirm) {
+        AlertDialog(
+            onDismissRequest = { showNotMeConfirm = false },
+            containerColor = c.dialog,
+            title = { Text(s.profileNotMeTitle, color = c.textPrimary, fontFamily = AppFont) },
+            text = { Text(s.profileNotMeText, color = c.textPrimary, fontFamily = AppFont) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showNotMeConfirm = false
+                    (context as? MainActivity)?.emergencyWipe()
+                }) { Text(s.profileNotMeConfirm, color = Color(0xFFEF5350), fontFamily = AppFont) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNotMeConfirm = false }) {
+                    Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
+                }
+            }
+        )
+    }
+
+    if (showCompromisedConfirm) {
+        AlertDialog(
+            onDismissRequest = { showCompromisedConfirm = false },
+            containerColor = c.dialog,
+            title = { Text(s.profileCompromisedTitle, color = c.textPrimary, fontFamily = AppFont) },
+            text = { Text(s.profileCompromisedText, color = c.textPrimary, fontFamily = AppFont) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCompromisedConfirm = false
+                    scope.launch {
+                        MessengerService.requestIdentityRevocation(context)
+                        BackupManager.resetCompromisedIdentity(context)
+                        context.stopService(Intent(context, MessengerService::class.java))
+                        android.os.Process.killProcess(android.os.Process.myPid())
+                    }
+                }) { Text(s.profileCompromisedConfirm, color = Color(0xFFEF5350), fontFamily = AppFont) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCompromisedConfirm = false }) {
+                    Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
+                }
+            }
+        )
+    }
+
+    pendingAvatarBitmap?.let { bmp ->
+        AvatarCropScreen(
+            source = bmp,
+            onConfirm = { cropped -> applyCroppedAvatar(cropped) },
+            onCancel = { pendingAvatarBitmap = null }
+        )
+    }
+}
+
+/** Everything that used to live under Profile's "Основное"/"General" section,
+ *  split out onto its own screen so Profile's main list isn't one long
+ *  scroll — Profile now just has a single row that opens this. Owns its own
+ *  battery-optimization resync (moved off Profile's ON_RESUME observer,
+ *  which now only handles the emergency-wipe re-sync that stays on Profile). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GeneralSettingsScreen(
+    onBack: () -> Unit,
+    onOpenServers: () -> Unit,
+    onOpenBackup: () -> Unit
+) {
+    androidx.activity.compose.BackHandler { onBack() }
+    val context = LocalContext.current
+    val s = LocalStrings.current
+    val c = LocalSubrosaColors.current
+    val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
+
+    var torEnabled          by remember { mutableStateOf(UserStorage.isTorEnabled(context)) }
+    var batteryUnrestricted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                // Re-sync after returning from the system battery-optimization
+                // dialog — it's a single Allow/Deny prompt, no multi-step
+                // navigation, so this just picks up whatever the user chose.
+                batteryUnrestricted = isIgnoringBatteryOptimizations(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    Scaffold(
+        topBar = {
+            // Scaffold+TopAppBar (not a bare Row) so the system status bar
+            // inset is reserved automatically under edge-to-edge — a bare Row
+            // like the other screens avoid left this button sitting under the
+            // phone's own status bar / notch, unreachable on some devices.
+            TopAppBar(
+                title = { Text(s.profileSectionGeneral, color = c.textPrimary, fontFamily = AppFont) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(painterResource(R.drawable.ic_back_arrow), contentDescription = s.back, tint = c.textPrimary)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
+            )
+        },
+        containerColor = Color.Transparent
+    ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(bgGradient)
+                .padding(padding)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                Spacer(modifier = Modifier.height(8.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = c.card)
                 ) {
                     Column {
-                        PRow(s.profileServers,    onClick = onOpenServers,              trailing = { PChevron() })
+                        PRow(
+                            title = s.profileServers,
+                            leading = {
+                                IconTile(
+                                    iconRes = R.drawable.ic_hard_drives,
+                                    tileColor = IconTileColors.connectivityBlue
+                                )
+                            },
+                            onClick = onOpenServers,
+                            trailing = { PChevron() }
+                        )
                         PDivider()
-                        PRow(s.profileBackup,     onClick = onOpenBackup,               trailing = { PChevron() })
-                        PDivider()
-                        PRow(s.profileTotp,       onClick = onOpenTotpSettings,         trailing = { PChevron() })
-                        PDivider()
-                        PRow(s.profileDiagnostics, onClick = onOpenDiagnostics,         trailing = { PChevron() })
+                        PRow(
+                            title = s.profileBackup,
+                            leading = {
+                                IconTile(
+                                    iconRes = R.drawable.ic_cloud_arrow_down,
+                                    tileColor = IconTileColors.warningAmber
+                                )
+                            },
+                            onClick = onOpenBackup,
+                            trailing = { PChevron() }
+                        )
                         PDivider()
                         PRow(
                             title = s.profileTorEnabled,
                             subtitle = s.profileTorEnabledSub,
+                            leading = {
+                                IconTile(
+                                    iconRes = R.drawable.ic_wifi_high,
+                                    tileColor = IconTileColors.connectivityBlue
+                                )
+                            },
                             trailing = {
                                 Switch(
                                     checked = torEnabled,
@@ -976,6 +1136,12 @@ fun ProfileScreen(
                         PRow(
                             title = s.profileBatteryUnrestricted,
                             subtitle = s.profileBatteryUnrestrictedSub,
+                            leading = {
+                                IconTile(
+                                    iconRes = R.drawable.ic_battery_charging,
+                                    tileColor = IconTileColors.connectivityBlue
+                                )
+                            },
                             trailing = {
                                 Switch(
                                     checked = batteryUnrestricted,
@@ -1011,6 +1177,252 @@ fun ProfileScreen(
                         )
                         PDivider()
                         PRow(
+                            title = s.profileSourceCode,
+                            leading = {
+                                IconTile(
+                                    iconRes = R.drawable.ic_github_logo,
+                                    tileColor = IconTileColors.neutralGrayBrown
+                                )
+                            },
+                            onClick = {
+                                try {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/MoRoKonst/Subrosa-messenger"))
+                                    )
+                                } catch (_: Exception) {}
+                            },
+                            trailing = { PChevron() }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(40.dp))
+            }
+        }
+    }
+}
+
+/** Everything that used to live under Profile's "Безопасность"/"Security"
+ *  section, split out onto its own screen the same way as
+ *  GeneralSettingsScreen above — Profile now just has a single row that
+ *  opens this. Owns the emergency-wipe accessibility-service resync (moved
+ *  off Profile's ON_RESUME observer, which had no other reason to exist once
+ *  this section moved off Profile). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SecuritySettingsScreen(
+    onBack: () -> Unit,
+    onOpenSecurityGuide: () -> Unit,
+    onOpenChangePassword: () -> Unit,
+    onOpenTotpSettings: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
+    onOpenWipeSettings: () -> Unit
+) {
+    androidx.activity.compose.BackHandler { onBack() }
+    val context = LocalContext.current
+    val s = LocalStrings.current
+    val c = LocalSubrosaColors.current
+    val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
+
+    var showLockDialog     by remember { mutableStateOf(false) }
+    var showPanicDialog    by remember { mutableStateOf(false) }
+    var panicPassword      by remember { mutableStateOf("") }
+    var hideNotif          by remember { mutableStateOf(UserStorage.getHideNotificationContent(context)) }
+    var currentLock        by remember { mutableStateOf(UserStorage.getAutoLockTimeout(context)) }
+    var biometricEnabled   by remember { mutableStateOf(UserStorage.getBiometricUnlockEnabled(context)) }
+    var showBiometricWarning by remember { mutableStateOf(false) }
+    var emergencyEnabled        by remember { mutableStateOf(UserStorage.isEmergencyWipeEnabled(context) && isEmergencyServiceEnabled(context)) }
+    var showEmergencyInfoDialog by remember { mutableStateOf(false) }
+    var serviceNotifVisible     by remember { mutableStateOf(UserStorage.isServiceNotificationVisible(context)) }
+    var hideIpDuringCalls       by remember { mutableStateOf(UserStorage.getHideIpDuringCalls(context)) }
+
+    val lockLabels = mapOf(
+        0    to s.profileLockOff,
+        60   to s.profileLock1min,
+        300  to s.profileLock5min,
+        900  to s.profileLock15min,
+        1800 to s.profileLock30min
+    )
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val active = isEmergencyServiceEnabled(context)
+                // Found live: the toast said "already enabled" (active==true)
+                // but the switch stayed off — emergencyEnabled requires BOTH
+                // active AND the separate isEmergencyWipeEnabled() preference
+                // (the user's own "I want this" intent flag, deliberately kept
+                // apart from the raw OS service state — see the Switch's
+                // onCheckedChange below), and this dialog flow never set that
+                // preference on success. Safe to set it here specifically
+                // because showEmergencyInfoDialog being true means the user
+                // got here by toggling the switch ON in the first place — the
+                // dialog only opens from that intent, so this isn't opting
+                // them into anything they didn't ask for.
+                if (active && showEmergencyInfoDialog) {
+                    UserStorage.setEmergencyWipeEnabled(context, true)
+                }
+                emergencyEnabled = active && UserStorage.isEmergencyWipeEnabled(context)
+                if (!active) UserStorage.setEmergencyWipeEnabled(context, false)
+                // Auto-close the step-by-step instructions once the service is
+                // genuinely on — verified via isEmergencyServiceEnabled(), not
+                // just "the user came back from Settings" (which proves
+                // nothing about what they actually did there).
+                if (active && showEmergencyInfoDialog) {
+                    showEmergencyInfoDialog = false
+                    Toast.makeText(context, s.emergencyInfoDone, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(s.profileSectionSecurity, color = c.textPrimary, fontFamily = AppFont) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(painterResource(R.drawable.ic_back_arrow), contentDescription = s.back, tint = c.textPrimary)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
+            )
+        },
+        containerColor = Color.Transparent
+    ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(bgGradient)
+                .padding(padding)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Guide entry kept on its own, ungrouped — it's the "read
+                // more" gateway, not itself a security feature to classify
+                // alongside the rest. Every row below now has a matching
+                // article there (see SecurityGuideScreen.kt); this list was
+                // previously missing 6 of them entirely.
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = c.card)
+                ) {
+                    PRow(
+                        title = s.profileSecurityGuide,
+                        subtitle = s.profileSecurityGuideSub,
+                        onClick = onOpenSecurityGuide,
+                        trailing = { PChevron() }
+                    )
+                }
+
+                // Grouped into three kinds of row so the same interaction
+                // pattern always lives in the same place: flips a switch,
+                // opens an in-place dialog, or navigates to its own screen.
+                // Long explanatory subtitles moved to the guide above —
+                // these are now just short reminders of what the row does,
+                // not the full rationale.
+                Spacer(modifier = Modifier.height(20.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = c.card)
+                ) {
+                    Column {
+                        PRow(
+                            title = s.profileHideNotif,
+                            subtitle = s.profileHideNotifSub,
+                            trailing = {
+                                Switch(
+                                    checked = hideNotif,
+                                    onCheckedChange = {
+                                        hideNotif = it
+                                        UserStorage.setHideNotificationContent(context, it)
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = c.accent,
+                                        checkedTrackColor = c.accent.copy(alpha = 0.35f)
+                                    )
+                                )
+                            }
+                        )
+                        PDivider()
+                        PRow(
+                            title = s.profileHideIpCalls,
+                            subtitle = s.profileHideIpCallsSub,
+                            trailing = {
+                                Switch(
+                                    checked = hideIpDuringCalls,
+                                    onCheckedChange = {
+                                        hideIpDuringCalls = it
+                                        UserStorage.setHideIpDuringCalls(context, it)
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = c.accent,
+                                        checkedTrackColor = c.accent.copy(alpha = 0.35f)
+                                    )
+                                )
+                            }
+                        )
+                        if (BiometricHelper.isBiometricAvailable(context)) {
+                            PDivider()
+                            PRow(
+                                title = s.profileBiometricTitle,
+                                subtitle = s.profileBiometricSub,
+                                trailing = {
+                                    Switch(
+                                        checked = biometricEnabled,
+                                        onCheckedChange = { wantEnabled ->
+                                            if (wantEnabled) {
+                                                // Don't flip the pref until the user explicitly
+                                                // acknowledges the coercion-risk warning below.
+                                                showBiometricWarning = true
+                                            } else {
+                                                biometricEnabled = false
+                                                UserStorage.setBiometricUnlockEnabled(context, false)
+                                            }
+                                        },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = c.accent,
+                                            checkedTrackColor = c.accent.copy(alpha = 0.35f)
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                        PDivider()
+                        PRow(
+                            title = s.profileEmergencyBtn,
+                            subtitle = s.profileEmergencyBtnSub,
+                            trailing = {
+                                Switch(
+                                    checked = emergencyEnabled,
+                                    onCheckedChange = { wantEnabled ->
+                                        if (wantEnabled) {
+                                            if (isEmergencyServiceEnabled(context)) {
+                                                emergencyEnabled = true
+                                                UserStorage.setEmergencyWipeEnabled(context, true)
+                                            } else {
+
+                                                showEmergencyInfoDialog = true
+                                            }
+                                        } else {
+                                            emergencyEnabled = false
+                                            UserStorage.setEmergencyWipeEnabled(context, false)
+                                        }
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color(0xFFEF5350),
+                                        checkedTrackColor = Color(0xFFEF5350).copy(alpha = 0.35f)
+                                    )
+                                )
+                            }
+                        )
+                        PDivider()
+                        PRow(
                             title = s.profileServiceNotifVisible,
                             subtitle = s.profileServiceNotifVisibleSub,
                             trailing = {
@@ -1035,77 +1447,70 @@ fun ProfileScreen(
                                 )
                             }
                         )
-                        PDivider()
-                        PRow(s.wipeSettingsTitle,  onClick = onOpenWipeSettings,         trailing = { PChevron() })
-                        PDivider()
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = c.card)
+                ) {
+                    Column {
                         PRow(
-                            s.profileSourceCode,
-                            onClick = {
-                                try {
-                                    context.startActivity(
-                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/MoRoKonst/beacon-messenger"))
-                                    )
-                                } catch (_: Exception) {}
-                            },
+                            title = s.profileAutoLock,
+                            subtitle = s.profileAutoLockAfter(
+                                lockLabels[currentLock] ?: s.profileLockOff
+                            ),
+                            onClick = { showLockDialog = true },
                             trailing = { PChevron() }
                         )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0x18EF5350))
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showNotMeConfirm = true }
-                            .padding(horizontal = 20.dp, vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("", fontSize = 18.sp, modifier = Modifier.padding(end = 12.dp))
-                        Text(
-                            s.profileNotMe,
-                            fontSize = 15.sp,
-                            fontFamily = AppFont,
-                            color = Color(0xFFEF5350),
-                            modifier = Modifier.weight(1f)
+                        PDivider()
+                        PRow(
+                            title = s.profilePanicTitle,
+                            subtitle = s.profilePanicSub,
+                            onClick = { showPanicDialog = true },
+                            trailing = {
+                                if (UserStorage.hasPanicPassword(context)) {
+                                    Text(
+                                        s.profilePanicSetStatus,
+                                        fontSize = 14.sp,
+                                        color = Color(0xFF4CAF50),
+                                        fontFamily = AppFont
+                                    )
+                                } else {
+                                    Text(
+                                        s.setAction,
+                                        fontSize = 15.sp,
+                                        color = c.accent,
+                                        fontFamily = AppFont
+                                    )
+                                }
+                            }
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
+                Spacer(modifier = Modifier.height(20.dp))
                 Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0x18EF5350))
+                    colors = CardDefaults.cardColors(containerColor = c.card)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showCompromisedConfirm = true }
-                            .padding(horizontal = 20.dp, vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("", fontSize = 18.sp, modifier = Modifier.padding(end = 12.dp))
-                        Text(
-                            s.profileCompromised,
-                            fontSize = 15.sp,
-                            fontFamily = AppFont,
-                            color = Color(0xFFEF5350),
-                            modifier = Modifier.weight(1f)
+                    Column {
+                        PRow(
+                            title = s.profileChangePassword,
+                            onClick = onOpenChangePassword,
+                            trailing = { PConfigureButton(onOpenChangePassword) }
                         )
+                        PDivider()
+                        PRow(s.profileTotp, onClick = onOpenTotpSettings, trailing = { PConfigureButton(onOpenTotpSettings) })
+                        PDivider()
+                        PRow(s.profileDiagnostics, onClick = onOpenDiagnostics, trailing = { PConfigureButton(onOpenDiagnostics) })
+                        PDivider()
+                        PRow(s.wipeSettingsTitle, onClick = onOpenWipeSettings, trailing = { PConfigureButton(onOpenWipeSettings) })
                     }
                 }
-
                 Spacer(modifier = Modifier.height(40.dp))
             }
         }
@@ -1115,7 +1520,7 @@ fun ProfileScreen(
         AlertDialog(
             onDismissRequest = { showLockDialog = false },
             containerColor = c.dialog,
-            title = { Text(s.profileAutoLock, color = Color.White, fontFamily = AppFont) },
+            title = { Text(s.profileAutoLock, color = c.textPrimary, fontFamily = AppFont) },
             text = {
                 Column {
                     lockLabels.forEach { (secs, label) ->
@@ -1136,7 +1541,7 @@ fun ProfileScreen(
                                 colors = RadioButtonDefaults.colors(selectedColor = c.accent)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(label, color = c.textPrimary, fontFamily = AppFont, fontSize = 15.sp)
+                            Text(label, color = c.textPrimary, fontFamily = AppFont, fontSize = 17.sp)
                         }
                     }
                 }
@@ -1150,7 +1555,7 @@ fun ProfileScreen(
             onDismissRequest = { showBiometricWarning = false },
             containerColor = c.dialog,
             title = { Text(s.profileBiometricWarningTitle, color = Color(0xFFFFA726), fontFamily = AppFont) },
-            text = { Text(s.profileBiometricWarningText, color = c.textPrimary, fontFamily = AppFont, fontSize = 13.sp, lineHeight = 19.sp) },
+            text = { Text(s.profileBiometricWarningText, color = c.textPrimary, fontFamily = AppFont, fontSize = 15.sp, lineHeight = 19.sp) },
             confirmButton = {
                 TextButton(onClick = {
                     biometricEnabled = true
@@ -1172,14 +1577,14 @@ fun ProfileScreen(
         AlertDialog(
             onDismissRequest = { showPanicDialog = false },
             containerColor = c.dialog,
-            title = { Text(s.profilePanicTitle, color = Color.White, fontFamily = AppFont) },
+            title = { Text(s.profilePanicTitle, color = c.textPrimary, fontFamily = AppFont) },
             text = {
                 Column {
                     Text(
                         s.profilePanicInstruction,
                         color = Color(0xFFFFB74D),
                         fontFamily = AppFont,
-                        fontSize = 13.sp
+                        fontSize = 15.sp
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(s.profilePanicEnterLabel, color = c.textPrimary, fontFamily = AppFont)
@@ -1217,51 +1622,6 @@ fun ProfileScreen(
         )
     }
 
-    if (showNotMeConfirm) {
-        AlertDialog(
-            onDismissRequest = { showNotMeConfirm = false },
-            containerColor = c.dialog,
-            title = { Text(s.profileNotMeTitle, color = Color.White, fontFamily = AppFont) },
-            text = { Text(s.profileNotMeText, color = c.textPrimary, fontFamily = AppFont) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showNotMeConfirm = false
-                    (context as? MainActivity)?.emergencyWipe()
-                }) { Text(s.profileNotMeConfirm, color = Color(0xFFEF5350), fontFamily = AppFont) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showNotMeConfirm = false }) {
-                    Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
-                }
-            }
-        )
-    }
-
-    if (showCompromisedConfirm) {
-        AlertDialog(
-            onDismissRequest = { showCompromisedConfirm = false },
-            containerColor = c.dialog,
-            title = { Text(s.profileCompromisedTitle, color = Color.White, fontFamily = AppFont) },
-            text = { Text(s.profileCompromisedText, color = c.textPrimary, fontFamily = AppFont) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showCompromisedConfirm = false
-                    scope.launch {
-                        MessengerService.requestIdentityRevocation(context)
-                        BackupManager.resetCompromisedIdentity(context)
-                        context.stopService(Intent(context, MessengerService::class.java))
-                        android.os.Process.killProcess(android.os.Process.myPid())
-                    }
-                }) { Text(s.profileCompromisedConfirm, color = Color(0xFFEF5350), fontFamily = AppFont) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCompromisedConfirm = false }) {
-                    Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
-                }
-            }
-        )
-    }
-
     if (showEmergencyInfoDialog) {
         val isAndroid13Plus = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
         // Whether step 1 was ever tapped this dialog session — the app has no
@@ -1276,7 +1636,7 @@ fun ProfileScreen(
         AlertDialog(
             onDismissRequest = { showEmergencyInfoDialog = false },
             containerColor = c.dialog,
-            title = { Text(s.emergencyInfoTitle, color = Color.White, fontFamily = AppFont) },
+            title = { Text(s.emergencyInfoTitle, color = c.textPrimary, fontFamily = AppFont) },
             text = {
                 // Action buttons live here, full-width and stacked, instead of
                 // crammed into AlertDialog's confirmButton row — found live:
@@ -1284,7 +1644,7 @@ fun ProfileScreen(
                 // "Отмена" all fighting for one narrow horizontal row wrapped
                 // character-by-character, unreadable.
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(s.emergencyInfoWarning, color = c.textPrimary, fontFamily = AppFont, fontSize = 13.sp, lineHeight = 18.sp)
+                    Text(s.emergencyInfoWarning, color = c.textPrimary, fontFamily = AppFont, fontSize = 15.sp, lineHeight = 18.sp)
 
                     if (isAndroid13Plus) {
                         EmergencyStepRow(s.emergencyInfoStepLabel(1), s.emergencyInfoStep1Desc, done = step1Visited)
@@ -1300,7 +1660,7 @@ fun ProfileScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = c.cardAlt)
-                        ) { Text(s.emergencyInfoOpenAppSettings, color = c.accent, fontFamily = AppFont, fontSize = 13.sp) }
+                        ) { Text(s.emergencyInfoOpenAppSettings, color = c.accent, fontFamily = AppFont, fontSize = 15.sp) }
 
                         EmergencyStepRow(s.emergencyInfoStepLabel(2), s.emergencyInfoStep2Desc, done = false, emphasize = step1Visited)
                         Button(
@@ -1312,9 +1672,9 @@ fun ProfileScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = if (step1Visited) c.accent else c.cardAlt)
-                        ) { Text(s.emergencyInfoOpenSettings, color = if (step1Visited) Color.White else c.accent, fontFamily = AppFont, fontSize = 13.sp) }
+                        ) { Text(s.emergencyInfoOpenSettings, color = if (step1Visited) (if (c.isDark) Color.White else c.textPrimary) else c.accent, fontFamily = AppFont, fontSize = 15.sp) }
                     } else {
-                        Text(s.emergencyInfoLegacyDesc, color = c.textPrimary, fontFamily = AppFont, fontSize = 13.sp)
+                        Text(s.emergencyInfoLegacyDesc, color = c.textPrimary, fontFamily = AppFont, fontSize = 15.sp)
                         Button(
                             onClick = {
                                 context.startActivity(
@@ -1324,7 +1684,7 @@ fun ProfileScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = c.accent)
-                        ) { Text(s.emergencyInfoOpenSettings, color = Color.White, fontFamily = AppFont, fontSize = 13.sp) }
+                        ) { Text(s.emergencyInfoOpenSettings, color = if (c.isDark) Color.White else c.textPrimary, fontFamily = AppFont, fontSize = 15.sp) }
                     }
                 }
             },
@@ -1336,5 +1696,4 @@ fun ProfileScreen(
             }
         )
     }
-
 }

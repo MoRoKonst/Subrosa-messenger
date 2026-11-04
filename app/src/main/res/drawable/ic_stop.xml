@@ -3,10 +3,11 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-
-    <!-- Stop: filled square -->
     <path
-        android:pathData="M5,5 H19 V19 H5 Z"
-        android:fillColor="#FFFFFF"/>
-
+        android:pathData="M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2l0 -10"
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
 </vector>

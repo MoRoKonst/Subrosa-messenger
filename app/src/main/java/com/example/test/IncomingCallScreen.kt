@@ -160,7 +160,7 @@ fun IncomingCallScreen(
                 callTypeText,
                 color = c.accent,
                 fontFamily = JetBrainsMono,
-                fontSize = 14.sp,
+                fontSize = 16.sp,
                 letterSpacing = 2.sp
             )
 
@@ -183,8 +183,8 @@ fun IncomingCallScreen(
                     Box(contentAlignment = Alignment.Center) {
                         Text(
                             peerName.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                            fontSize = 36.sp,
-                            color = Color.White,
+                            fontSize = 38.sp,
+                            color = if (c.isDark) Color.White else c.textPrimary,
                             fontWeight = FontWeight.Bold,
                             fontFamily = JetBrainsMono
                         )
@@ -194,9 +194,9 @@ fun IncomingCallScreen(
 
             Text(
                 peerName,
-                color = Color.White,
+                color = c.textPrimary,
                 fontFamily = JetBrainsMono,
-                fontSize = 24.sp,
+                fontSize = 26.sp,
                 fontWeight = FontWeight.SemiBold
             )
 
@@ -204,7 +204,7 @@ fun IncomingCallScreen(
                 if (isGroup) s.incomingGroupCallHint else s.incomingCallHint,
                 color = c.textPrimary.copy(alpha = 0.5f),
                 fontFamily = JetBrainsMono,
-                fontSize = 13.sp
+                fontSize = 15.sp
             )
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -228,7 +228,7 @@ fun IncomingCallScreen(
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             androidx.compose.material3.Icon(
-                                painter = painterResource(R.drawable.ic_close),
+                                painter = painterResource(R.drawable.ic_end_call),
                                 contentDescription = s.incomingDecline,
                                 tint = Color.White,
                                 modifier = Modifier.size(32.dp)
@@ -236,7 +236,7 @@ fun IncomingCallScreen(
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(s.incomingDecline, color = c.textPrimary.copy(alpha = 0.7f), fontFamily = JetBrainsMono, fontSize = 12.sp)
+                    Text(s.incomingDecline, color = c.textPrimary.copy(alpha = 0.7f), fontFamily = JetBrainsMono, fontSize = 14.sp)
                 }
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -265,11 +265,16 @@ fun IncomingCallScreen(
                         }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Text("📞", fontSize = 30.sp)
+                            androidx.compose.material3.Icon(
+                                painter = painterResource(R.drawable.ic_sound_call),
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(30.dp)
+                            )
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(s.incomingAccept, color = c.textPrimary.copy(alpha = 0.7f), fontFamily = JetBrainsMono, fontSize = 12.sp)
+                    Text(s.incomingAccept, color = c.textPrimary.copy(alpha = 0.7f), fontFamily = JetBrainsMono, fontSize = 14.sp)
                 }
             }
         }

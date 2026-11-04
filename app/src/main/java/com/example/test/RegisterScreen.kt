@@ -1,10 +1,13 @@
 package com.subrosa.messenger
 
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,8 +26,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
+import com.subrosa.messenger.ui.theme.Inter
 
-private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
+// App-wide font swap 2026-09-22 — name kept for API stability.
+private val AppFont = Inter
 
 @Composable
 fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
@@ -41,6 +46,26 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
     var showImportDialog by remember { mutableStateOf(false) }
     var importPassword by remember { mutableStateOf("") }
     var importError by remember { mutableStateOf("") }
+    // Found live 2026-08-30, alongside the StorageKeyManager/UserStorage
+    // onboarding-restore fix in BackupManager.importBackup(): this dialog
+    // only ever collected the backup's decryption password, never the TOTP
+    // secret/code/recovery-code that importBackup() also requires whenever
+    // the backup has TOTP enabled (true for effectively every backup since
+    // TOTP became mandatory 2026-08-10) — BackupScreen.kt's own import flow
+    // already has these three fields, this dialog just never got them.
+    // Without them, restoring from onboarding always failed with "Этот
+    // бэкап защищён TOTP — введите секрет и текущий код" and nowhere to
+    // actually enter either.
+    var importTotpSecret by remember { mutableStateOf("") }
+    var importTotpCode by remember { mutableStateOf("") }
+    var importTotpRecoveryCode by remember { mutableStateOf("") }
+    // File is picked FIRST, dialog (password/TOTP) shown only after — reading
+    // it up front means the dialog can fail fast on "wrong/corrupt file" before
+    // the user's bothered typing a password, and there's nothing left to pick
+    // by the time the confirm button runs, so it can call importBackup()
+    // directly instead of re-launching the picker.
+    var importedFileContent by remember { mutableStateOf<String?>(null) }
+    var importPickError by remember { mutableStateOf("") }
 
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -50,10 +75,53 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
             try {
                 val content = context.contentResolver.openInputStream(uri)
                     ?.bufferedReader()?.readText() ?: ""
-                val result = BackupManager.importBackup(context, content, importPassword)
+                withContext(Dispatchers.Main) {
+                    importedFileContent = content
+                    importPickError = ""
+                    showImportDialog = true
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    importPickError = s.error(e.message ?: "")
+                }
+            }
+        }
+    }
+
+    fun runImport() {
+        val content = importedFileContent ?: return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val result = BackupManager.importBackup(
+                    context, content, importPassword,
+                    importTotpSecret.ifBlank { null },
+                    importTotpCode.ifBlank { null },
+                    importTotpRecoveryCode.ifBlank { null }
+                )
                 withContext(Dispatchers.Main) {
                     if (result.isSuccess) {
                         showImportDialog = false
+                        // Found live 2026-08-31, same class of bug already fixed in
+                        // BackupScreen.kt's import flow (see its comment): if a
+                        // MessengerService instance is somehow already running at
+                        // this point (e.g. resurrected by the OS via START_STICKY,
+                        // or a leftover from a bootstrap/deep-link intent fired
+                        // while this dialog was still open), its onStartCommand()
+                        // computes `username` from CryptoManager.getPublicKeyString()
+                        // independently of importBackup() — and getSoftwareKeyPair()
+                        // silently *generates and persists a brand-new random EC
+                        // keypair* if it ran before this restore wrote the real one,
+                        // immediately overwriting UserStorage's userId with that
+                        // throwaway fingerprint. importBackup() then correctly
+                        // overwrites the key material on disk, but an
+                        // already-running service instance keeps its own
+                        // already-computed (wrong) `username` in memory until
+                        // restarted, and registers/reconnects under it forever.
+                        // Force a full stop+restart so onRegistered()'s own
+                        // startForegroundService() below is guaranteed to be the
+                        // one that actually determines this run's identity, reading
+                        // it fresh off disk after the restore completed.
+                        context.stopService(Intent(context, MessengerService::class.java))
                         onRegistered()
                     } else {
                         importError = s.error(result.exceptionOrNull()?.message ?: "")
@@ -99,7 +167,7 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
         ) {
             Text(
                 text = if (s.langCode == "ru") "EN" else "RU",
-                fontSize = 13.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = c.accent,
                 fontFamily = AppFont
@@ -112,20 +180,18 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("💬", fontSize = 64.sp, modifier = Modifier.padding(bottom = 16.dp))
-
             Text(
                 s.registerTitle,
-                fontSize = 24.sp,
+                fontSize = 26.sp,
                 fontWeight = FontWeight.Bold,
                 color = c.accent,
                 fontFamily = AppFont,
-                modifier = Modifier.padding(bottom = 8.dp)
+                modifier = Modifier.padding(bottom = 24.dp)
             )
 
             Text(
                 s.registerSubtitle,
-                fontSize = 15.sp,
+                fontSize = 17.sp,
                 color = c.textPrimary.copy(alpha = 0.6f),
                 fontFamily = AppFont,
                 modifier = Modifier.padding(bottom = 32.dp)
@@ -149,6 +215,9 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                 label = { Text(s.registerPassword, fontFamily = AppFont) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                ),
                 enabled = !isGeneratingKeys,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                 textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
@@ -161,6 +230,9 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                 label = { Text(s.registerRepeatPassword, fontFamily = AppFont) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                ),
                 enabled = !isGeneratingKeys,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                 textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
@@ -171,7 +243,7 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                 Text(
                     text = error,
                     color = c.error,
-                    fontSize = 13.sp,
+                    fontSize = 15.sp,
                     fontFamily = AppFont,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
@@ -179,7 +251,7 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
 
             if (isGeneratingKeys) {
                 CircularProgressIndicator(modifier = Modifier.padding(16.dp), color = c.accent)
-                Text(s.registerGeneratingKeys, fontSize = 14.sp, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
+                Text(s.registerGeneratingKeys, fontSize = 16.sp, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
             }
 
             Button(
@@ -209,6 +281,12 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                                     // nothing to the new account server-side. Reset unconditionally
                                     // so a fresh identity always gets a fresh setup prompt.
                                     TotpManager.disable(context)
+                                    // Same identity-scoped leftover problem as the TOTP reset
+                                    // right above, for the cached sealed-sender cert (see
+                                    // BackupManager.wipeCurrentIdentityData()'s matching fix) —
+                                    // a fresh keypair was just generated, so any cert cached from
+                                    // before belongs to a fingerprint this device no longer has.
+                                    SenderCertManager.clear(context)
                                     UserStorage.register(context, username.trim(), password)
 
                                     if (!StorageKeyManager.isSetup(context)) {
@@ -239,33 +317,44 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                 enabled = !isGeneratingKeys,
                 colors = ButtonDefaults.buttonColors(containerColor = c.dialog)
             ) {
-                Text(s.registerButton, fontSize = 16.sp, fontFamily = AppFont, color = Color.White)
+                Text(s.registerButton, fontSize = 18.sp, fontFamily = AppFont, color = c.textPrimary)
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedButton(
-                onClick = { showImportDialog = true },
+                onClick = { importLauncher.launch(arrayOf("*/*")) },
                 modifier = Modifier.fillMaxWidth().height(50.dp),
                 enabled = !isGeneratingKeys,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = c.accent),
                 border = androidx.compose.foundation.BorderStroke(1.dp, c.accent)
             ) {
-                Text(s.registerImportBackup, fontSize = 15.sp, fontFamily = AppFont)
+                Text(s.registerImportBackup, fontSize = 17.sp, fontFamily = AppFont)
+            }
+            if (importPickError.isNotEmpty()) {
+                Text(importPickError, color = c.error, fontSize = 14.sp, fontFamily = AppFont, modifier = Modifier.padding(top = 6.dp))
             }
         }
     }
 
     if (showImportDialog) {
         AlertDialog(
-            onDismissRequest = { showImportDialog = false; importPassword = ""; importError = "" },
+            onDismissRequest = {
+                showImportDialog = false; importPassword = ""; importError = ""
+                importTotpSecret = ""; importTotpCode = ""; importTotpRecoveryCode = ""
+                importedFileContent = null
+            },
             containerColor = c.dialog,
-            title = { Text(s.registerImportTitle, color = Color.White, fontFamily = AppFont) },
+            title = { Text(s.registerImportTitle, color = c.textPrimary, fontFamily = AppFont) },
             text = {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     Text(
                         s.registerImportHint,
-                        fontSize = 12.sp,
+                        fontSize = 14.sp,
                         color = c.textPrimary.copy(alpha = 0.6f),
                         fontFamily = AppFont,
                         modifier = Modifier.padding(bottom = 12.dp)
@@ -275,6 +364,9 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                         onValueChange = { importPassword = it },
                         label = { Text(s.registerImportPassword, fontFamily = AppFont) },
                         visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                        ),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
@@ -288,19 +380,94 @@ fun RegisterScreen(onRegistered: () -> Unit, context: android.content.Context) {
                             cursorColor = c.accent
                         )
                     )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        s.registerImportTotpHint,
+                        fontSize = 13.sp,
+                        color = c.textPrimary.copy(alpha = 0.5f),
+                        fontFamily = AppFont,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                    OutlinedTextField(
+                        value = importTotpSecret,
+                        onValueChange = { importTotpSecret = it },
+                        label = { Text(s.backupTotpSecretLabel, fontFamily = AppFont) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = c.accent,
+                            unfocusedBorderColor = c.fieldBorder,
+                            focusedLabelColor = c.accent,
+                            unfocusedLabelColor = c.textPrimary.copy(alpha = 0.6f),
+                            focusedTextColor = c.textPrimary,
+                            unfocusedTextColor = c.textPrimary,
+                            cursorColor = c.accent
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = importTotpCode,
+                        onValueChange = { importTotpCode = it },
+                        label = { Text(s.backupTotpCodeLabel, fontFamily = AppFont) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = c.accent,
+                            unfocusedBorderColor = c.fieldBorder,
+                            focusedLabelColor = c.accent,
+                            unfocusedLabelColor = c.textPrimary.copy(alpha = 0.6f),
+                            focusedTextColor = c.textPrimary,
+                            unfocusedTextColor = c.textPrimary,
+                            cursorColor = c.accent
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        s.backupTotpRecoveryOr,
+                        fontSize = 14.sp,
+                        color = c.textPrimary.copy(alpha = 0.5f),
+                        fontFamily = AppFont
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = importTotpRecoveryCode,
+                        onValueChange = { importTotpRecoveryCode = it },
+                        label = { Text(s.backupTotpRecoveryLabel, fontFamily = AppFont) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = c.accent,
+                            unfocusedBorderColor = c.fieldBorder,
+                            focusedLabelColor = c.accent,
+                            unfocusedLabelColor = c.textPrimary.copy(alpha = 0.6f),
+                            focusedTextColor = c.textPrimary,
+                            unfocusedTextColor = c.textPrimary,
+                            cursorColor = c.accent
+                        )
+                    )
+
                     if (importError.isNotEmpty()) {
-                        Text(importError, color = c.error, fontSize = 12.sp, fontFamily = AppFont, modifier = Modifier.padding(top = 8.dp))
+                        Text(importError, color = c.error, fontSize = 14.sp, fontFamily = AppFont, modifier = Modifier.padding(top = 8.dp))
                     }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     if (importPassword.isEmpty()) { importError = s.backupErrEnterPassword; return@TextButton }
-                    importLauncher.launch(arrayOf("*/*"))
+                    runImport()
                 }) { Text(s.registerImportChooseFile, color = c.accent, fontFamily = AppFont) }
             },
             dismissButton = {
-                TextButton(onClick = { showImportDialog = false; importPassword = ""; importError = "" }) {
+                TextButton(onClick = {
+                    showImportDialog = false; importPassword = ""; importError = ""
+                    importTotpSecret = ""; importTotpCode = ""; importTotpRecoveryCode = ""
+                    importedFileContent = null
+                }) {
                     Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
                 }
             }

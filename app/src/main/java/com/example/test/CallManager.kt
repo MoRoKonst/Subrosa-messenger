@@ -86,7 +86,46 @@ object CallManager {
     private const val ICE_BATCH_DEBOUNCE_MS = 250L
     private const val ICE_BATCH_MAX_SIZE = 20
 
+    // S6-51 (external review 2026-09-06) -- a compromised/malicious server is
+    // not this device's memory-safety boundary: the server's own bounds
+    // (is_valid_call_uuid()/CALL_SDP_MAX_LEN/CALL_ICE_CANDIDATE_MAX_LEN/
+    // CALL_GROUP_PEER_LIST_MAX_COUNT in server.py) protect OTHER accounts
+    // from a hostile sender, but do nothing to protect THIS device from a
+    // hostile/compromised relay handing it unbounded SDP/ICE/peer-list data
+    // before it ever reaches setRemoteDescription()/addIceCandidate(). These
+    // mirror the server's own constants exactly.
+    private val CALL_ID_RE = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+    private val CALL_FINGERPRINT_RE = Regex("^[0-9A-F]{16}$")
+    private const val CALL_SDP_MAX_LEN = 64 * 1024
+    private const val CALL_ICE_CANDIDATE_MAX_LEN = 1024
+    private const val CALL_ICE_SDP_MID_MAX_LEN = 64
+    private const val CALL_GROUP_PEER_LIST_MAX_COUNT = 50
+    // Real ICE gathering bursts are 10-30 candidates; 500 is a generous cap,
+    // not a realistic expectation -- bounds memory if remote description
+    // never completes (hostile peer, or one that never answers).
+    private const val MAX_PENDING_ICE_CANDIDATES_PER_PEER = 500
+
+    private fun isValidCallId(value: String?): Boolean = value != null && CALL_ID_RE.matches(value)
+    private fun isValidCallSdp(value: String?): Boolean = !value.isNullOrEmpty() && value.length <= CALL_SDP_MAX_LEN
+    private fun isValidCallIceCandidate(value: String?): Boolean = !value.isNullOrEmpty() && value.length <= CALL_ICE_CANDIDATE_MAX_LEN
+    private fun isValidCallFingerprint(value: String?): Boolean = value != null && CALL_FINGERPRINT_RE.matches(value)
+
+    /** Standard ICE candidate SDP attribute marking it as a TURN-relayed
+     *  candidate (RFC 5245 §15.1: candidate-types = "host" / "srflx" /
+     *  "prflx" / "relay"). Defense-in-depth check, not the primary
+     *  enforcement mechanism — see createPeerConnection()'s
+     *  iceTransportsType=RELAY, which should mean libwebrtc never even
+     *  generates a non-relay candidate to begin with. */
+    // internal (not private) so CallManagerRelayFilterTest can exercise it
+    // directly — the rest of CallManager needs a real native PeerConnectionFactory
+    // and isn't unit-testable without much larger mocking infrastructure.
+    internal fun isRelayCandidate(sdp: String): Boolean = Regex("""\btyp\s+relay\b""").containsMatchIn(sdp)
+
     private fun queueIceCandidate(peerId: String, candidate: IceCandidate) {
+        if (hideIpPerPeer[peerId] == true && !isRelayCandidate(candidate.sdp)) {
+            Log.w(TAG, "Hide IP during calls: dropping non-relay ICE candidate for $peerId instead of signaling it")
+            return
+        }
         val entry = JSONObject().apply {
             put("sdp_mid", candidate.sdpMid)
             put("sdp_m_line_index", candidate.sdpMLineIndex)
@@ -170,9 +209,28 @@ object CallManager {
 
         val encoderFactory = DefaultVideoEncoderFactory(eglBase!!.eglBaseContext, false, false)
         val decoderFactory = DefaultVideoDecoderFactory(eglBase!!.eglBaseContext)
+        // Explicit JavaAudioDeviceModule, forcing WebRTC's own software AEC3/
+        // noise-suppressor instead of the device's HARDWARE ones (the
+        // default when no ADM is set at all -- PeerConnectionFactory.Builder
+        // constructs one internally with hardware AEC/NS left on). A buggy
+        // or low-quality hardware AEC/NS implementation is a well-known,
+        // widely-reported source of crackling/rustling artifacts in WebRTC
+        // calls on some Android devices, while every OTHER app on the same
+        // phone (calling/VoIP apps) sounding clean doesn't rule this out --
+        // they may simply not hit the same hardware path, or apply their
+        // own workaround already. Software AEC3/NS is WebRTC's own
+        // extensively-tested implementation, not a downgrade. User-reported
+        // live, 2026-09-18: "шуршащий звук с микрофона" in calls specifically
+        // (voice MESSAGES were a separate, already-fixed issue — see
+        // AudioHelper.kt's VOICE_COMMUNICATION comment).
+        val audioDeviceModule = org.webrtc.audio.JavaAudioDeviceModule.builder(context.applicationContext)
+            .setUseHardwareAcousticEchoCanceler(false)
+            .setUseHardwareNoiseSuppressor(false)
+            .createAudioDeviceModule()
         factory = PeerConnectionFactory.builder()
             .setVideoEncoderFactory(encoderFactory)
             .setVideoDecoderFactory(decoderFactory)
+            .setAudioDeviceModule(audioDeviceModule)
             .createPeerConnectionFactory()
         Log.d(TAG, "PeerConnectionFactory initialized")
     }
@@ -252,17 +310,47 @@ object CallManager {
         }
     }
 
+    // "Hide IP during calls" — set per-peer at PeerConnection creation time
+    // (not re-read afterward) so toggling the setting mid-call never affects
+    // an already-established connection, only the NEXT one created. Also
+    // consulted by queueIceCandidate() as defense-in-depth: even though
+    // RTCConfiguration.iceTransportsType=RELAY should mean libwebrtc itself
+    // never gathers a host/srflx candidate in the first place, this is a
+    // second gate before any candidate is ever signaled to the peer.
+    private val hideIpPerPeer = ConcurrentHashMap<String, Boolean>()
+
     private fun createPeerConnection(peerId: String, isOffer: Boolean): PeerConnection? {
         val f = factory ?: return null
+        val ctx = appContext
+        val hideIp = ctx != null && UserStorage.getHideIpDuringCalls(ctx)
+        // Fail closed: a relay-only call with no relay server is not "fall
+        // back to a direct connection" — it's "don't place the call at all".
+        // Silently degrading to P2P here would be exactly the leak this
+        // setting exists to prevent.
+        if (hideIp && !NetworkConfig.TurnCredentials.isAvailable()) {
+            Log.e(TAG, "Hide IP during calls is on but no TURN server is available — refusing to start (peer=$peerId)")
+            if (ctx != null) {
+                val strings = if (UserStorage.getLanguage(ctx) == "en") enStrings else ruStrings
+                mainHandler.post {
+                    android.widget.Toast.makeText(ctx, strings.profileHideIpCallsFailedNoTurn, android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+            mainHandler.post { onCallEnded?.invoke("relay_unavailable") }
+            return null
+        }
+        hideIpPerPeer[peerId] = hideIp
         val iceServers = buildList {
-            add(PeerConnection.IceServer.builder(STUN_URL).createIceServer())
+            // STUN only produces host-reflexive candidates, which RELAY mode
+            // must never use — skip requesting them at all rather than
+            // relying solely on iceTransportsType to discard them.
+            if (!hideIp) add(PeerConnection.IceServer.builder(STUN_URL).createIceServer())
 
             if (NetworkConfig.TurnCredentials.isAvailable()) {
                 add(
                     PeerConnection.IceServer.builder(TURN_URL)
                         .setUsername(TURN_USER).setPassword(TURN_PASS).createIceServer()
                 )
-                Log.d(TAG, "ICE: STUN + TURN")
+                Log.d(TAG, if (hideIp) "ICE: TURN only (hide IP during calls)" else "ICE: STUN + TURN")
             } else {
                 Log.w(TAG, "ICE: только STUN (TURN-credentials ещё не получены от сервера)")
             }
@@ -274,6 +362,7 @@ object CallManager {
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
 
             iceCandidatePoolSize = 3
+            iceTransportsType = if (hideIp) PeerConnection.IceTransportsType.RELAY else PeerConnection.IceTransportsType.ALL
         }
         val pc = f.createPeerConnection(config, object : PeerConnection.Observer {
             override fun onIceCandidate(candidate: IceCandidate) {
@@ -319,6 +408,7 @@ object CallManager {
                             peerConnections.remove(peerId)?.close()
                             pendingIceCandidates.remove(peerId)
                             iceRestartDone.remove(peerId)
+                            hideIpPerPeer.remove(peerId)
                             Log.w(TAG, "Пир $peerId удалён после ICE FAILED, звонок продолжается")
                         } else {
 
@@ -428,6 +518,12 @@ object CallManager {
     }
 
     fun startCall(context: Context, targetId: String, isVideo: Boolean) {
+        if (UserStorage.getHideIpDuringCalls(context) && !NetworkConfig.TurnCredentials.isAvailable()) {
+            Log.e(TAG, "Hide IP during calls is on but no TURN server is available — refusing to start (peer=$targetId)")
+            val strings = if (UserStorage.getLanguage(context) == "en") enStrings else ruStrings
+            android.widget.Toast.makeText(context, strings.profileHideIpCallsFailedNoTurn, android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
         Log.w(TAG, "CALL-TRACE startCall(): to=$targetId isVideo=$isVideo — state before: " +
             "callActive=${callActive.get()} peerConnections=${peerConnections.size} " +
             "localAudioTrack=${localAudioTrack != null} localVideoTrack=${localVideoTrack != null} " +
@@ -552,6 +648,12 @@ object CallManager {
     }
 
     fun startGroupCall(context: Context, gId: String, members: List<String>, isVideo: Boolean) {
+        if (UserStorage.getHideIpDuringCalls(context) && !NetworkConfig.TurnCredentials.isAvailable()) {
+            Log.e(TAG, "Hide IP during calls is on but no TURN server is available — refusing to start group call $gId")
+            val strings = if (UserStorage.getLanguage(context) == "en") enStrings else ruStrings
+            android.widget.Toast.makeText(context, strings.profileHideIpCallsFailedNoTurn, android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
         init(context)
         isVideoCall = isVideo
         isGroupCall = true
@@ -816,6 +918,12 @@ object CallManager {
      *  the call that's already under way. Confirmed via live device testing: the
      *  release() stack trace pointed straight at IncomingCallScreen's onDispose. */
     fun handleOffer(from: String, sdp: String, cId: String, isVideo: Boolean, isGroup: Boolean, gId: String, ts: Long = 0L): Boolean {
+        // S6-51: bound before setRemoteDescription() ever sees it -- a
+        // compromised/malicious server is not this device's memory boundary.
+        if (!isValidCallId(cId) || !isValidCallSdp(sdp)) {
+            Log.w(TAG, "handleOffer: invalid/oversized call_id or sdp from $from — ignored")
+            return false
+        }
 
         // Found live: a call_offer that got stuck in the anon-token send queue
         // (see AnonTokenManager's token-consumption race fix) could arrive
@@ -881,7 +989,11 @@ object CallManager {
     }
 
     fun handleGroupInvite(from: String, cId: String, isVideo: Boolean, gId: String) {
-
+        // S6-51: bound before adoption into call state.
+        if (!isValidCallId(cId) || !isValidCallId(gId)) {
+            Log.w(TAG, "handleGroupInvite: invalid call_id/group_id from $from — ignored")
+            return
+        }
         if (callId.isNotEmpty() || pendingOffer != null) {
             sendSignal(JSONObject().apply {
                 put("type", "call_end")
@@ -902,6 +1014,11 @@ object CallManager {
     }
 
     fun handleAnswer(from: String, sdp: String) {
+        // S6-51: bound before setRemoteDescription() ever sees it.
+        if (!isValidCallSdp(sdp)) {
+            Log.w(TAG, "handleAnswer: oversized/invalid sdp from $from — ignored")
+            return
+        }
         CallSoundManager.stopAll()
 
         ringingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
@@ -920,7 +1037,11 @@ object CallManager {
     }
 
     fun handleGroupJoin(from: String, sdp: String, cId: String) {
-
+        // S6-51: bound before setRemoteDescription()/createPeerConnection().
+        if (!isValidCallId(cId) || !isValidCallSdp(sdp)) {
+            Log.w(TAG, "handleGroupJoin: invalid call_id/sdp from $from — ignored")
+            return
+        }
         groupPeers.add(from)
 
         android.os.Handler(android.os.Looper.getMainLooper()).post { onPeerJoined?.invoke(from) }
@@ -973,7 +1094,13 @@ object CallManager {
     }
 
     fun handleGroupPeerList(peers: List<String>) {
-
+        // S6-51: bound before fanning out a connectToPeer() per entry -- a
+        // hostile/compromised relay could otherwise hand this device an
+        // unbounded peer list, each entry spinning up a real PeerConnection.
+        if (peers.size > CALL_GROUP_PEER_LIST_MAX_COUNT || !peers.all { isValidCallFingerprint(it) }) {
+            Log.w(TAG, "handleGroupPeerList: invalid/oversized peer list (${peers.size}) — ignored")
+            return
+        }
         val ctx = appContext ?: return
         peers.filter { !peerConnections.containsKey(it) }.forEach { peerId ->
             groupPeers.add(peerId)
@@ -982,11 +1109,20 @@ object CallManager {
     }
 
     fun handleIceCandidate(from: String, sdpMid: String, sdpMLineIndex: Int, candidate: String) {
+        // S6-51: bound before ever constructing an IceCandidate/queuing it.
+        if (!isValidCallIceCandidate(candidate) || sdpMid.length > CALL_ICE_SDP_MID_MAX_LEN) {
+            Log.w(TAG, "handleIceCandidate: invalid/oversized candidate from $from — dropped")
+            return
+        }
         val ice = IceCandidate(sdpMid, sdpMLineIndex, candidate)
         val pc = peerConnections[from]
         if (pc == null || pc.remoteDescription == null) {
-
-            pendingIceCandidates.getOrPut(from) { mutableListOf() }.add(ice)
+            val queue = pendingIceCandidates.getOrPut(from) { mutableListOf() }
+            if (queue.size >= MAX_PENDING_ICE_CANDIDATES_PER_PEER) {
+                Log.w(TAG, "handleIceCandidate: pending ICE queue full for $from — candidate dropped")
+                return
+            }
+            queue.add(ice)
             Log.d(TAG, "ICE buffered for $from (pc=${pc != null}, remoteDesc=${pc?.remoteDescription != null})")
         } else {
             pc.addIceCandidate(ice)
@@ -1023,6 +1159,11 @@ object CallManager {
     }
 
     fun handleIceRestart(from: String, sdp: String) {
+        // S6-51: bound before setRemoteDescription() ever sees it.
+        if (!isValidCallSdp(sdp)) {
+            Log.w(TAG, "handleIceRestart: oversized/invalid sdp from $from — ignored")
+            return
+        }
         val pc = peerConnections[from] ?: return
 
         disconnectRunnables.remove(from)?.let { mainHandler.removeCallbacks(it) }
@@ -1248,6 +1389,11 @@ object CallManager {
 
         if (!callActive.compareAndSet(true, false)) return false
 
+        // Captured before peerConnections.clear() below — used at the bottom
+        // of this function to nudge a token resupply for whoever we were
+        // just on a call with, once the peer list is gone otherwise.
+        val callPeersForResupply = peerConnections.keys.toList()
+
         Log.w(TAG, "DEBUG-BOOTSTRAP release() called from:", Exception("stacktrace"))
 
         ringingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
@@ -1269,6 +1415,7 @@ object CallManager {
         peerConnections.clear()
         groupPeers.clear()
         pendingIceCandidates.clear()
+        hideIpPerPeer.clear()
         synchronized(pendingOutgoingIce) { pendingOutgoingIce.clear() }
         iceFlushRunnables.values.forEach { mainHandler.removeCallbacks(it) }
         iceFlushRunnables.clear()
@@ -1317,9 +1464,19 @@ object CallManager {
         // why. release() is the single choke point both hangUp() and
         // handleCallEnd() (remote-initiated end, including the P2P DataChannel
         // "bye") funnel through, so this covers every way a call can end.
+        //
+        // Also carries callPeersForResupply so that same handler can nudge a
+        // token resupply for the call partner(s) — found live: calls were
+        // observed leaving the anon-token exchange stale enough that the next
+        // message after a call went out on an already-spent token, which the
+        // server can't route and logs the recipient as offline. Resupply
+        // only (not a full forceRestoreConnection()) — this is a routine
+        // top-up, not a "something's broken" reset, so no session/PQ-key
+        // churn or in-flight-message risk.
         appContext?.let { ctx ->
             ctx.startService(Intent(ctx, MessengerService::class.java).apply {
                 putExtra("call_ended_force_ws_reconnect", true)
+                putExtra("call_ended_resupply_tokens", org.json.JSONArray(callPeersForResupply).toString())
             })
         }
         return true

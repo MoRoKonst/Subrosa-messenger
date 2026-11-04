@@ -64,13 +64,13 @@ fun BatteryOptimizationPromptScreen(onDone: () -> Unit) {
         ) {
             Text(
                 s.batteryPromptTitle,
-                fontSize = 22.sp,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = c.textPrimary
             )
             Text(
                 s.batteryPromptText,
-                fontSize = 14.sp,
+                fontSize = 16.sp,
                 lineHeight = 20.sp,
                 color = c.textPrimary.copy(alpha = 0.8f)
             )
@@ -92,7 +92,7 @@ fun BatteryOptimizationPromptScreen(onDone: () -> Unit) {
                 colors = ButtonDefaults.buttonColors(containerColor = c.accent),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(s.batteryPromptAllow, color = Color.White)
+                Text(s.batteryPromptAllow, color = if (c.isDark) Color.White else c.textPrimary)
             }
             TextButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
                 Text(s.batteryPromptSkip, color = c.textPrimary.copy(alpha = 0.6f))

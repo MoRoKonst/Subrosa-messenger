@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
+import androidx.compose.ui.res.painterResource
 
 private data class GuideItem(val title: String, val desc: String)
 
@@ -45,18 +46,27 @@ fun SecurityGuideScreen(onBack: () -> Unit) {
         listOf(
             GuideItem(s.guideInviteTitle, s.guideInviteDesc),
             GuideItem(s.guideKeyVerifyTitle, s.guideKeyVerifyDesc),
+            GuideItem(s.guideHideNotifTitle, s.guideHideNotifDesc),
+            GuideItem(s.guideHideIpCallsTitle, s.guideHideIpCallsDesc),
             GuideItem(s.guideTotpTitle, s.guideTotpDesc),
+            GuideItem(s.guideBiometricTitle, s.guideBiometricDesc),
+            GuideItem(s.guideChangePasswordTitle, s.guideChangePasswordDesc),
             GuideItem(s.guidePanicTitle, s.guidePanicDesc),
             GuideItem(s.guideEmergencyTitle, s.guideEmergencyDesc),
             GuideItem(s.guideAutoLockTitle, s.guideAutoLockDesc),
             GuideItem(s.guideBackupTitle, s.guideBackupDesc),
             GuideItem(s.guideTorTitle, s.guideTorDesc),
             GuideItem(s.guideCoverTitle, s.guideCoverDesc),
+            GuideItem(s.guideDiagnosticsTitle, s.guideDiagnosticsDesc),
             GuideItem(s.guideParanoidTitle, s.guideParanoidDesc),
+            GuideItem(s.guideDeleteContactTitle, s.guideDeleteContactDesc),
             GuideItem(s.guideDmsTitle, s.guideDmsDesc),
             GuideItem(s.guideTimeoutWipeTitle, s.guideTimeoutWipeDesc),
+            GuideItem(s.guideWipeOnBreachTitle, s.guideWipeOnBreachDesc),
             GuideItem(s.guidePanicButtonTitle, s.guidePanicButtonDesc),
+            GuideItem(s.guideServiceNotifTitle, s.guideServiceNotifDesc),
             GuideItem(s.guideWipeLevelsTitle, s.guideWipeLevelsDesc),
+            GuideItem(s.guideCalcDisguiseTitle, s.guideCalcDisguiseDesc),
             GuideItem(s.guideSelfHealTitle, s.guideSelfHealDesc),
             GuideItem(s.guideCompromisedTitle, s.guideCompromisedDesc)
         )
@@ -66,10 +76,10 @@ fun SecurityGuideScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(s.guideTitle, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.White) },
+                title = { Text(s.guideTitle, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = c.textPrimary) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back, tint = Color.White)
+                        Icon(painterResource(R.drawable.ic_back_arrow), s.back, tint = c.textPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
@@ -108,14 +118,14 @@ fun SecurityGuideScreen(onBack: () -> Unit) {
                             ) {
                                 Text(
                                     item.title,
-                                    fontSize = 15.sp,
+                                    fontSize = 17.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = c.textPrimary,
                                     modifier = Modifier.weight(1f)
                                 )
                                 Text(
                                     if (expanded) "▲" else "▼",
-                                    fontSize = 11.sp,
+                                    fontSize = 13.sp,
                                     color = c.textPrimary.copy(alpha = 0.4f)
                                 )
                             }
@@ -126,7 +136,7 @@ fun SecurityGuideScreen(onBack: () -> Unit) {
                             ) {
                                 Text(
                                     item.desc,
-                                    fontSize = 13.sp,
+                                    fontSize = 15.sp,
                                     lineHeight = 19.sp,
                                     color = c.textPrimary.copy(alpha = 0.8f),
                                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)

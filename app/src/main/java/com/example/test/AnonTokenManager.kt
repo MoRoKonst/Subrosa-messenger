@@ -18,9 +18,28 @@ object AnonTokenManager {
     private fun short(token: String) = "…${token.takeLast(6)}"
 
     private const val PREF_MY_TOKENS = "anon_my_tokens"
+    // Tokens delivered and processed locally, ack sent, but not yet confirmed
+    // durable by the server (anon_delivery_ack_ok) — see markMyTokenAckPending()/
+    // confirmMyTokenAcked(). A separate state from full removal specifically so
+    // these stay in the subscribe_tokens list across a reconnect: if the ack
+    // itself was lost in flight, the server's token_pending fallback copy is
+    // still there, and re-subscribing is what lets it redeliver so the whole
+    // deliver→ack→ack_ok cycle can complete for real.
+    private const val PREF_MY_TOKENS_ACK_PENDING = "anon_my_tokens_ack_pending"
     private const val PREFS_NAME = "anon_token_store"
     private const val PREF_CT_PREFIX = "anon_ct_"
     private const val PREF_CT_SPENT_PREFIX = "anon_ct_spent_"
+    // Which values from MY_TOKENS were handed to which contact — purely
+    // local bookkeeping, never sent to the server (server never learns
+    // "which contact" a token belongs to, that invariant is untouched). See
+    // recordTokensGivenTo()/getTokensGivenTo() — exists so a compromised
+    // contact's still-outstanding tokens can be identified and revoked via
+    // unsubscribe_tokens, instead of the only lever being "wipe my entire
+    // pool and resupply everyone else too".
+    private const val PREF_CT_GIVEN_PREFIX = "anon_ct_given_"
+    // Same reasoning as SPENT_HISTORY_CAP — bounded so a long-lived contact
+    // relationship doesn't grow this forever.
+    private const val GIVEN_HISTORY_CAP = 300
     // Generous relative to POOL_SIZE/BATCH_TO_SHARE — a stale duplicate
     // resupply batch keeps resending the same tokensToShareWith() slice
     // (that function doesn't rotate on its own, only consumeMyToken() on the
@@ -30,6 +49,23 @@ object AnonTokenManager {
     // doesn't grow forever for a long-lived contact.
     private const val SPENT_HISTORY_CAP = 300
     private const val POOL_SIZE = 50
+    // Safety valve only — see freshTokensToShare()'s comment. Used to be
+    // pinned at exactly server.py's MAX_TOKENS_PER_SUBSCRIBE (100) so a full
+    // pool still fit in one subscribe_tokens call — but that call is now
+    // chunked (see MessengerService.sendSubscribeTokens()), so a pool bigger
+    // than 100 no longer risks the server silently truncating a subscribe
+    // and dropping outstanding tokens. Raised to 500 (found live 2026-09-20,
+    // real cross-device call+chat session): a single contact's resupply can
+    // legitimately land 2-3 BATCH_TO_SHARE=20 batches within a few minutes
+    // whenever consumption lags behind (exactly what a post-call reconnect
+    // plus active chat produces) — the old 100 cap was being hit repeatedly
+    // in completely normal use, not just the "essentially never" runaway
+    // case it was meant to guard against, and every trim silently drops
+    // still-outstanding, still-good tokens (freshTokensToShare()'s own log
+    // line literally says so). This is now purely a local-storage runaway
+    // guard (a SharedPrefs string list — 500 tokens is a few KB), not a
+    // wire-protocol constraint.
+    private const val MAX_POOL_HARD_CAP = 500
     // Refilling isn't instant: it takes a round trip (I send my batch → they
     // receive it → THEY reciprocate with a fresh batch of theirs, which is
     // what actually replenishes my supply). Lowered from 16 to 8 — RESERVE_TOKENS
@@ -95,11 +131,78 @@ object AnonTokenManager {
         combined
     }
 
+    /** The list to actually send in a "subscribe_tokens" message — the
+     *  active pool PLUS anything still in ACK_PENDING (see
+     *  PREF_MY_TOKENS_ACK_PENDING's comment). Deliberately NOT the same
+     *  list as ensureMyTokenPool()'s return value alone: an ACK_PENDING
+     *  token must still route to this device on reconnect (in case its
+     *  original ack was lost), but must never be handed out to a contact
+     *  again — tokensToShareWith()/freshTokensToShare() intentionally keep
+     *  reading only the active pool, not this. */
+    fun tokensToSubscribe(ctx: Context): List<String> =
+        (ensureMyTokenPool(ctx) + getMyTokensAckPending(ctx)).distinct()
+
     fun consumeMyToken(ctx: Context, token: String) = synchronized(lock) {
         val tokens = getMyTokens(ctx).toMutableList()
         if (tokens.remove(token)) {
             prefs(ctx).edit().putString(PREF_MY_TOKENS, JSONArray(tokens).toString()).apply()
         }
+    }
+
+    fun getMyTokensAckPending(ctx: Context): List<String> {
+        val json = prefs(ctx).getString(PREF_MY_TOKENS_ACK_PENDING, "[]") ?: "[]"
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /** Moves [token] out of the active pool (so it's never handed out again —
+     *  it's already been used to deliver this message) and into the
+     *  ACK_PENDING set, WITHOUT fully forgetting it — see PREF_MY_TOKENS_ACK_PENDING's
+     *  comment for why. Call after handleMessage() has actually succeeded and
+     *  right before sending anon_delivery_ack; confirmMyTokenAcked() is the
+     *  only thing that fully removes it, once the server confirms via
+     *  anon_delivery_ack_ok. */
+    fun markMyTokenAckPending(ctx: Context, token: String) = synchronized(lock) {
+        val tokens = getMyTokens(ctx).toMutableList()
+        tokens.remove(token)
+        prefs(ctx).edit().putString(PREF_MY_TOKENS, JSONArray(tokens).toString()).apply()
+        val pending = getMyTokensAckPending(ctx).toMutableList()
+        if (token !in pending) {
+            pending.add(token)
+            prefs(ctx).edit().putString(PREF_MY_TOKENS_ACK_PENDING, JSONArray(pending).toString()).apply()
+        }
+    }
+
+    /** Final removal, once the server has confirmed (anon_delivery_ack_ok)
+     *  that our ack actually landed and its own pending/spent bookkeeping is
+     *  durable. See markMyTokenAckPending(). */
+    fun confirmMyTokenAcked(ctx: Context, token: String) = synchronized(lock) {
+        val pending = getMyTokensAckPending(ctx).toMutableList()
+        if (pending.remove(token)) {
+            prefs(ctx).edit().putString(PREF_MY_TOKENS_ACK_PENDING, JSONArray(pending).toString()).apply()
+        }
+    }
+
+    /** Overwrites MY_TOKENS with values restored from a backup — see
+     *  BackupManager.importBackup(). Found live 2026-08-30: a contact who
+     *  wasn't backed up keeps whatever tokens THIS device handed them
+     *  before the backup was taken (see PREF_CT_PREFIX from their side).
+     *  wipeCurrentIdentityData() clears PREF_MY_TOKENS on restore, and
+     *  ensureMyTokenPool()/freshTokensToShare() only ever mint brand-new
+     *  random values — so a restored device used to re-subscribe a
+     *  completely different token pool than the one it had when the
+     *  backup was made, permanently orphaning that contact's still-valid
+     *  stash (server reports "is_known=False" for tokens this device
+     *  itself issued, just before this device forgot they existed).
+     *  Restoring the exact same strings here means connect()'s normal
+     *  subscribe_tokens call re-registers them with the server exactly as
+     *  they were, and that contact's pre-backup tokens work again with no
+     *  resupply round-trip required. */
+    fun restoreMyTokens(ctx: Context, tokens: List<String>) = synchronized(lock) {
+        if (tokens.isEmpty()) return@synchronized
+        prefs(ctx).edit().putString(PREF_MY_TOKENS, JSONArray(tokens).toString()).apply()
     }
 
     fun tokensToShareWith(ctx: Context): List<String> = ensureMyTokenPool(ctx).take(BATCH_TO_SHARE)
@@ -123,15 +226,43 @@ object AnonTokenManager {
      *  Called specifically at the moment a contact needs tokens *now* — not
      *  a substitute for ensureMyTokenPool()'s normal lazy top-up, which
      *  still runs everywhere else (connect()'s subscribe, etc.) and is
-     *  fine for the non-emergency case. Capped at POOL_SIZE the same way
-     *  addContactTokens() caps an incoming batch — oldest tokens drop off
-     *  first. The caller is responsible for actually subscribing the
-     *  returned tokens with the server (subscribe_tokens) before handing
-     *  them to the contact, same as tokensToShareWith() always required. */
+     *  fine for the non-emergency case. The caller is responsible for
+     *  actually subscribing the returned tokens with the server
+     *  (subscribe_tokens) before handing them to the contact, same as
+     *  tokensToShareWith() always required.
+     *
+     *  Found live 2026-08-29 (second bug, same day): this used to cap the
+     *  combined list at POOL_SIZE via `.take(POOL_SIZE)`, silently dropping
+     *  whichever existing tokens fell off the tail — regardless of whether
+     *  a contact had already been handed one of them and hadn't spent it
+     *  yet. Unlike ensureMyTokenPool() (which only ever grows the pool,
+     *  never truncates), this blind cap meant: every resupply round could
+     *  evict up to BATCH_TO_SHARE still-outstanding tokens from MY OWN
+     *  subscribed set. A contact holding one of those evicted values gets
+     *  permanently stuck — server.py correctly reports "офлайн, сообщение в
+     *  очереди" (is_known=True, token_to_ws empty) forever, because I never
+     *  re-subscribe that exact value again (freshTokensToShare() always
+     *  mints brand-new random ones). Confirmed live via server-side
+     *  diagnostic logging: two tokens ("2ad192", "f14fb7") were consumed by
+     *  a contact from its locally-cached stash but never appeared in ANY
+     *  subscribe_tokens batch their owner sent — genuinely evicted, not a
+     *  timing race (a third case, "dd191e", WAS a real race — present in
+     *  the very next subscribe batch, self-healed a few seconds later via
+     *  the existing token_pending flush-on-resubscribe mechanism; that part
+     *  was always working correctly and needs no fix). Now: only spending
+     *  (consumeMyToken(), on actual use) ever shrinks the pool. A generous
+     *  hard ceiling (MAX_POOL_HARD_CAP) still exists purely as a runaway-
+     *  growth safety valve for a pathological repeated-resupply scenario —
+     *  it should essentially never be hit in normal use, and hitting it is
+     *  logged as a warning since it means real outstanding tokens are being
+     *  dropped again, just far less often. */
     fun freshTokensToShare(ctx: Context): List<String> = synchronized(lock) {
         val fresh = (1..BATCH_TO_SHARE).map { generateToken() }
-        val combined = (fresh + getMyTokens(ctx)).let {
-            if (it.size > POOL_SIZE) it.take(POOL_SIZE) else it
+        var combined = fresh + getMyTokens(ctx)
+        if (combined.size > MAX_POOL_HARD_CAP) {
+            Log.w(TAG, "DEBUG-TOKENLIFE freshTokensToShare: пул превысил аварийный потолок " +
+                "($MAX_POOL_HARD_CAP), обрезаю — часть ещё не потраченных токенов может стать недоступной")
+            combined = combined.take(MAX_POOL_HARD_CAP)
         }
         prefs(ctx).edit().putString(PREF_MY_TOKENS, JSONArray(combined).toString()).apply()
         Log.d(TAG, "DEBUG-TOKENLIFE freshTokensToShare: +${fresh.size} гарантированно новых токенов (пул стал ${combined.size})")
@@ -191,7 +322,23 @@ object AnonTokenManager {
         }
         existing.addAll(valid.filterNot { it in existing || it in spent })
 
-        val capped = if (existing.size > POOL_SIZE) existing.takeLast(POOL_SIZE) else existing
+        // Found live 2026-08-29 (same root cause as freshTokensToShare()'s
+        // fix — see its comment): capping at POOL_SIZE via takeLast() drops
+        // entries from the FRONT of the list, but consumeNextContactToken()
+        // also consumes from the front (tokens.removeAt(0), oldest-first) —
+        // so this used to specifically discard the tokens that were next in
+        // line to be spent, before they ever got a chance to be used. Less
+        // severe than the other bug (this doesn't leave a message stuck
+        // server-side, since consumeNextContactToken() only ever hands out
+        // what's actually still in local storage — it just wastes perfectly
+        // good already-received tokens and forces more frequent resupply
+        // than necessary), but same anti-pattern, fixed the same way: only
+        // trim under the same generous hard-cap safety valve, not routinely.
+        val capped = if (existing.size > MAX_POOL_HARD_CAP) {
+            Log.w(TAG, "DEBUG-TOKENLIFE addContactTokens($fingerprint): пул превысил аварийный потолок " +
+                "($MAX_POOL_HARD_CAP), обрезаю — часть ещё не использованных токенов может быть потеряна")
+            existing.takeLast(MAX_POOL_HARD_CAP)
+        } else existing
         prefs(ctx).edit()
             .putString("$PREF_CT_PREFIX$fingerprint", JSONArray(capped).toString())
             .apply()
@@ -211,7 +358,34 @@ object AnonTokenManager {
         prefs(ctx).edit()
             .remove("$PREF_CT_PREFIX$fingerprint")
             .remove("$PREF_CT_SPENT_PREFIX$fingerprint")
+            .remove("$PREF_CT_GIVEN_PREFIX$fingerprint")
             .apply()
+    }
+
+    /** Records that [tokens] (a batch just handed to [fingerprint] via
+     *  anon_message/mailbox) came from MY_TOKENS — call right after every
+     *  freshTokensToShare() that actually gets sent. Purely local; the
+     *  server never sees this mapping. Used by getTokensGivenTo() to know
+     *  what to list in an unsubscribe_tokens call if this contact is later
+     *  revoked (see revokeContactTokens() in MessengerService.kt). */
+    fun recordTokensGivenTo(ctx: Context, fingerprint: String, tokens: List<String>) = synchronized(lock) {
+        if (tokens.isEmpty()) return@synchronized
+        val key = "$PREF_CT_GIVEN_PREFIX$fingerprint"
+        val existing = getTokensGivenTo(ctx, fingerprint)
+        val combined = (existing + tokens).distinct().takeLast(GIVEN_HISTORY_CAP)
+        prefs(ctx).edit().putString(key, JSONArray(combined).toString()).apply()
+    }
+
+    fun getTokensGivenTo(ctx: Context, fingerprint: String): List<String> {
+        val json = prefs(ctx).getString("$PREF_CT_GIVEN_PREFIX$fingerprint", "[]") ?: "[]"
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    fun clearTokensGivenTo(ctx: Context, fingerprint: String) = synchronized(lock) {
+        prefs(ctx).edit().remove("$PREF_CT_GIVEN_PREFIX$fingerprint").apply()
     }
 
     /** Wipes MY OWN token pool (the tokens I generated and handed out for

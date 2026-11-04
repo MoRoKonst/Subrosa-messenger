@@ -109,6 +109,30 @@ object UserStorage {
             .apply()
     }
 
+    /** Raw password-hash accessor, used by BackupManager.importBackup() to
+     * preserve this device's existing login password across an in-app
+     * identity swap (restoring a different backup while already logged in).
+     * That flow's wipeCurrentIdentityData() call deletes this whole prefs
+     * file, and register() below is then called with the BACKUP's
+     * decryption password (correct for a genuinely fresh device, where
+     * there's no prior device password to preserve) — capturing the hash
+     * before the wipe and restoring it after, for the already-logged-in
+     * case, keeps the device's own unlock password from silently changing
+     * to the backup's password. See docs/TODO.md/SECURITY.md for the
+     * "recovery-code takeover window"-adjacent reasoning: the login
+     * password and the identity are conceptually separate, same as TOTP/
+     * panic-password/wipe-config already are. */
+    fun getPasswordHash(context: Context): String? {
+        return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME).getString(KEY_PASSWORD_HASH, null)
+    }
+
+    fun restorePasswordHash(context: Context, hash: String) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit()
+            .putString(KEY_PASSWORD_HASH, hash)
+            .apply()
+    }
+
     fun checkPassword(context: Context, password: String): Boolean {
         val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
         val savedHash = prefs.getString(KEY_PASSWORD_HASH, null) ?: return false
@@ -293,13 +317,31 @@ object UserStorage {
         prefs.edit().putBoolean("paranoid_mode", enabled).apply()
     }
 
-    fun getHoneyHash(context: Context): String =
+    fun getHoneyMac(context: Context): String =
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getString("honey_integrity_hash", "") ?: ""
 
-    fun setHoneyHash(context: Context, hash: String) {
+    fun setHoneyMac(context: Context, mac: String) {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
-            .edit().putString("honey_integrity_hash", hash).apply()
+            .edit().putString("honey_integrity_hash", mac).apply()
+    }
+
+    fun getHoneyFileName(context: Context): String =
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .getString("honey_file_name", "") ?: ""
+
+    fun setHoneyFileName(context: Context, name: String) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putString("honey_file_name", name).apply()
+    }
+
+    fun getHoneyMacKey(context: Context): String =
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .getString("honey_mac_key", "") ?: ""
+
+    fun setHoneyMacKey(context: Context, keyB64: String) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putString("honey_mac_key", keyB64).apply()
     }
 
     fun getAlertUrl(context: Context): String =
@@ -402,6 +444,48 @@ object UserStorage {
             .edit().putBoolean("hide_notif_content", hide).apply()
     }
 
+    // ─── Per-chat mute ────────────────────────────────────────────────────────
+    // 0 = not muted, Long.MAX_VALUE = muted indefinitely, otherwise an epoch-
+    // millis expiry. Computed on read (muteUntil > now) rather than tracked
+    // with a background unmute job — same idiom as ContactHealthManager's
+    // cooldown checks elsewhere in this codebase.
+
+    fun getContactMuteUntil(context: Context, contactId: String): Long =
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME).getLong("mute_contact_$contactId", 0L)
+
+    fun setContactMuteUntil(context: Context, contactId: String, until: Long) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putLong("mute_contact_$contactId", until).apply()
+    }
+
+    fun getGroupMuteUntil(context: Context, groupId: String): Long =
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME).getLong("mute_group_$groupId", 0L)
+
+    fun setGroupMuteUntil(context: Context, groupId: String, until: Long) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putLong("mute_group_$groupId", until).apply()
+    }
+
+    /** Independent of the duration-mute above: keeps notifications visible
+     *  for this chat but posts them to a sound/vibration-free channel (see
+     *  MessengerService.CHANNEL_ID_SILENT — Android O+ channels own sound,
+     *  not the individual notification). */
+    fun getContactMuteSound(context: Context, contactId: String): Boolean =
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME).getBoolean("mute_sound_contact_$contactId", false)
+
+    fun setContactMuteSound(context: Context, contactId: String, muted: Boolean) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putBoolean("mute_sound_contact_$contactId", muted).apply()
+    }
+
+    fun getGroupMuteSound(context: Context, groupId: String): Boolean =
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME).getBoolean("mute_sound_group_$groupId", false)
+
+    fun setGroupMuteSound(context: Context, groupId: String, muted: Boolean) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putBoolean("mute_sound_group_$groupId", muted).apply()
+    }
+
     fun getAutoLockTimeout(context: Context): Int {
         return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getInt("auto_lock_timeout", 0)
@@ -447,6 +531,21 @@ object UserStorage {
     fun setTorEnabled(context: Context, enabled: Boolean) {
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .edit().putBoolean("tor_enabled", enabled).apply()
+    }
+
+    // "Hide IP during calls" — forces WebRTC's ICE transport policy to
+    // RELAY-only (see CallManager.createPeerConnection()), so media never
+    // takes a direct/host/srflx path that would reveal either side's real
+    // IP to the other. Read fresh on every new PeerConnection, not cached —
+    // toggling mid-call intentionally does not migrate the active call.
+    fun getHideIpDuringCalls(context: Context): Boolean {
+        return EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .getBoolean("hide_ip_during_calls", false)
+    }
+
+    fun setHideIpDuringCalls(context: Context, enabled: Boolean) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putBoolean("hide_ip_during_calls", enabled).apply()
     }
 
     // Discretion (no visible sign Subrosa is running) vs. reliability (OEM

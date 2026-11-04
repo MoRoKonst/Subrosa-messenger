@@ -21,6 +21,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -40,6 +41,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.StartOffsetType
@@ -94,11 +96,20 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlin.math.absoluteValue
 
-val JetBrainsMono = FontFamily(
-    androidx.compose.ui.text.font.Font(R.font.jetbrainsmono_regular)
-)
+// Name kept for API stability (12 files reference this val across the
+// codebase) — no longer actually JetBrains Mono. App-wide font swap
+// 2026-09-22: body/UI text now uses Inter; see ui/theme/Type.kt for the
+// NotoSerifJP heading face used separately at specific call sites (app
+// name, large titles, profile, contact/group names).
+val JetBrainsMono = com.subrosa.messenger.ui.theme.Inter
 
 private const val CHAT_PAGE_SIZE = 50
+
+// S6-57 (external review 2026-09-06) -- product-level cap on voice-message
+// recording length; matches server.py's own MAX_VOICE_DURATION_SECONDS
+// exactly (see its comment there for the full byte-math derivation). Neither
+// client previously had any recording-length limit at all.
+private const val MAX_VOICE_RECORDING_SECONDS = 60
 
 data class Message(
     val id: String = UUID.randomUUID().toString(),
@@ -119,7 +130,8 @@ data class Message(
     val filePath: String? = null,
     val videoPath: String? = null,
     val videoDuration: Int = 0,
-    val isFailed: Boolean = false
+    val isFailed: Boolean = false,
+    val expiresAt: Long = 0L
 )
 
 fun compressImageForSend(bitmap: Bitmap): ByteArray {
@@ -236,7 +248,13 @@ fun ChatScreen(
     recipient: String,
     onBack: () -> Unit,
     onStartCall: ((isVideo: Boolean) -> Unit)? = null,
-    onVerifyKey: () -> Unit = {}
+    onOpenContactInfo: () -> Unit = {},
+    // Set when navigating here from ContactInfoScreen's "Search" row — the
+    // search UI itself has to live here (it filters this screen's own
+    // message list), so that row re-enters this screen with it pre-armed
+    // instead of duplicating a message list in the profile screen.
+    initialSearchMode: Boolean = false,
+    onSearchModeConsumed: () -> Unit = {}
 ) {
     androidx.activity.compose.BackHandler { onBack() }
     var isRecording by remember { mutableStateOf(false) }
@@ -245,6 +263,23 @@ fun ChatScreen(
     var recordingSeconds by remember { mutableStateOf(0) }
     var showAttachMenu by remember { mutableStateOf(false) }
     var playingVoiceId by remember { mutableStateOf<String?>(null) }
+    // Live playback position (ms) for whichever voice bubble is currently
+    // playing, polled below -- drives the waveform's played/unplayed split
+    // and lets the user drag-seek mid-playback. Global speed toggle
+    // (1x/2x, pitch-preserving via AudioHelper.setSpeed -- see its own
+    // comment) mirrors Telegram: one persistent choice, not per-message.
+    var voicePlaybackMs by remember { mutableStateOf(0) }
+    var voiceSpeed by remember { mutableStateOf(1f) }
+    LaunchedEffect(playingVoiceId) {
+        if (playingVoiceId != null) {
+            while (playingVoiceId != null && AudioHelper.isPlaying()) {
+                voicePlaybackMs = AudioHelper.getCurrentPositionMs()
+                delay(80)
+            }
+        } else {
+            voicePlaybackMs = 0
+        }
+    }
     var playingVideoId by remember { mutableStateOf<String?>(null) }
     var showKeyWarning by remember { mutableStateOf(false) }
     var showRevokedWarning by remember { mutableStateOf(false) }
@@ -381,11 +416,15 @@ fun ChatScreen(
 
     var fullscreenImageBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    var searchMode by remember { mutableStateOf(false) }
+    var searchMode by remember { mutableStateOf(initialSearchMode) }
     var searchQuery by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { if (initialSearchMode) onSearchModeConsumed() }
 
     var disappearTimerSecs by remember { mutableStateOf(0L) }
-    var showDisappearDialog by remember { mutableStateOf(false) }
+
+    // Local-only auto-delete (not synced to the peer) — distinct from
+    // disappearTimerSecs above. Ported from Desktop for parity.
+    var autoDeleteSecs by remember { mutableStateOf(0L) }
 
     var showVideoCircleRecorder by remember { mutableStateOf(false) }
 
@@ -418,7 +457,8 @@ fun ChatScreen(
             fileName = msg.fileName,
             filePath = msg.filePath,
             videoPath = msg.videoPath,
-            videoDuration = msg.videoDuration
+            videoDuration = msg.videoDuration,
+            expiresAt = msg.expiresAt
         )
     }
 
@@ -558,6 +598,11 @@ fun ChatScreen(
                     withContext(Dispatchers.Main) { disappearTimerSecs = timer }
                 }
 
+                scope.launch(Dispatchers.IO) {
+                    val secs = ChatStorage.getAutoDelete(context, userId, recipient)
+                    withContext(Dispatchers.Main) { autoDeleteSecs = secs }
+                }
+
                 service.onMessageDeleted = { from, messageId ->
                     if (from == recipient) {
                         val idx = messages.indexOfFirst { it.id == messageId }
@@ -567,6 +612,32 @@ fun ChatScreen(
 
                 service.onDisappearTimerChanged = { from, seconds ->
                     if (from == recipient) disappearTimerSecs = seconds
+                }
+
+                // Disappearing-message countdown must start on RECEIPT for
+                // incoming messages too, mirroring the send-side stamp —
+                // otherwise a peer's message only ever disappears on THEIR
+                // device. Was missing entirely for every message type before
+                // this fix. Also schedules the actual removal (mirroring the
+                // own-message send path's deliveryTimeoutJob-style scheduled
+                // coroutine below) — merely stamping expiresAt isn't enough
+                // on its own, since ChatStorage.loadMessages() only skips
+                // already-expired rows on the *next* load; nothing else was
+                // watching the in-memory `messages` list for one going stale
+                // while the chat stays open.
+                fun incomingExpiresAt() = if (disappearTimerSecs > 0L)
+                    System.currentTimeMillis() + disappearTimerSecs * 1000L else 0L
+
+                fun scheduleIncomingExpiry(msgId: String, expiresAt: Long) {
+                    if (expiresAt <= 0L) return
+                    scope.launch {
+                        delay(expiresAt - System.currentTimeMillis())
+                        val idx = messages.indexOfFirst { it.id == msgId }
+                        if (idx != -1) messages.removeAt(idx)
+                        withContext(Dispatchers.IO) {
+                            ChatStorage.deleteMessage(context, userId, recipient, msgId)
+                        }
+                    }
                 }
 
                 service.onMessageReceived = { from, _ ->
@@ -584,6 +655,16 @@ fun ChatScreen(
                                 messages.clear()
                                 history.subList(displayStart, history.size).forEach { msg ->
                                     messages.add(storedToMessage(msg, historyMap))
+                                    // Reload-based path (text messages), unlike
+                                    // the media handlers below which add just
+                                    // one message at a time — schedule expiry
+                                    // for every not-yet-expired row on each
+                                    // reload. Harmless if called again for an
+                                    // already-scheduled message: the second
+                                    // coroutine's removeAt/deleteMessage calls
+                                    // are no-ops against an id that's already
+                                    // gone.
+                                    if (msg.expiresAt > 0L) scheduleIncomingExpiry(msg.id, msg.expiresAt)
                                 }
                                 if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
                                 history.lastOrNull { !it.isOwn }?.let {
@@ -625,9 +706,11 @@ fun ChatScreen(
                         val stream = java.io.ByteArrayOutputStream()
                         stream.write(compressImageForSend(bitmap))
                         SecureFileStorage.write(context, imageFile, stream.toByteArray())
-                        messages.add(Message(id = imageId, text = s.chatAttachPhoto, isOwn = false, imageBitmap = bitmap))
+                        val expiresAt = incomingExpiresAt()
+                        messages.add(Message(id = imageId, text = s.chatAttachPhoto, isOwn = false, imageBitmap = bitmap, expiresAt = expiresAt))
                         ChatStorage.saveOrUpdateMessage(context, userId, recipient,
-                            ChatStorage.StoredMessage(id = imageId, text = s.chatAttachPhoto, isOwn = false, imagePath = imageFile.absolutePath))
+                            ChatStorage.StoredMessage(id = imageId, text = s.chatAttachPhoto, isOwn = false, imagePath = imageFile.absolutePath, expiresAt = expiresAt))
+                        scheduleIncomingExpiry(imageId, expiresAt)
                     } catch (e: Exception) {
                         android.util.Log.e("ChatScreen", "onImageReceived error: ${e.message}")
                     }
@@ -636,9 +719,11 @@ fun ChatScreen(
                 service.onVoiceReceived = { voiceId, voiceFile, duration ->
                     try {
                         SoundManager.playMessageReceived()
-                        messages.add(Message(id = voiceId, text = "🎤 Голосовое сообщение", isOwn = false, voiceFile = voiceFile, voiceDuration = duration))
+                        val expiresAt = incomingExpiresAt()
+                        messages.add(Message(id = voiceId, text = "Голосовое сообщение", isOwn = false, voiceFile = voiceFile, voiceDuration = duration, expiresAt = expiresAt))
                         ChatStorage.saveOrUpdateMessage(context, userId, recipient,
-                            ChatStorage.StoredMessage(id = voiceId, text = "🎤 Голосовое сообщение", isOwn = false, voicePath = voiceFile.absolutePath, voiceDuration = duration))
+                            ChatStorage.StoredMessage(id = voiceId, text = "Голосовое сообщение", isOwn = false, voicePath = voiceFile.absolutePath, voiceDuration = duration, expiresAt = expiresAt))
+                        scheduleIncomingExpiry(voiceId, expiresAt)
                     } catch (e: Exception) {
                         android.util.Log.e("ChatScreen", "onVoiceReceived error: ${e.message}")
                     }
@@ -647,9 +732,11 @@ fun ChatScreen(
                 service.onFileReceived = { fileId, file, fileName ->
                     try {
                         SoundManager.playMessageReceived()
-                        messages.add(Message(id = fileId, text = "📄 $fileName", isOwn = false))
+                        val expiresAt = incomingExpiresAt()
+                        messages.add(Message(id = fileId, text = fileName, isOwn = false, expiresAt = expiresAt))
                         ChatStorage.saveOrUpdateMessage(context, userId, recipient,
-                            ChatStorage.StoredMessage(id = fileId, text = "📄 $fileName", isOwn = false, filePath = file.absolutePath, fileName = fileName))
+                            ChatStorage.StoredMessage(id = fileId, text = fileName, isOwn = false, filePath = file.absolutePath, fileName = fileName, expiresAt = expiresAt))
+                        scheduleIncomingExpiry(fileId, expiresAt)
                     } catch (e: Exception) {
                         android.util.Log.e("ChatScreen", "onFileReceived error: ${e.message}")
                     }
@@ -658,21 +745,25 @@ fun ChatScreen(
                 service.onVideoReceived = { videoId, file, duration ->
                     try {
                         SoundManager.playMessageReceived()
+                        val expiresAt = incomingExpiresAt()
                         messages.add(Message(
                             id = videoId,
-                            text = "🎥 Видеосообщение",
+                            text = "Видеосообщение",
                             isOwn = false,
                             videoPath = file.absolutePath,
-                            videoDuration = duration
+                            videoDuration = duration,
+                            expiresAt = expiresAt
                         ))
                         ChatStorage.saveOrUpdateMessage(context, userId, recipient,
                             ChatStorage.StoredMessage(
                                 id = videoId,
-                                text = "🎥 Видеосообщение",
+                                text = "Видеосообщение",
                                 isOwn = false,
                                 videoPath = file.absolutePath,
-                                videoDuration = duration
+                                videoDuration = duration,
+                                expiresAt = expiresAt
                             ))
+                        scheduleIncomingExpiry(videoId, expiresAt)
                         scope.launch { listState.animateScrollToItem(messages.size - 1) }
                     } catch (e: Exception) {
                         android.util.Log.e("ChatScreen", "onVideoReceived error: ${e.message}")
@@ -703,6 +794,24 @@ fun ChatScreen(
         MainActivity.chatListVersion.value++
         val draft = ChatStorage.loadDraft(context, userId, recipient)
         if (draft.isNotBlank()) inputText = draft
+    }
+
+    // Periodically remove messages older than autoDeleteSecs from THIS
+    // device only (not synced to the peer) — mirrors Desktop's identical
+    // sweep in ChatScreen.kt.
+    LaunchedEffect(autoDeleteSecs) {
+        if (autoDeleteSecs <= 0L) return@LaunchedEffect
+        while (true) {
+            val cutoff = System.currentTimeMillis() - autoDeleteSecs * 1000L
+            val expired = messages.filter { it.timestamp < cutoff }
+            expired.forEach { msg ->
+                messages.removeAll { it.id == msg.id }
+                withContext(Dispatchers.IO) {
+                    ChatStorage.deleteMessage(context, userId, recipient, msg.id)
+                }
+            }
+            delay(60_000L)
+        }
     }
 
     // Polls rather than hooking onDeliveredReceived directly — that callback
@@ -796,14 +905,6 @@ fun ChatScreen(
                         return@collect
                     }
 
-                    val fileIcon = when {
-                        mimeType.startsWith("image/") -> "🖼️"
-                        mimeType.startsWith("video/") -> "🎬"
-                        mimeType == "application/pdf" -> "📕"
-                        mimeType.contains("word") || mimeType.contains("document") -> "📘"
-                        else -> "📄"
-                    }
-
                     if (!isOnline) {
                         android.widget.Toast.makeText(context, s.chatMediaOffline, android.widget.Toast.LENGTH_SHORT).show()
                         return@collect
@@ -824,7 +925,7 @@ fun ChatScreen(
                         writeBytes(bytes)
                     }
 
-                    val displayText = "$fileIcon $fileName"
+                    val displayText = fileName
                     messages.add(Message(
                         id = fileId,
                         text = displayText,
@@ -887,15 +988,18 @@ fun ChatScreen(
                         onValueChange = { searchQuery = it },
                         modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
                         singleLine = true,
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, color = Color.White),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp, color = c.textPrimary),
                         cursorBrush = androidx.compose.ui.graphics.SolidColor(c.accent),
                         decorationBox = { inner ->
-                            if (searchQuery.isEmpty()) Text(s.chatSearchPlaceholder, fontSize = 16.sp, color = Color(0x88FFFFFF), fontFamily = JetBrainsMono)
+                            if (searchQuery.isEmpty()) Text(s.chatSearchPlaceholder, fontSize = 18.sp, color = c.textPrimary.copy(alpha = 0.53f), fontFamily = JetBrainsMono)
                             inner()
                         }
                     )
                 } else {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable(onClick = onOpenContactInfo)
+                    ) {
                         val recipientName = ChatStorage.getContactName(context, recipient)
                         val avatarColor = remember(recipientName) {
                             listOf(c.primaryBlue, Color(0xFFE74C3C), Color(0xFF27AE60),
@@ -915,7 +1019,7 @@ fun ChatScreen(
                                 Box(contentAlignment = Alignment.Center) {
                                     Text(
                                         text = if (recipientName.isNotEmpty()) recipientName.first().uppercaseChar().toString() else "?",
-                                        fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White
+                                        fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White
                                     )
                                 }
                             }
@@ -968,7 +1072,7 @@ fun ChatScreen(
                                     }
                                 )
                             }
-                            Text(recipientName, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = Color.White)
+                            Text(recipientName, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, color = c.textPrimary, fontFamily = com.subrosa.messenger.ui.theme.NotoSerifJP)
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 val statusKey = when {
                                     isTyping -> "typing"
@@ -989,7 +1093,7 @@ fun ChatScreen(
                                         ) {
                                             Text(
                                                 s.chatTyping.trimEnd('.', '…', ' '),
-                                                fontSize = 14.sp,
+                                                fontSize = 16.sp,
                                                 color = c.accent,
                                                 fontFamily = JetBrainsMono
                                             )
@@ -998,7 +1102,7 @@ fun ChatScreen(
                                         }
                                         else -> Text(
                                             text = if (key == "online") s.chatOnline else s.chatOffline,
-                                            fontSize = 13.sp,
+                                            fontSize = 15.sp,
                                             color = if (key == "online") c.accent else c.textPrimary.copy(alpha = 0.5f)
                                         )
                                     }
@@ -1008,9 +1112,9 @@ fun ChatScreen(
                                         3600L -> s.chatDisappear1hShort
                                         86400L -> s.chatDisappear24hShort
                                         604800L -> s.chatDisappear7dShort
-                                        else -> " · ⏱"
+                                        else -> " · ${disappearTimerSecs / 3600}ч"
                                     }
-                                    Text(label, fontSize = 12.sp, color = c.accent)
+                                    Text(label, fontSize = 14.sp, color = c.accent)
                                 }
                             }
                         }
@@ -1021,63 +1125,38 @@ fun ChatScreen(
                 IconButton(onClick = {
                     if (searchMode) { searchMode = false; searchQuery = "" } else onBack()
                 }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.back)
+                    Icon(painterResource(R.drawable.ic_back_arrow), contentDescription = s.back)
                 }
             },
             actions = {
-                IconButton(onClick = { searchMode = !searchMode; if (!searchMode) searchQuery = "" }) {
+                // Search and the disappearing-messages timer moved into
+                // ContactInfoScreen (reached via the header tap above) —
+                // only the call buttons stay up here now, per explicit
+                // request to keep the chat top bar down to just those two.
+                IconButton(onClick = {
+                    pendingCallIsVideo = false
+                    callPermissionLauncher.launch(arrayOf(android.Manifest.permission.RECORD_AUDIO))
+                }) {
                     Icon(
-                        painter = painterResource(if (searchMode) R.drawable.ic_close else R.drawable.ic_search),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp)
+                        painterResource(R.drawable.ic_sound_call),
+                        contentDescription = s.chatAudioCall,
+                        tint = c.textPrimary,
+                        modifier = Modifier.size(28.dp)
                     )
                 }
-                IconButton(onClick = { showDisappearDialog = true }) {
+                IconButton(onClick = {
+                    pendingCallIsVideo = true
+                    callPermissionLauncher.launch(arrayOf(
+                        android.Manifest.permission.RECORD_AUDIO,
+                        android.Manifest.permission.CAMERA
+                    ))
+                }) {
                     Icon(
-                        painter = painterResource(R.drawable.ic_timer),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp)
+                        painterResource(R.drawable.ic_video_call),
+                        contentDescription = s.chatVideoCall,
+                        tint = c.textPrimary,
+                        modifier = Modifier.size(28.dp)
                     )
-                }
-                var showOverflowMenu by remember { mutableStateOf(false) }
-                Box {
-                    IconButton(onClick = { showOverflowMenu = true }) {
-                        Icon(Icons.Default.MoreVert, s.chatMenu, tint = Color.White)
-                    }
-                    DropdownMenu(
-                        expanded = showOverflowMenu,
-                        onDismissRequest = { showOverflowMenu = false },
-                        containerColor = c.dialog
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text(s.chatAudioCall, color = Color.White, fontFamily = JetBrainsMono) },
-                            onClick = {
-                                showOverflowMenu = false
-                                pendingCallIsVideo = false
-                                callPermissionLauncher.launch(arrayOf(android.Manifest.permission.RECORD_AUDIO))
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(s.chatVideoCall, color = Color.White, fontFamily = JetBrainsMono) },
-                            onClick = {
-                                showOverflowMenu = false
-                                pendingCallIsVideo = true
-                                callPermissionLauncher.launch(arrayOf(
-                                    android.Manifest.permission.RECORD_AUDIO,
-                                    android.Manifest.permission.CAMERA
-                                ))
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(s.chatVerifyAction, color = Color.White, fontFamily = JetBrainsMono) },
-                            onClick = {
-                                showOverflowMenu = false
-                                onVerifyKey()
-                            }
-                        )
-                    }
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
@@ -1091,11 +1170,12 @@ fun ChatScreen(
                     .padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("⚠️", fontSize = 14.sp)
+                Icon(painterResource(R.drawable.ic_warning), contentDescription = null,
+                    tint = Color(0xFFFFAA44), modifier = Modifier.size(14.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = s.chatDirectConnection,
-                    fontSize = 12.sp,
+                    fontSize = 14.sp,
                     color = Color(0xFFFFAA44),
                     fontFamily = JetBrainsMono,
                     modifier = Modifier.weight(1f)
@@ -1109,7 +1189,7 @@ fun ChatScreen(
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Close,
+                        painter = painterResource(R.drawable.ic_close),
                         contentDescription = null,
                         tint = Color(0xFFFFAA44),
                         modifier = Modifier.size(16.dp)
@@ -1140,7 +1220,7 @@ fun ChatScreen(
                             )
                         } else {
                             TextButton(onClick = { loadMoreHistory() }) {
-                                Text(s.chatLoadEarlier, color = c.accent, fontFamily = JetBrainsMono, fontSize = 13.sp)
+                                Text(s.chatLoadEarlier, color = c.accent, fontFamily = JetBrainsMono, fontSize = 15.sp)
                             }
                         }
                     }
@@ -1171,6 +1251,17 @@ fun ChatScreen(
                         playingVoiceId = playingVoiceId,
                         onVoicePlay = { id -> playingVoiceId = id },
                         onVoiceStop = { playingVoiceId = null },
+                        voicePlaybackMs = voicePlaybackMs,
+                        voiceSpeed = voiceSpeed,
+                        onVoiceSeek = { ms -> AudioHelper.seekTo(ms); voicePlaybackMs = ms },
+                        onVoiceSpeedToggle = {
+                            voiceSpeed = when (voiceSpeed) {
+                                1f -> 1.5f
+                                1.5f -> 2f
+                                else -> 1f
+                            }
+                            if (playingVoiceId != null) AudioHelper.setSpeed(voiceSpeed)
+                        },
                         playingVideoId = playingVideoId,
                         onVideoPlay = { id -> playingVideoId = id },
                         onVideoStop = { playingVideoId = null },
@@ -1189,10 +1280,10 @@ fun ChatScreen(
                 FloatingActionButton(
                     onClick = { scope.launch { listState.animateScrollToItem(messages.size - 1) } },
                     containerColor = c.primaryBlue,
-                    contentColor = Color.White,
+                    contentColor = if (c.isDark) Color.White else c.textPrimary,
                     modifier = Modifier.size(40.dp)
                 ) {
-                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(22.dp))
+                    Icon(painterResource(R.drawable.ic_arrow_down), contentDescription = null, modifier = Modifier.size(22.dp))
                 }
             }
         }
@@ -1209,12 +1300,12 @@ fun ChatScreen(
                         TextButton(onClick = {
                             replyToMessage = ctxMsg
                             contextMenuMessage = null
-                        }) { Text(s.chatContextReply, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                        }) { Text(s.chatContextReply, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 18.sp) }
                         if (!ctxMsg.isSystem) {
                             TextButton(onClick = {
                                 showForwardDialog = ctxMsg
                                 contextMenuMessage = null
-                            }) { Text("Переслать", color = Color(0xFF90CAF9), fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                            }) { Text("Переслать", color = Color(0xFF90CAF9), fontFamily = JetBrainsMono, fontSize = 18.sp) }
                         }
                         if (ctxMsg.imageBitmap != null) {
                             TextButton(onClick = {
@@ -1236,7 +1327,7 @@ fun ChatScreen(
                                     } catch (_: Exception) {}
                                 }
                                 contextMenuMessage = null
-                            }) { Text(s.chatSavePhoto, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                            }) { Text(s.chatSavePhoto, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 18.sp) }
                         }
                         if (ctxMsg.voiceFile == null && ctxMsg.imageBitmap == null &&
                             ctxMsg.text.isNotEmpty() && !ctxMsg.isSystem) {
@@ -1253,13 +1344,13 @@ fun ChatScreen(
                                         cm.setPrimaryClip(ClipData.newPlainText("", ""))
                                     }
                                 }
-                            }) { Text(s.chatContextCopy, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                            }) { Text(s.chatContextCopy, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 18.sp) }
                         }
                         if (!ctxMsg.isOwn) {
                             TextButton(onClick = {
                                 showReactionPicker = ctxMsg
                                 contextMenuMessage = null
-                            }) { Text(s.chatContextReaction, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                            }) { Text(s.chatContextReaction, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 18.sp) }
                         }
                         if (ctxMsg.isOwn && ctxMsg.text.isNotEmpty() && ctxMsg.voiceFile == null) {
                             TextButton(onClick = {
@@ -1267,7 +1358,7 @@ fun ChatScreen(
                                 editingMessageId = ctxMsg.id
                                 inputText = ctxMsg.text
                                 contextMenuMessage = null
-                            }) { Text(s.chatContextEdit, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                            }) { Text(s.chatContextEdit, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 18.sp) }
                         }
                         if (ctxMsg.isOwn && ctxMsg.isFailed && ctxMsg.text.isNotEmpty()) {
                             TextButton(onClick = {
@@ -1294,7 +1385,7 @@ fun ChatScreen(
                                 }
                                 pendingDeliveryJobs[msgId] = deliveryTimeoutJob
                                 contextMenuMessage = null
-                            }) { Text(s.chatContextResend, color = c.accent, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                            }) { Text(s.chatContextResend, color = c.accent, fontFamily = JetBrainsMono, fontSize = 18.sp) }
                         }
                         TextButton(onClick = {
                             val idx = messages.indexOfFirst { it.id == ctxMsg.id }
@@ -1303,7 +1394,7 @@ fun ChatScreen(
                                 ChatStorage.deleteMessage(context, userId, recipient, ctxMsg.id)
                             }
                             contextMenuMessage = null
-                        }) { Text(s.chatContextDeleteOwn, color = Color(0xFFFF6B6B), fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                        }) { Text(s.chatContextDeleteOwn, color = Color(0xFFFF6B6B), fontFamily = JetBrainsMono, fontSize = 18.sp) }
                         if (ctxMsg.isOwn) {
                             TextButton(onClick = {
                                 val idx = messages.indexOfFirst { it.id == ctxMsg.id }
@@ -1313,7 +1404,7 @@ fun ChatScreen(
                                 }
                                 messengerService?.sendDeleteMessage(recipient, ctxMsg.id)
                                 contextMenuMessage = null
-                            }) { Text(s.chatContextDeleteAll, color = c.error, fontFamily = JetBrainsMono, fontSize = 16.sp) }
+                            }) { Text(s.chatContextDeleteAll, color = c.error, fontFamily = JetBrainsMono, fontSize = 18.sp) }
                         }
                     }
                 },
@@ -1347,11 +1438,11 @@ fun ChatScreen(
             AlertDialog(
                 onDismissRequest = { showReactionPicker = null },
                 containerColor = c.dialog,
-                title = { Text(s.chatPickReaction, color = Color.White, fontFamily = JetBrainsMono) },
+                title = { Text(s.chatPickReaction, color = c.textPrimary, fontFamily = JetBrainsMono) },
                 text = {
                     Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
                         listOf("❤️", "👍", "😂", "😮", "😢", "🔥").forEach { emoji ->
-                            Text(text = emoji, fontSize = 32.sp,
+                            Text(text = emoji, fontSize = 34.sp,
                                 modifier = Modifier.clickable {
                                     val msg = showReactionPicker!!
                                     val index = messages.indexOf(msg)
@@ -1371,44 +1462,6 @@ fun ChatScreen(
             )
         }
 
-        if (showDisappearDialog) {
-            AlertDialog(
-                onDismissRequest = { showDisappearDialog = false },
-                containerColor = c.dialog,
-                title = { Text(s.chatDisappearTitle, color = Color.White, fontFamily = JetBrainsMono) },
-                text = {
-                    Column {
-                        listOf(
-                            0L to s.chatDisappearOff,
-                            3600L to s.chatDisappear1h,
-                            86400L to s.chatDisappear24h,
-                            604800L to s.chatDisappear7d
-                        ).forEach { (secs, label) ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().clickable {
-                                    disappearTimerSecs = secs
-                                    scope.launch(Dispatchers.IO) {
-                                        ChatStorage.setDisappearTimer(context, userId, recipient, secs)
-                                    }
-                                    messengerService?.sendDisappearTimer(recipient, secs)
-                                    showDisappearDialog = false
-                                }.padding(vertical = 12.dp, horizontal = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = disappearTimerSecs == secs,
-                                    onClick = null,
-                                    colors = RadioButtonDefaults.colors(selectedColor = c.accent)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(label, color = Color.White, fontFamily = JetBrainsMono, fontSize = 15.sp)
-                            }
-                        }
-                    }
-                },
-                confirmButton = {}
-            )
-        }
 
         Box {
         androidx.compose.animation.AnimatedVisibility(
@@ -1425,7 +1478,7 @@ fun ChatScreen(
             ) {
                 Text(
                     text = "${ChatStorage.getContactName(context, recipient)} ${s.chatTyping}${".".repeat(typingDots)}",
-                    fontSize = 13.sp,
+                    fontSize = 15.sp,
                     color = c.textPrimary.copy(alpha = 0.6f),
                     fontFamily = JetBrainsMono
                 )
@@ -1448,14 +1501,14 @@ fun ChatScreen(
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(s.chatReplyPreview, fontSize = 11.sp, color = c.accent, fontFamily = JetBrainsMono)
-                    Text(replyToMessage!!.text.take(60), fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = JetBrainsMono)
+                    Text(s.chatReplyPreview, fontSize = 13.sp, color = c.accent, fontFamily = JetBrainsMono)
+                    Text(replyToMessage!!.text.take(60), fontSize = 14.sp, color = c.textPrimary.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = JetBrainsMono)
                 }
                 IconButton(onClick = { replyToMessage = null }) {
                     Icon(
                         painter = painterResource(R.drawable.ic_close),
                         contentDescription = null,
-                        tint = Color.Gray,
+                        tint = c.textPrimary.copy(alpha = 0.5f),
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -1464,9 +1517,9 @@ fun ChatScreen(
 
         if (isEditMode) {
             Row(modifier = Modifier.fillMaxWidth().background(c.topBar).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(s.chatEditing, fontSize = 12.sp, color = c.primaryBlue, modifier = Modifier.weight(1f), fontFamily = JetBrainsMono)
+                Text(s.chatEditing, fontSize = 14.sp, color = c.primaryBlue, modifier = Modifier.weight(1f), fontFamily = JetBrainsMono)
                 TextButton(onClick = { isEditMode = false; editingMessageId = null; inputText = "" }) {
-                    Text(s.cancel, color = Color.Gray, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                    Text(s.cancel, color = c.textPrimary.copy(alpha = 0.5f), fontSize = 14.sp, fontFamily = JetBrainsMono)
                 }
             }
         }
@@ -1474,7 +1527,7 @@ fun ChatScreen(
         if (showAttachMenu) {
             AlertDialog(
                 onDismissRequest = { showAttachMenu = false },
-                title = { Text(s.chatAttach, color = Color.White, fontSize = 20.sp, fontFamily = JetBrainsMono) },
+                title = { Text(s.chatAttach, color = c.textPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono) },
                 text = {
                     Column {
                         TextButton(onClick = {
@@ -1489,7 +1542,7 @@ fun ChatScreen(
                                     MainActivity.PICK_IMAGE_REQUEST
                                 )
                             } catch (e: Exception) {}
-                        }) { Text(s.chatAttachMedia, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono) }
+                        }) { Text(s.chatAttachMedia, color = c.textPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono) }
 
                         TextButton(onClick = {
                             showAttachMenu = false
@@ -1499,12 +1552,12 @@ fun ChatScreen(
                                     MainActivity.PICK_FILE_REQUEST
                                 )
                             } catch (e: Exception) {}
-                        }) { Text(s.chatAttachFile, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono) }
+                        }) { Text(s.chatAttachFile, color = c.textPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono) }
 
                         TextButton(onClick = {
                             showAttachMenu = false
                             showGeoConfirm = true
-                        }) { Text(s.chatGeo, color = Color.White, fontSize = 18.sp, fontFamily = JetBrainsMono) }
+                        }) { Text(s.chatGeo, color = c.textPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono) }
                     }
                 },
                 confirmButton = {},
@@ -1516,7 +1569,7 @@ fun ChatScreen(
             AlertDialog(
                 onDismissRequest = { showGeoConfirm = false },
                 title = { Text(s.chatGeoConfirmTitle, color = c.textPrimary, fontFamily = JetBrainsMono) },
-                text = { Text(s.chatGeoConfirmText, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 14.sp) },
+                text = { Text(s.chatGeoConfirmText, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 16.sp) },
                 confirmButton = {
                     TextButton(onClick = {
                         showGeoConfirm = false
@@ -1533,19 +1586,53 @@ fun ChatScreen(
             )
         }
 
+        // S6-57, STEP 9 (external review 2026-09-06) -- neither client
+        // previously capped recording duration at all; the server now
+        // enforces MAX_VOICE_DURATION_SECONDS as a hard protocol bound (see
+        // server.py's own comment for the byte-math derivation), so a user
+        // must never be able to create a voice message the server will
+        // later reject. Auto-stops and sends exactly at the cap rather than
+        // silently truncating or discarding what was already recorded.
+        fun finishRecordingAndSend() {
+            recordingFile?.let { file ->
+                AudioHelper.stopRecording()
+                // Found live: this used to be (file.length() / 1000).toInt() --
+                // assumed 1000 bytes/sec, but the actual recording bitrate is
+                // roughly double that, so a real 30s recording reported as ~59s.
+                // recordingSeconds already tracks real elapsed time (it drives
+                // the live "0:30" counter shown above during recording) -- just
+                // wasn't being used here at all.
+                val duration = recordingSeconds
+                val voiceId = UUID.randomUUID().toString()
+                val base64 = AudioHelper.encodeToBase64(file)
+                messengerService?.sendVoice(recipient, base64, voiceId, duration)
+                val encFile = SecureFileStorage.blobFile(context.filesDir, voiceId)
+                SecureFileStorage.write(context, encFile, file.readBytes())
+                file.delete()
+                messages.add(Message(id = voiceId, text = "Голосовое сообщение", isOwn = true, voiceFile = encFile, voiceDuration = duration))
+                ChatStorage.saveOrUpdateMessage(context, userId, recipient,
+                    ChatStorage.StoredMessage(id = voiceId, text = "Голосовое сообщение", isOwn = true, voicePath = encFile.absolutePath, voiceDuration = duration))
+                isRecording = false
+                recordingFile = null
+            }
+        }
+
         LaunchedEffect(isRecording) {
             if (isRecording) {
                 recordingSeconds = 0
                 while (isRecording) {
                     delay(1000L)
                     recordingSeconds++
+                    if (recordingSeconds >= MAX_VOICE_RECORDING_SECONDS) {
+                        finishRecordingAndSend()
+                    }
                 }
             } else {
                 recordingSeconds = 0
             }
         }
 
-        HorizontalDivider(color = Color.White.copy(alpha = 0.06f), thickness = 1.dp)
+        HorizontalDivider(color = c.textPrimary.copy(alpha = 0.06f), thickness = 1.dp)
         AnimatedContent(
             targetState = isRecording,
             transitionSpec = {
@@ -1579,7 +1666,7 @@ fun ChatScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                            painter = painterResource(R.drawable.ic_close),
                             contentDescription = "Отменить",
                             tint = Color(0xFFFF5555),
                             modifier = Modifier.size(20.dp)
@@ -1611,8 +1698,8 @@ fun ChatScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             text = String.format("%d:%02d", recordingSeconds / 60, recordingSeconds % 60),
-                            color = Color.White,
-                            fontSize = 15.sp,
+                            color = c.textPrimary,
+                            fontSize = 17.sp,
                             fontFamily = JetBrainsMono,
                             fontWeight = FontWeight.Medium
                         )
@@ -1622,29 +1709,7 @@ fun ChatScreen(
 
                     PortholeSendButton(
                         enabled = true,
-                        onClick = {
-                            recordingFile?.let { file ->
-                                AudioHelper.stopRecording()
-                                // Found live: this used to be (file.length() / 1000).toInt() --
-                                // assumed 1000 bytes/sec, but the actual recording bitrate is
-                                // roughly double that, so a real 30s recording reported as ~59s.
-                                // recordingSeconds already tracks real elapsed time (it drives
-                                // the live "0:30" counter shown above during recording) -- just
-                                // wasn't being used here at all.
-                                val duration = recordingSeconds
-                                val voiceId = UUID.randomUUID().toString()
-                                val base64 = AudioHelper.encodeToBase64(file)
-                                messengerService?.sendVoice(recipient, base64, voiceId, duration)
-                                val encFile = SecureFileStorage.blobFile(context.filesDir, voiceId)
-                                SecureFileStorage.write(context, encFile, file.readBytes())
-                                file.delete()
-                                messages.add(Message(id = voiceId, text = "🎤 Голосовое сообщение", isOwn = true, voiceFile = encFile, voiceDuration = duration))
-                                ChatStorage.saveOrUpdateMessage(context, userId, recipient,
-                                    ChatStorage.StoredMessage(id = voiceId, text = "🎤 Голосовое сообщение", isOwn = true, voicePath = encFile.absolutePath, voiceDuration = duration))
-                                isRecording = false
-                                recordingFile = null
-                            }
-                        },
+                        onClick = { finishRecordingAndSend() },
                         size = 44
                     )
                 }
@@ -1703,7 +1768,7 @@ fun ChatScreen(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                             maxLines = 4,
                             readOnly = !channelReady,
-                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, color = Color.White),
+                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 17.sp, color = c.textPrimary),
                             cursorBrush = androidx.compose.ui.graphics.SolidColor(c.accent),
                             interactionSource = inputInteraction,
                             decorationBox = { innerTextField ->
@@ -1723,8 +1788,8 @@ fun ChatScreen(
                                                 isEditMode -> s.chatEditHint
                                                 else -> s.chatInputHint
                                             },
-                                            fontSize = 15.sp,
-                                            color = Color(0x66FFFFFF),
+                                            fontSize = 17.sp,
+                                            color = c.textPrimary.copy(alpha = 0.4f),
                                             fontFamily = JetBrainsMono
                                         )
                                     }
@@ -1829,18 +1894,18 @@ fun ChatScreen(
 
             AlertDialog(
                 onDismissRequest = { showVerifyDialog = false },
-                title = { Text(s.chatVerifyTitle, color = Color.White) },
+                title = { Text(s.chatVerifyTitle, color = c.textPrimary) },
                 text = {
                     Column {
-                        Text(s.chatVerifyFingerprintLabel, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(s.chatVerifyFingerprintLabel, fontWeight = FontWeight.Bold, color = c.textPrimary)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(fingerprint, fontSize = 28.sp)
+                        Text(fingerprint, fontSize = 30.sp)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(s.chatVerifyHint, fontSize = 14.sp, color = c.textPrimary)
+                        Text(s.chatVerifyHint, fontSize = 16.sp, color = c.textPrimary)
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { showVerifyDialog = false }) { Text(s.close, color = Color.White) }
+                    TextButton(onClick = { showVerifyDialog = false }) { Text(s.close, color = c.textPrimary) }
                 },
                 containerColor = c.dialog
             )
@@ -1863,7 +1928,7 @@ fun ChatScreen(
                                 messengerService?.sendVideoCircle(recipient, videoId, plainBytes, duration, encFile.absolutePath)
                                 messages.add(Message(
                                     id = videoId,
-                                    text = "🎥 Видеосообщение",
+                                    text = "Видеосообщение",
                                     isOwn = true,
                                     videoPath = encFile.absolutePath,
                                     videoDuration = duration
@@ -1871,7 +1936,7 @@ fun ChatScreen(
                                 ChatStorage.saveOrUpdateMessage(context, userId, recipient,
                                     ChatStorage.StoredMessage(
                                         id = videoId,
-                                        text = "🎥 Видеосообщение",
+                                        text = "Видеосообщение",
                                         isOwn = true,
                                         videoPath = encFile.absolutePath,
                                         videoDuration = duration
@@ -1893,7 +1958,7 @@ fun ChatScreen(
             AlertDialog(
                 onDismissRequest = { showForwardDialog = null },
                 containerColor = c.dialog,
-                title = { Text("Переслать", color = Color.White, fontFamily = JetBrainsMono) },
+                title = { Text("Переслать", color = c.textPrimary, fontFamily = JetBrainsMono) },
                 text = {
                     androidx.compose.foundation.lazy.LazyColumn(
                         modifier = Modifier.heightIn(max = 300.dp)
@@ -1951,7 +2016,7 @@ fun ChatScreen(
                                     android.widget.Toast.makeText(context, "Переслано", android.widget.Toast.LENGTH_SHORT).show()
                                 }
                             ) {
-                                Text(name, color = Color.White, fontFamily = JetBrainsMono, fontSize = 16.sp)
+                                Text(name, color = c.textPrimary, fontFamily = JetBrainsMono, fontSize = 18.sp)
                             }
                         }
                     }
@@ -1973,6 +2038,10 @@ fun MessageBubble(
     playingVoiceId: String? = null,
     onVoicePlay: ((String) -> Unit)? = null,
     onVoiceStop: (() -> Unit)? = null,
+    voicePlaybackMs: Int = 0,
+    voiceSpeed: Float = 1f,
+    onVoiceSeek: ((Int) -> Unit)? = null,
+    onVoiceSpeedToggle: (() -> Unit)? = null,
     playingVideoId: String? = null,
     onVideoPlay: ((String) -> Unit)? = null,
     onVideoStop: (() -> Unit)? = null,
@@ -2042,7 +2111,12 @@ fun MessageBubble(
                 bottomEnd = 18.dp
             ),
             color = if (msg.videoPath != null) Color.Transparent else bubbleColor,
-            shadowElevation = 2.dp
+            // No shadow for video circles — a rounded-rect drop shadow
+            // behind a transparent Surface still shows a faint rectangular
+            // outline around the circle, which is exactly the "square
+            // bounds visible" look the video-note redesign was meant to
+            // remove.
+            shadowElevation = if (msg.videoPath != null) 0.dp else 2.dp
         ) {
             Column {
 
@@ -2082,8 +2156,8 @@ fun MessageBubble(
                                     .background(c.accent)
                             )
                             Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                                Text(s.chatReplyLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = c.accent)
-                                Text(msg.replyTo.text, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = c.textPrimary.copy(alpha = 0.7f))
+                                Text(s.chatReplyLabel, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = c.accent)
+                                Text(msg.replyTo.text, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = c.textPrimary.copy(alpha = 0.7f))
                             }
                         }
                     }
@@ -2101,7 +2175,7 @@ fun MessageBubble(
                             )
                             Text(
                                 s.chatGeoTap,
-                                fontSize = 12.sp,
+                                fontSize = 14.sp,
                                 color = Color.White,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -2120,154 +2194,56 @@ fun MessageBubble(
                     }
 
                     if (msg.videoPath != null) {
-                        var thumbnail    by remember(msg.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
-                        val isPlaying    = playingVideoId == msg.id
-                        var tempVideo    by remember(msg.id) { mutableStateOf<File?>(null) }
-                        var isLoading    by remember(msg.id) { mutableStateOf(false) }
-                        var videoViewRef by remember(msg.id) { mutableStateOf<android.widget.VideoView?>(null) }
-
-                        LaunchedEffect(msg.videoPath) {
-                            withContext(Dispatchers.IO) {
-                                try {
-                                    val bytes = SecureFileStorage.read(context, File(msg.videoPath))
-                                    val tmp = File(context.cacheDir, "thumb_${msg.id}.mp4")
-                                    tmp.writeBytes(bytes)
-                                    val retriever = android.media.MediaMetadataRetriever()
-                                    retriever.setDataSource(tmp.absolutePath)
-                                    thumbnail = retriever.getFrameAtTime(0)
-                                    retriever.release()
-                                    tmp.delete()
-                                } catch (e: Exception) {
-                                    android.util.Log.d("VideoCircle", "thumb: ${e.message}")
-                                }
-                            }
-                        }
-
-                        LaunchedEffect(isPlaying) {
-                            if (isPlaying && tempVideo == null) {
-                                isLoading = true
-                                try {
-                                    val f = withContext(Dispatchers.IO) {
-                                        val bytes = SecureFileStorage.read(context, File(msg.videoPath!!))
-                                        val out = File(context.cacheDir, "vplay_${msg.id}.mp4")
-                                        out.writeBytes(bytes)
-                                        out
-                                    }
-                                    tempVideo = f
-                                } catch (e: Exception) {
-                                    android.util.Log.e("VideoCircle", "play: ${e.message}")
-                                    onVideoStop?.invoke()
-                                } finally {
-                                    isLoading = false
-                                }
-                            }
-                        }
-
-                        LaunchedEffect(isPlaying) {
-                            if (!isPlaying) {
-                                videoViewRef?.stopPlayback()
-                                videoViewRef = null
-                                tempVideo?.delete()
-                                tempVideo = null
-                            }
-                        }
-
-                        DisposableEffect(msg.id) {
-                            onDispose {
-                                videoViewRef?.stopPlayback()
-                                tempVideo?.delete()
-                            }
-                        }
-
-                        val circleSize by animateDpAsState(
-                            targetValue = if (isPlaying) 340.dp else 150.dp,
-                            animationSpec = tween(durationMillis = 300),
-                            label = "circleSize"
-                        )
-
-                        Box(
-                            modifier = Modifier
-                                .size(circleSize)
-                                .clip(CircleShape)
-                                .background(Color(0xFF1A1A2E))
-                                .clickable {
-                                    if (isPlaying) onVideoStop?.invoke()
-                                    else onVideoPlay?.invoke(msg.id)
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            val tv = tempVideo
-                            if (isPlaying && tv != null) {
-
-                                AndroidView(
-                                    factory = { ctx ->
-                                        android.widget.VideoView(ctx).apply {
-                                            videoViewRef = this
-                                            setVideoPath(tv.absolutePath)
-                                            setOnPreparedListener { mp ->
-                                                mp.isLooping = true
-                                                start()
-                                            }
-                                            setOnErrorListener { _, _, _ -> true }
+                        val isVideoPlaying = playingVideoId == msg.id
+                        Box {
+                            VideoCircleBubble(
+                                messageId = msg.id,
+                                videoPath = msg.videoPath,
+                                videoDuration = msg.videoDuration,
+                                isPlaying = isVideoPlaying,
+                                onPlay = { onVideoPlay?.invoke(msg.id) },
+                                onStop = { onVideoStop?.invoke() },
+                                cachePrefix = ""
+                            )
+                            // Time + delivery status live here, overlaid on
+                            // the circle itself, instead of as a sibling Row
+                            // item outside it (see the comment below this
+                            // Column for why that widened the bubble into a
+                            // rectangle around the circle). Hidden while
+                            // playing, same as the duration badge, so the
+                            // video stays clean per the redesign spec.
+                            if (!isVideoPlaying && !msg.isSystem) {
+                                Row(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomStart)
+                                        .padding(8.dp)
+                                        .background(Color(0x88000000), CircleShape)
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = SimpleDateFormat("HH:mm", LocalLocale.current.platformLocale).format(Date(msg.timestamp)),
+                                        fontSize = 11.sp,
+                                        color = Color.White
+                                    )
+                                    if (msg.isOwn) {
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        when {
+                                            msg.isPending -> Icon(
+                                                painter = painterResource(R.drawable.ic_loading),
+                                                contentDescription = null,
+                                                tint = Color.White.copy(alpha = 0.8f),
+                                                modifier = Modifier.size(9.dp)
+                                            )
+                                            msg.isFailed -> Icon(painter = painterResource(R.drawable.ic_error),
+                                                contentDescription = null, tint = Color(0xFFEF5350), modifier = Modifier.size(11.dp))
+                                            msg.isRead -> Icon(painter = painterResource(R.drawable.ic_delivered_double),
+                                                contentDescription = null, tint = c.accent, modifier = Modifier.size(11.dp))
+                                            msg.isDelivered -> Icon(painter = painterResource(R.drawable.ic_delivered_double),
+                                                contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(11.dp))
+                                            else -> Icon(painter = painterResource(R.drawable.ic_check),
+                                                contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(11.dp))
                                         }
-                                    },
-                                    modifier = Modifier.fillMaxSize()
-                                )
-
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0x66000000)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_stop),
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            } else if (isLoading) {
-
-                                CircularProgressIndicator(
-                                    color = Color.White,
-                                    modifier = Modifier.size(40.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-
-                                thumbnail?.let {
-                                    Image(
-                                        bitmap = it.asImageBitmap(),
-                                        contentDescription = "Видеосообщение",
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0x99000000)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_play),
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                                if (msg.videoDuration > 0) {
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.BottomCenter)
-                                            .padding(bottom = 8.dp)
-                                            .background(Color(0x88000000), CircleShape)
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                        Text("${msg.videoDuration}\"", fontSize = 12.sp, color = Color.White, fontFamily = JetBrainsMono)
                                     }
                                 }
                             }
@@ -2275,6 +2251,27 @@ fun MessageBubble(
                     }
 
                     if (msg.voiceFile != null) {
+                        // Waveform bars decoded off the main thread (AMR-NB
+                        // decode via MediaCodec — see AudioHelper.getWaveform's
+                        // own comment) and cached there by file path, so
+                        // re-entering this LaunchedEffect on recomposition
+                        // (LazyColumn scroll) is cheap after the first decode.
+                        var waveformBars by remember(msg.id) { mutableStateOf(FloatArray(32)) }
+                        LaunchedEffect(msg.voiceFile) {
+                            val file = msg.voiceFile ?: return@LaunchedEffect
+                            waveformBars = withContext(Dispatchers.IO) {
+                                AudioHelper.getWaveform(context, file)
+                            }
+                        }
+                        val isThisPlaying = playingVoiceId == msg.id
+                        val totalMs = if (isThisPlaying) {
+                            AudioHelper.getDurationMs().takeIf { it > 0 } ?: (msg.voiceDuration * 1000)
+                        } else msg.voiceDuration * 1000
+                        val progress = if (isThisPlaying && totalMs > 0) {
+                            (voicePlaybackMs.toFloat() / totalMs).coerceIn(0f, 1f)
+                        } else 0f
+                        val shownSeconds = if (isThisPlaying) voicePlaybackMs / 1000 else msg.voiceDuration
+
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2286,11 +2283,12 @@ fun MessageBubble(
                                 color = c.primaryBlue,
                                 modifier = Modifier.size(48.dp),
                                 onClick = {
-                                    if (playingVoiceId == msg.id) {
+                                    if (isThisPlaying) {
                                         AudioHelper.stopAudio()
                                         onVoiceStop?.invoke()
                                     } else {
                                         AudioHelper.playAudio(context, msg.voiceFile) { onVoiceStop?.invoke() }
+                                        AudioHelper.setSpeed(voiceSpeed)
                                         onVoicePlay?.invoke(msg.id)
                                     }
                                 }
@@ -2301,16 +2299,52 @@ fun MessageBubble(
                                 ) {
                                     Icon(
                                         painter = painterResource(
-                                            if (playingVoiceId == msg.id) R.drawable.ic_pause else R.drawable.ic_play
+                                            if (isThisPlaying) R.drawable.ic_pause else R.drawable.ic_play
                                         ),
                                         contentDescription = null,
-                                        tint = Color.White,
+                                        tint = if (c.isDark) Color.White else c.textPrimary,
                                         modifier = Modifier.size(24.dp)
                                     )
                                 }
                             }
                             Spacer(Modifier.width(10.dp))
-                            Text("${msg.voiceDuration}\"", fontSize = 17.sp, color = c.primaryBlue)
+                            Column(modifier = Modifier.weight(1f)) {
+                                VoiceWaveform(
+                                    bars = waveformBars,
+                                    progress = progress,
+                                    color = c.primaryBlue,
+                                    dimColor = c.primaryBlue.copy(alpha = 0.3f),
+                                    onSeek = { frac ->
+                                        val targetMs = (frac * totalMs).toInt()
+                                        if (!isThisPlaying) {
+                                            AudioHelper.playAudio(context, msg.voiceFile) { onVoiceStop?.invoke() }
+                                            AudioHelper.setSpeed(voiceSpeed)
+                                            onVoicePlay?.invoke(msg.id)
+                                        }
+                                        onVoiceSeek?.invoke(targetMs)
+                                    }
+                                )
+                                Text("0:${shownSeconds.toString().padStart(2, '0')}",
+                                    fontSize = 15.sp, color = c.primaryBlue)
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = c.primaryBlue.copy(alpha = if (voiceSpeed != 1f) 0.9f else 0.15f),
+                                modifier = Modifier
+                                    .clickable { onVoiceSpeedToggle?.invoke() }
+                            ) {
+                                Text(
+                                    when (voiceSpeed) {
+                                        1.5f -> "1.5×"
+                                        2f -> "2×"
+                                        else -> "1×"
+                                    },
+                                    fontSize = 14.sp,
+                                    color = if (voiceSpeed != 1f) (if (c.isDark) Color.White else c.textPrimary) else c.primaryBlue,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                     }
 
@@ -2328,19 +2362,19 @@ fun MessageBubble(
                                     append(displayText.substring(0, startIdx))
                                     withStyle(androidx.compose.ui.text.SpanStyle(
                                         background = c.accent.copy(alpha = 0.4f),
-                                        color = Color.White
+                                        color = if (c.isDark) Color.White else c.textPrimary
                                     )) { append(displayText.substring(startIdx, endIdx)) }
                                     append(displayText.substring(endIdx))
                                 }.also { annotated ->
-                                    Text(text = annotated, fontSize = 18.sp, lineHeight = 20.sp)
+                                    Text(text = annotated, fontSize = 20.sp, lineHeight = 20.sp)
                                 }
                             } else {
-                                Text(text = displayText, fontSize = 18.sp, lineHeight = 20.sp, color = c.textPrimary)
+                                Text(text = displayText, fontSize = 20.sp, lineHeight = 20.sp, color = c.textPrimary)
                             }
                         } else {
                             Text(
                                 text = displayText,
-                                fontSize = 18.sp,
+                                fontSize = 20.sp,
                                 lineHeight = 20.sp,
                                 color = if (msg.isSystem) c.textPrimary.copy(alpha = 0.6f) else c.textPrimary
                             )
@@ -2348,22 +2382,52 @@ fun MessageBubble(
                     }
                 }
 
-                if (!msg.isSystem) {
+                // Video messages render their own time/ticks as a small
+                // overlay INSIDE the circle (see the Box wrapping
+                // VideoCircleBubble above) instead of here — as a sibling of
+                // the circle in this Row, this text/icon pair widened the
+                // Row (and the transparent-but-shadowed Surface bubbling it)
+                // past the circle's own bounds, which is exactly the
+                // "rectangle around the circle" look the redesign was
+                // supposed to remove. Found live: the circle itself had
+                // already been redesigned, but this sibling metadata was the
+                // actual source of the visible rectangular bounding box.
+                if (!msg.isSystem && msg.videoPath == null) {
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = SimpleDateFormat("HH:mm", LocalLocale.current.platformLocale).format(Date(msg.timestamp)),
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         color = c.textPrimary.copy(alpha = 0.5f)
                     )
                 }
-                if (msg.isOwn && !msg.isSystem) {
+                if (msg.isOwn && !msg.isSystem && msg.videoPath == null) {
                     Spacer(modifier = Modifier.width(4.dp))
                     when {
-                        msg.isPending   -> Text("⏳", fontSize = 10.sp, color = c.textPrimary.copy(alpha = 0.6f))
-                        msg.isFailed    -> Text("!", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE53935))
-                        msg.isRead      -> Text("✓✓", fontSize = 10.sp, color = c.accent)
-                        msg.isDelivered -> Text("✓✓", fontSize = 10.sp, color = Color(0xFF8899AA))
-                        else            -> Text("✓", fontSize = 10.sp, color = Color(0xFF8899AA))
+                        msg.isPending   -> {
+                            val infiniteTransition = rememberInfiniteTransition(label = "sending_spinner")
+                            val angle by infiniteTransition.animateFloat(
+                                initialValue = 0f,
+                                targetValue = 360f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(1600, easing = LinearEasing)
+                                ),
+                                label = "sending_spinner_angle"
+                            )
+                            Icon(
+                                painter = painterResource(R.drawable.ic_loading),
+                                contentDescription = null,
+                                tint = c.textPrimary.copy(alpha = 0.6f),
+                                modifier = Modifier.size(10.dp).rotate(angle)
+                            )
+                        }
+                        msg.isFailed    -> Icon(painter = painterResource(R.drawable.ic_error),
+                            contentDescription = null, tint = Color(0xFFE53935), modifier = Modifier.size(12.dp))
+                        msg.isRead      -> Icon(painter = painterResource(R.drawable.ic_delivered_double),
+                            contentDescription = null, tint = c.accent, modifier = Modifier.size(12.dp))
+                        msg.isDelivered -> Icon(painter = painterResource(R.drawable.ic_delivered_double),
+                            contentDescription = null, tint = Color(0xFF8899AA), modifier = Modifier.size(12.dp))
+                        else            -> Icon(painter = painterResource(R.drawable.ic_check),
+                            contentDescription = null, tint = Color(0xFF8899AA), modifier = Modifier.size(12.dp))
                     }
                 }
             }
@@ -2375,7 +2439,7 @@ fun MessageBubble(
                 modifier = Modifier
                     .align(if (msg.isOwn) Alignment.BottomEnd else Alignment.BottomStart)
                     .offset(x = if (msg.isOwn) 12.dp else (-12).dp, y = 12.dp)
-                    .background(Color(0xFF1A2255), RoundedCornerShape(12.dp))
+                    .background(c.card, RoundedCornerShape(12.dp))
                     .padding(horizontal = 6.dp, vertical = 3.dp)
             ) {
                 msg.reactions.values.groupBy { it }.forEach { (emoji, reactors) ->
@@ -2383,11 +2447,11 @@ fun MessageBubble(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(horizontal = 2.dp)
                     ) {
-                        Text(emoji, fontSize = 13.sp)
+                        Text(emoji, fontSize = 15.sp)
                         if (reactors.size > 1) {
                             Text(
                                 text = " ${reactors.size}",
-                                fontSize = 11.sp,
+                                fontSize = 13.sp,
                                 color = c.textPrimary,
                                 fontFamily = JetBrainsMono
                             )
@@ -2450,6 +2514,7 @@ private fun TypingDotsIndicator(color: Color) {
 
 @Composable
 fun FilePreview(fileName: String, filePath: String, context: Context) {
+    val c = LocalSubrosaColors.current
     val fileExtension = fileName.substringAfterLast('.', "").lowercase()
     val file = File(filePath)
 
@@ -2491,22 +2556,14 @@ fun FilePreview(fileName: String, filePath: String, context: Context) {
             verticalAlignment = Alignment.CenterVertically
         ) {
 
-            Text(
-                text = when (fileExtension) {
-                    "pdf" -> "📕"
-                    "doc", "docx" -> "📘"
-                    "png", "jpg", "jpeg" -> "🖼️"
-                    else -> "📄"
-                },
-                fontSize = 24.sp,
-                modifier = Modifier.padding(end = 8.dp)
-            )
+            Icon(painter = painterResource(R.drawable.ic_file), contentDescription = null,
+                tint = c.textPrimary, modifier = Modifier.size(24.dp).padding(end = 8.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = fileName,
-                    fontSize = 14.sp,
-                    color = Color.White,
+                    fontSize = 16.sp,
+                    color = c.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -2520,16 +2577,17 @@ fun FilePreview(fileName: String, filePath: String, context: Context) {
                     }
                     Text(
                         text = sizeText,
-                        fontSize = 12.sp,
-                        color = Color(0xAAFFFFFF)
+                        fontSize = 14.sp,
+                        color = c.textPrimary.copy(alpha = 0.67f)
                     )
                 }
             }
 
-            Text(
-                text = "📥",
-                fontSize = 20.sp,
-                modifier = Modifier.padding(start = 8.dp)
+            Icon(
+                painter = painterResource(R.drawable.ic_arrow_down),
+                contentDescription = null,
+                tint = c.textPrimary,
+                modifier = Modifier.size(20.dp).padding(start = 8.dp)
             )
         }
     }

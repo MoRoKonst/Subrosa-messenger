@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import androidx.compose.ui.res.painterResource
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,10 +49,10 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Text(s.verifyScreenTitle, color = androidx.compose.ui.graphics.Color.White, fontFamily = JetBrainsMono) },
+                title = { Text(s.verifyScreenTitle, color = c.textPrimary, fontFamily = JetBrainsMono) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back, tint = androidx.compose.ui.graphics.Color.White)
+                        Icon(painterResource(R.drawable.ic_back_arrow), s.back, tint = c.textPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
@@ -75,7 +76,7 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
 
                 Text(
                     s.verifyCheckKey,
-                    fontSize = 20.sp,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = c.textPrimary,
                     fontFamily = JetBrainsMono,
@@ -84,7 +85,7 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
 
                 Text(
                     s.verifyContact(contactName),
-                    fontSize = 16.sp,
+                    fontSize = 18.sp,
                     color = c.accent,
                     fontFamily = JetBrainsMono,
                     modifier = Modifier.padding(bottom = 24.dp)
@@ -103,7 +104,7 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
                         )
                     }
                 } else {
-                    Text(s.verifyKeyNotFound, color = c.error, fontFamily = JetBrainsMono, fontSize = 14.sp)
+                    Text(s.verifyKeyNotFound, color = c.error, fontFamily = JetBrainsMono, fontSize = 16.sp)
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -119,16 +120,16 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
                     ) {
                         Text(
                             s.verifyEmojiLabel,
-                            fontSize = 12.sp,
+                            fontSize = 14.sp,
                             color = c.textPrimary.copy(alpha = 0.6f),
                             fontFamily = JetBrainsMono
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(fingerprintEmoji, fontSize = 32.sp)
+                        Text(fingerprintEmoji, fontSize = 34.sp)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             s.verifyEmojiHint(contactName),
-                            fontSize = 12.sp,
+                            fontSize = 14.sp,
                             color = c.textPrimary.copy(alpha = 0.6f),
                             fontFamily = JetBrainsMono,
                             lineHeight = 18.sp
@@ -138,7 +139,7 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Text(s.verifyHexLabel, fontSize = 13.sp, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono)
+                Text(s.verifyHexLabel, fontSize = 15.sp, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono)
                 Spacer(modifier = Modifier.height(8.dp))
                 Surface(
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
@@ -147,7 +148,7 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
                 ) {
                     Text(
                         fingerprintHex,
-                        fontSize = 12.sp,
+                        fontSize = 14.sp,
                         fontFamily = JetBrainsMono,
                         color = c.accent,
                         modifier = Modifier.padding(16.dp),
@@ -159,7 +160,7 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
 
                 Text(
                     s.verifyHint,
-                    fontSize = 13.sp,
+                    fontSize = 15.sp,
                     color = c.textPrimary.copy(alpha = 0.6f),
                     fontFamily = JetBrainsMono,
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -176,7 +177,7 @@ fun VerifyKeyScreen(contactId: String, onBack: () -> Unit) {
                     ) {
                         Text(
                             s.verifyAlreadyVerified,
-                            fontSize = 16.sp,
+                            fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = JetBrainsMono,
                             color = c.accent,

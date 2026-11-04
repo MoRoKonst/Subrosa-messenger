@@ -20,6 +20,7 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
+import androidx.compose.ui.res.painterResource
 
 @Composable
 fun GeoLocationMap(
@@ -46,7 +47,7 @@ fun GeoLocationMap(
                 val marker = Marker(this).apply {
                     position = GeoPoint(latitude, longitude)
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                    title = "📍"
+                    title = ""
                 }
                 overlays.add(marker)
             }
@@ -88,7 +89,7 @@ fun MapDialog(
                         val marker = Marker(this).apply {
                             position = GeoPoint(latitude, longitude)
                             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                            title = "📍"
+                            title = ""
                             snippet = "${"%.5f".format(latitude)}, ${"%.5f".format(longitude)}"
                         }
                         overlays.add(marker)
@@ -108,15 +109,18 @@ fun MapDialog(
             ) {
                 IconButton(onClick = onDismiss) {
                     Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
+                        painterResource(R.drawable.ic_back_arrow),
                         contentDescription = null,
                         tint = Color.White
                     )
                 }
+                Icon(painterResource(R.drawable.ic_geo), contentDescription = null,
+                    tint = Color.White, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
                 Text(
-                    "📍 Геопозиция",
+                    "Геопозиция",
                     color = Color.White,
-                    fontSize = 16.sp,
+                    fontSize = 18.sp,
                     fontFamily = JetBrainsMono,
                     modifier = Modifier.weight(1f)
                 )
@@ -130,7 +134,7 @@ fun MapDialog(
                         android.util.Log.e("MapDialog", "Не удалось открыть карты: ${e.message}")
                     }
                 }) {
-                    Text("В картах", color = Color(0xFFD9A566), fontFamily = JetBrainsMono, fontSize = 14.sp)
+                    Text("В картах", color = Color(0xFFD9A566), fontFamily = JetBrainsMono, fontSize = 16.sp)
                 }
             }
         }

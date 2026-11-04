@@ -16,6 +16,18 @@ import android.util.Log
 
 object CryptoManager {
 
+    private const val TAG = "CryptoManager"
+
+    /** Diagnostics only (2026-08-31) — a short, one-way, non-reversible tag
+     *  for a key's identity, safe to log. Lets a sender-side log ("sealed
+     *  for X using pqKeyHash=...") and a receiver-side log ("decrypting with
+     *  pqKeyHash=...") be compared directly across two devices' logs to
+     *  confirm whether they actually used the same key, instead of inferring
+     *  it indirectly from SPK ids and fetch timing. */
+    fun shortHash(bytes: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(bytes).take(4)
+            .joinToString("") { "%02x".format(it) }
+
     private const val KEY_ALIAS        = "messenger_ec_key"
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val SW_KEY_PREFS     = "beacon_sw_keys"
@@ -245,14 +257,29 @@ object CryptoManager {
             // PQ key version (current vs. still-in-grace-period previous) was
             // used just from decapsulating. Try both and let AES-GCM's tag
             // check decide which one was actually correct.
-            val candidates = listOfNotNull(
-                SessionKeyManager.getCurrentPqPrivateKey(),
-                SessionKeyManager.getPreviousPqPrivateKeyIfValid()
-            )
+            val currentPq = SessionKeyManager.getCurrentPqPrivateKey()
+            val previousPq = SessionKeyManager.getPreviousPqPrivateKeyIfValid()
+            val candidates = listOfNotNull(currentPq, previousPq)
+            // Diagnostics only (2026-08-31) — chasing a BAD_DECRYPT that
+            // survives every fix so far. No key material logged, only shape:
+            // which SPK epoch we're on, whether a grace-period previous key
+            // exists at all (a stale-cache sender within the 14-day grace
+            // window should still succeed via THIS candidate even with an
+            // old cached key — if it's still failing with a previous key
+            // present and valid, the sender's cached key predates even that,
+            // or something else entirely is wrong), and the wire sizes (a
+            // consistently wrong keyLen/pqCtLen here would point at a
+            // format/version mismatch instead of a key mismatch).
+            val myPqPublicHash = SessionKeyManager.getCurrentPqPublicKeyForDiagnostics()?.let { shortHash(it) }
+            Log.d(TAG, "DEBUG-DECRYPT decrypt(): mySpkId=${SessionKeyManager.getCurrentSpkId()} " +
+                "myPqPublicHash=$myPqPublicHash hasCurrentPq=${currentPq != null} hasPreviousPq=${previousPq != null} " +
+                "previousPqGraceRemainingMs=${SessionKeyManager.getPreviousPqGraceRemainingMs()} " +
+                "candidates=${candidates.size} ephemeralKeyLen=$keyLen pqCtLen=$pqCtLen " +
+                "encryptedLen=${encrypted.size} totalLen=${combined.size}")
             if (candidates.isEmpty()) throw IllegalStateException("Нет PQ KEM ключа для расшифровки")
 
             var lastError: Exception? = null
-            for (pqPrivateKey in candidates) {
+            candidates.forEachIndexed { idx, pqPrivateKey ->
                 var pqSharedSecret: ByteArray? = null
                 var combinedSecret: ByteArray? = null
                 var aesKey: ByteArray? = null
@@ -260,8 +287,13 @@ object CryptoManager {
                     pqSharedSecret = PqCrypto.decapsulate(pqPrivateKey, pqCiphertext)
                     combinedSecret = classicalSecret + pqSharedSecret
                     aesKey = deriveAesKey(combinedSecret, "BeaconECDHpq")
-                    return aesDecrypt(encrypted, aesKey)
+                    val result = aesDecrypt(encrypted, aesKey)
+                    Log.d(TAG, "DEBUG-DECRYPT decrypt(): успех на candidate[$idx] " +
+                        "(${if (idx == 0) "current" else "previous"} PQ-ключ)")
+                    return result
                 } catch (e: Exception) {
+                    Log.w(TAG, "DEBUG-DECRYPT decrypt(): candidate[$idx] " +
+                        "(${if (idx == 0) "current" else "previous"} PQ-ключ) провалился: ${e.message}")
                     lastError = e
                 } finally {
                     pqSharedSecret?.let { SecureMemory.wipe(it) }
@@ -269,6 +301,10 @@ object CryptoManager {
                     aesKey?.let { SecureMemory.wipe(it) }
                 }
             }
+            Log.e(TAG, "DEBUG-DECRYPT decrypt(): все ${candidates.size} кандидат(ов) провалились — " +
+                "классический ECDH дал секрет (не проверить не расшифровав), но ни один PQ-кандидат " +
+                "не совпал; либо отправитель использует другой классический identity-ключ, либо PQ-ключ " +
+                "устарел за пределами grace period")
             throw lastError ?: IllegalStateException("Расшифровка не удалась")
         } finally {
             SecureMemory.wipe(classicalSecret)
@@ -772,7 +808,7 @@ object CryptoManager {
             generateKeyPair()
         }
 
-        emit(tr("📋 ТЕСТ 1: Проверка существования ключей", "📋 TEST 1: Key existence check"))
+        emit(tr("ТЕСТ 1: Проверка существования ключей", "TEST 1: Key existence check"))
         val hasKeysInitial = hasKeys()
 
         // Found live: this line used to have no [OK]/[FAIL]/[WARN] marker, so
@@ -790,7 +826,7 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 ТЕСТ 2: Защита от повторной генерации", "📋 TEST 2: Regeneration protection"))
+        emit(tr("ТЕСТ 2: Защита от повторной генерации", "TEST 2: Regeneration protection"))
         val publicKey1 = getPublicKeyString()
         emit(tr("  Публичный ключ (до): ${publicKey1.take(50)}...", "  Public key (before): ${publicKey1.take(50)}..."))
 
@@ -805,7 +841,7 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 ТЕСТ 3: Удаление и восстановление", "📋 TEST 3: Deletion and recovery"))
+        emit(tr("ТЕСТ 3: Удаление и восстановление", "TEST 3: Deletion and recovery"))
         val keyBeforeDelete = getPublicKeyString()
 
         val ctx3 = appContext
@@ -813,40 +849,55 @@ object CryptoManager {
         val savedPrivB64 = encPrefs3?.getString(SW_PRIV_KEY, null)
         val savedPubB64  = encPrefs3?.getString(SW_PUB_KEY,  null)
 
-        deleteKeys()
-        val hasKeysAfterDelete = hasKeys()
-        emit(tr("  После deleteKeys(): hasKeys() = $hasKeysAfterDelete", "  After deleteKeys(): hasKeys() = $hasKeysAfterDelete"))
+        // try/finally — this deletes and regenerates the REAL identity
+        // keypair. Previously the restore-from-savedPrivB64/savedPubB64
+        // below ran as plain sequential code after deleteKeys()/
+        // generateKeyPair(): if either of those (or anything between them)
+        // ever threw, the account's real identity stayed deleted/replaced
+        // with no restoration and no clear warning — found 2026-09-19
+        // while porting this same restore-safety fix to Desktop's version
+        // of this test. finally now guarantees the restore runs regardless
+        // of how the try block exits.
+        try {
+            deleteKeys()
+            val hasKeysAfterDelete = hasKeys()
+            emit(tr("  После deleteKeys(): hasKeys() = $hasKeysAfterDelete", "  After deleteKeys(): hasKeys() = $hasKeysAfterDelete"))
 
-        if (!hasKeysAfterDelete) {
-            emit(tr("  [OK] УСПЕХ: Ключи успешно удалены", "  [OK] PASS: Keys successfully deleted"))
-        } else {
-            emit(tr("  [FAIL] ПРОВАЛ: Ключи не удалились", "  [FAIL] FAIL: Keys were not deleted"))
-        }
-
-        generateKeyPair()
-        val hasKeysAfterRegenerate = hasKeys()
-        val keyAfterRegenerate = getPublicKeyString()
-        emit(tr("  После generateKeyPair(): hasKeys() = $hasKeysAfterRegenerate", "  After generateKeyPair(): hasKeys() = $hasKeysAfterRegenerate"))
-
-        if (hasKeysAfterRegenerate) {
-            emit(tr("  [OK] УСПЕХ: Генерация новых ключей работает", "  [OK] PASS: New key generation works"))
-            if (keyBeforeDelete != keyAfterRegenerate) {
-                emit(tr("  [OK] УСПЕХ: Новые ключи отличаются от старых", "  [OK] PASS: New keys differ from the old ones"))
+            if (!hasKeysAfterDelete) {
+                emit(tr("  [OK] УСПЕХ: Ключи успешно удалены", "  [OK] PASS: Keys successfully deleted"))
+            } else {
+                emit(tr("  [FAIL] ПРОВАЛ: Ключи не удалились", "  [FAIL] FAIL: Keys were not deleted"))
             }
-        } else {
-            emit(tr("  [FAIL] ПРОВАЛ: Не удалось восстановить ключи", "  [FAIL] FAIL: Could not restore keys"))
-        }
 
-        if (savedPrivB64 != null && savedPubB64 != null && encPrefs3 != null) {
-            encPrefs3.edit()
-                .putString(SW_PRIV_KEY, savedPrivB64)
-                .putString(SW_PUB_KEY,  savedPubB64)
-                .commit()
-            emit(tr("  🔄 Ключи аккаунта восстановлены (fingerprint не изменился)", "  🔄 Account keys restored (fingerprint unchanged)"))
+            generateKeyPair()
+            val hasKeysAfterRegenerate = hasKeys()
+            val keyAfterRegenerate = getPublicKeyString()
+            emit(tr("  После generateKeyPair(): hasKeys() = $hasKeysAfterRegenerate", "  After generateKeyPair(): hasKeys() = $hasKeysAfterRegenerate"))
+
+            if (hasKeysAfterRegenerate) {
+                emit(tr("  [OK] УСПЕХ: Генерация новых ключей работает", "  [OK] PASS: New key generation works"))
+                if (keyBeforeDelete != keyAfterRegenerate) {
+                    emit(tr("  [OK] УСПЕХ: Новые ключи отличаются от старых", "  [OK] PASS: New keys differ from the old ones"))
+                }
+            } else {
+                emit(tr("  [FAIL] ПРОВАЛ: Не удалось восстановить ключи", "  [FAIL] FAIL: Could not restore keys"))
+            }
+        } catch (e: Exception) {
+            emit(tr("  [FAIL] ОШИБКА теста: ${e.message}", "  [FAIL] Test error: ${e.message}"))
+        } finally {
+            if (savedPrivB64 != null && savedPubB64 != null && encPrefs3 != null) {
+                encPrefs3.edit()
+                    .putString(SW_PRIV_KEY, savedPrivB64)
+                    .putString(SW_PUB_KEY,  savedPubB64)
+                    .commit()
+                emit(tr("  Ключи аккаунта восстановлены (fingerprint не изменился)", "  Account keys restored (fingerprint unchanged)"))
+            } else {
+                emit(tr("  Не удалось прочитать исходные ключи до удаления — восстановление невозможно!", "  Could not read the original keys before deletion — restoration impossible!"))
+            }
         }
         emit()
 
-        emit(tr("📋 ТЕСТ 4: Проверка хранилища ключей", "📋 TEST 4: Key storage check"))
+        emit(tr("ТЕСТ 4: Проверка хранилища ключей", "TEST 4: Key storage check"))
         try {
             val ctx4 = appContext ?: throw IllegalStateException(tr("CryptoManager.init() не вызван", "CryptoManager.init() was not called"))
             val encPrefs4 = EncryptedStorage.getEncryptedPrefs(ctx4, SW_KEY_PREFS_ENC)
@@ -889,7 +940,7 @@ object CryptoManager {
                     emit(tr("  [FAIL] ПРОВАЛ: Ключевая пара несогласована!", "  [FAIL] FAIL: Key pair is inconsistent!"))
                 }
 
-                emit(tr("  🔒 Защита: EncryptedSharedPreferences (AES-256-GCM, мастер-ключ в AndroidKeyStore)", "  🔒 Protection: EncryptedSharedPreferences (AES-256-GCM, master key in AndroidKeyStore)"))
+                emit(tr("  Защита: EncryptedSharedPreferences (AES-256-GCM, мастер-ключ в AndroidKeyStore)", "  Protection: EncryptedSharedPreferences (AES-256-GCM, master key in AndroidKeyStore)"))
                 emit(tr("  [OK] УСПЕХ: Ключи корректно хранятся и защищены", "  [OK] PASS: Keys are correctly stored and protected"))
             }
         } catch (e: Exception) {
@@ -897,9 +948,9 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 ТЕСТ 5: Шифрование и расшифровка", "📋 TEST 5: Encryption and decryption"))
+        emit(tr("ТЕСТ 5: Шифрование и расшифровка", "TEST 5: Encryption and decryption"))
         try {
-            val testMessage = tr("Секретное сообщение 🔐", "Secret message 🔐")
+            val testMessage = tr("Секретное сообщение", "Secret message")
             val currentPublicKey = getPublicKeyString()
 
             emit(tr("  Оригинал: '$testMessage'", "  Original: '$testMessage'"))
@@ -938,7 +989,7 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 ТЕСТ 6: Подпись и верификация", "📋 TEST 6: Signing and verification"))
+        emit(tr("ТЕСТ 6: Подпись и верификация", "TEST 6: Signing and verification"))
         try {
             val testMessage = tr("Тестовое сообщение для подписи", "Test message for signing")
             val signature = sign(testMessage)
@@ -966,7 +1017,7 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 ТЕСТ 7: Защита от Invalid Curve Attack", "📋 TEST 7: Invalid Curve Attack protection"))
+        emit(tr("ТЕСТ 7: Защита от Invalid Curve Attack", "TEST 7: Invalid Curve Attack protection"))
         try {
             val templateKeyBytes = Base64.decode(getPublicKeyString(), Base64.NO_WRAP)
             val offCurve = templateKeyBytes.copyOf()
@@ -983,9 +1034,9 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 ТЕСТ 8: Шифрование файлов", "📋 TEST 8: File encryption"))
+        emit(tr("ТЕСТ 8: Шифрование файлов", "TEST 8: File encryption"))
         try {
-            val testData = tr("Содержимое тестового файла 📄", "Test file contents 📄").toByteArray()
+            val testData = tr("Содержимое тестового файла", "Test file contents").toByteArray()
             val publicKey = getPublicKeyString()
             val pqPublicKeyFile = Base64.decode(SessionKeyManager.getLocalPrekeyBundle().pqKemPublicKey, Base64.NO_WRAP)
 
@@ -1051,7 +1102,7 @@ object CryptoManager {
         emit(tr("СТРЕСС-ТЕСТЫ (ПОПЫТКА СЛОМАТЬ ЗАЩИТУ)", "STRESS TESTS (ATTEMPTING TO BREAK THE PROTECTIONS)"))
         emit("═══════════════════════════════════════\n")
 
-        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 1: Расшифровка мусора", "📋 NEGATIVE TEST 1: Decrypting garbage"))
+        emit(tr("НЕГАТИВНЫЙ ТЕСТ 1: Расшифровка мусора", "NEGATIVE TEST 1: Decrypting garbage"))
         try {
             val garbage = "AAAAAAAAAAAAAAAAAAAAAA=="
             decrypt(garbage)
@@ -1062,7 +1113,7 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 2: Подделка подписи", "📋 NEGATIVE TEST 2: Signature forgery"))
+        emit(tr("НЕГАТИВНЫЙ ТЕСТ 2: Подделка подписи", "NEGATIVE TEST 2: Signature forgery"))
         try {
             val message = tr("Оригинальное сообщение", "Original message")
             val fakeSignature = Base64.encodeToString(ByteArray(64) { it.toByte() }, Base64.NO_WRAP)
@@ -1080,7 +1131,7 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 3: Изменение зашифрованного текста", "📋 NEGATIVE TEST 3: Tampering with ciphertext"))
+        emit(tr("НЕГАТИВНЫЙ ТЕСТ 3: Изменение зашифрованного текста", "NEGATIVE TEST 3: Tampering with ciphertext"))
         try {
             val originalMessage = tr("Важное сообщение", "Important message")
             val publicKey = getPublicKeyString()
@@ -1104,49 +1155,56 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 4: Смена ключей после удаления", "📋 NEGATIVE TEST 4: Key change after deletion"))
+        emit(tr("НЕГАТИВНЫЙ ТЕСТ 4: Смена ключей после удаления", "NEGATIVE TEST 4: Key change after deletion"))
         try {
 
             val encPrefsStress4 = EncryptedStorage.getEncryptedPrefs(context, SW_KEY_PREFS_ENC)
             val savedPrivStress4 = encPrefsStress4.getString(SW_PRIV_KEY, null)
             val savedPubStress4  = encPrefsStress4.getString(SW_PUB_KEY,  null)
 
-            val key1 = getPublicKeyString()
-            val pqKey1 = Base64.decode(SessionKeyManager.getLocalPrekeyBundle().pqKemPublicKey, Base64.NO_WRAP)
-            val testMessage = tr("Тест", "Test")
-            val encrypted1 = encrypt(testMessage, key1, pqKey1)
+            // Inner try/finally — same restore-safety fix as TEST 3 above:
+            // restoration used to run as plain sequential code after
+            // deleteKeys()/generateKeyPair()/decrypt(), so any exception in
+            // between (not just the deliberately-caught decrypt() one)
+            // skipped it and left the real identity permanently replaced.
+            try {
+                val key1 = getPublicKeyString()
+                val pqKey1 = Base64.decode(SessionKeyManager.getLocalPrekeyBundle().pqKemPublicKey, Base64.NO_WRAP)
+                val testMessage = tr("Тест", "Test")
+                val encrypted1 = encrypt(testMessage, key1, pqKey1)
 
-            deleteKeys()
+                deleteKeys()
 
-            generateKeyPair()
-            val key2 = getPublicKeyString()
+                generateKeyPair()
+                val key2 = getPublicKeyString()
 
-            if (key1 == key2) {
-                emit(tr("  [FAIL] БАГ: Ключи не изменились после удаления!", "  [FAIL] BUG: Keys did not change after deletion!"))
-            } else {
-                emit(tr("  [OK] ОЖИДАЕМО: Новые ключи отличаются", "  [OK] EXPECTED: New keys differ"))
+                if (key1 == key2) {
+                    emit(tr("  [FAIL] БАГ: Ключи не изменились после удаления!", "  [FAIL] BUG: Keys did not change after deletion!"))
+                } else {
+                    emit(tr("  [OK] ОЖИДАЕМО: Новые ключи отличаются", "  [OK] EXPECTED: New keys differ"))
 
-                try {
-                    decrypt(encrypted1)
-                    emit(tr("  [FAIL] БАГ: Старое сообщение расшифровалось новым ключом!", "  [FAIL] BUG: Old message decrypted with the new key!"))
-                } catch (e: Exception) {
-                    emit(tr("  [OK] ОЖИДАЕМО: Старое сообщение не расшифровывается", "  [OK] EXPECTED: Old message does not decrypt"))
+                    try {
+                        decrypt(encrypted1)
+                        emit(tr("  [FAIL] БАГ: Старое сообщение расшифровалось новым ключом!", "  [FAIL] BUG: Old message decrypted with the new key!"))
+                    } catch (e: Exception) {
+                        emit(tr("  [OK] ОЖИДАЕМО: Старое сообщение не расшифровывается", "  [OK] EXPECTED: Old message does not decrypt"))
+                    }
                 }
-            }
-
-            if (savedPrivStress4 != null && savedPubStress4 != null) {
-                encPrefsStress4.edit()
-                    .putString(SW_PRIV_KEY, savedPrivStress4)
-                    .putString(SW_PUB_KEY,  savedPubStress4)
-                    .commit()
-                emit(tr("  🔄 Ключи аккаунта восстановлены (fingerprint не изменился)", "  🔄 Account keys restored (fingerprint unchanged)"))
+            } finally {
+                if (savedPrivStress4 != null && savedPubStress4 != null) {
+                    encPrefsStress4.edit()
+                        .putString(SW_PRIV_KEY, savedPrivStress4)
+                        .putString(SW_PUB_KEY,  savedPubStress4)
+                        .commit()
+                    emit(tr("  Ключи аккаунта восстановлены (fingerprint не изменился)", "  Account keys restored (fingerprint unchanged)"))
+                }
             }
         } catch (e: Exception) {
             emit(tr("  [WARN] Тест не выполнен: ${e.message}", "  [WARN] Test did not run: ${e.message}"))
         }
         emit()
 
-        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 5: Подмена IV в зашифрованном файле", "📋 NEGATIVE TEST 5: IV tampering in encrypted file"))
+        emit(tr("НЕГАТИВНЫЙ ТЕСТ 5: Подмена IV в зашифрованном файле", "NEGATIVE TEST 5: IV tampering in encrypted file"))
         try {
             val testData = tr("Секретный файл", "Secret file").toByteArray()
             val publicKey = getPublicKeyString()
@@ -1185,16 +1243,46 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 6: Replay Attack", "📋 NEGATIVE TEST 6: Replay attack"))
+        emit(tr("НЕГАТИВНЫЙ ТЕСТ 6: Replay Attack", "NEGATIVE TEST 6: Replay attack"))
         try {
             SessionKeyManager.initialize(context)
-            val replayAlice = "_test_replay_a_${System.currentTimeMillis()}"
-            val replayBob   = "_test_replay_b_${System.currentTimeMillis()}"
+            // Two throwaway identities (not a self-loopback through this
+            // device's one real identity) + SessionKeyManager's
+            // identityOverride param — see runAdvancedTests()' TEST 13
+            // comment for the full derivation of why a single-identity
+            // self-loopback here silently collides both roles onto the
+            // same sessions[contactId] slot / throws an identity-mismatch
+            // check instead of testing anything.
+            val replayKpg = { KeyPairGenerator.getInstance("EC").apply { initialize(java.security.spec.ECGenParameterSpec("secp256r1")) }.generateKeyPair() }
+            val fakeAlice = replayKpg()
+            val fakeBob   = replayKpg()
+            fun fp(pub: java.security.PublicKey) = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(pub.encoded).take(8).joinToString("") { "%02X".format(it) }
+            fun signWith(kp: java.security.KeyPair, message: String): String {
+                val sig = Signature.getInstance("SHA256withECDSA")
+                sig.initSign(kp.private); sig.update(message.toByteArray())
+                return Base64.encodeToString(sig.sign(), Base64.NO_WRAP)
+            }
+            val realBundle = SessionKeyManager.getLocalPrekeyBundle()
+            val fakeBobBundle = SessionKeyManager.PrekeyBundle(
+                identityKey = Base64.encodeToString(fakeBob.public.encoded, Base64.NO_WRAP),
+                signedPrekey = realBundle.signedPrekey,
+                spkSignature = signWith(fakeBob, realBundle.signedPrekey),
+                spkId = realBundle.spkId,
+                oneTimePrekeys = emptyList(),
+                pqKemPublicKey = realBundle.pqKemPublicKey,
+                pqKemSignature = signWith(fakeBob, realBundle.pqKemPublicKey)
+            )
+            // var, not val — real value (bundle's fingerprint) can only be
+            // computed after the bundle exists below, but finally still
+            // needs a name in scope.
+            var replayAlice = ""
+            var replayBob = ""
             try {
-                val bundleJson = SessionKeyManager.generatePrekeyBundle()
-                val bundle = SessionKeyManager.parsePrekeyBundle(bundleJson)
-                val (_, x3dhHeader) = SessionKeyManager.initiateSession(replayAlice, bundle)
-                SessionKeyManager.receiveSession(replayBob, getPublicKeyString(), x3dhHeader)
+                replayAlice = fp(fakeBob.public)
+                val (_, x3dhHeader) = SessionKeyManager.initiateSession(replayAlice, fakeBobBundle, identityOverride = fakeAlice)
+                replayBob = fp(fakeAlice.public)
+                SessionKeyManager.receiveSession(replayBob, Base64.encodeToString(fakeAlice.public.encoded, Base64.NO_WRAP), x3dhHeader, identityOverride = fakeBob)
 
                 val (ct, hdr) = SessionKeyManager.encryptWithSession(replayAlice, "Replay me")
                 val firstDecrypt = SessionKeyManager.decryptWithSession(replayBob, ct, hdr)
@@ -1220,7 +1308,7 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 ТЕСТ 7: Защита от Invalid Curve Attack", "📋 TEST 7: Invalid Curve Attack protection"))
+        emit(tr("ТЕСТ 7: Защита от Invalid Curve Attack", "TEST 7: Invalid Curve Attack protection"))
         try {
             val templateKeyBytes = Base64.decode(getPublicKeyString(), Base64.NO_WRAP)
             val outOfField = templateKeyBytes.copyOf()
@@ -1237,7 +1325,7 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 НЕГАТИВНЫЙ ТЕСТ 8: Паддинг работает?", "📋 NEGATIVE TEST 8: Is padding working?"))
+        emit(tr("НЕГАТИВНЫЙ ТЕСТ 8: Паддинг работает?", "NEGATIVE TEST 8: Is padding working?"))
         try {
             val short = "Hi"
             val long = "A".repeat(1000)
@@ -1282,7 +1370,7 @@ object CryptoManager {
         emit(tr("РАСШИРЕННЫЕ ТЕСТЫ (SESSION + GROUP)", "ADVANCED TESTS (SESSION + GROUP)"))
         emit("═══════════════════════════════════════\n")
 
-        emit(tr("📋 ТЕСТ 9: HKDF (KDF-деривация)", "📋 TEST 9: HKDF (KDF derivation)"))
+        emit(tr("ТЕСТ 9: HKDF (KDF-деривация)", "TEST 9: HKDF (KDF derivation)"))
         try {
             val testSecret = ByteArray(32) { (it * 7 + 3).toByte() }
             val key1 = deriveAesKey(testSecret, "BeaconECDH")
@@ -1314,10 +1402,10 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 ТЕСТ 10: AES-GCM примитив (прямой вызов)", "📋 TEST 10: AES-GCM primitive (direct call)"))
+        emit(tr("ТЕСТ 10: AES-GCM примитив (прямой вызов)", "TEST 10: AES-GCM primitive (direct call)"))
         try {
             val aesKey = ByteArray(32).also { secureRandom.nextBytes(it) }
-            val plaintext = "AES-GCM direct test 🔒"
+            val plaintext = "AES-GCM direct test"
             val encrypted = aesEncrypt(plaintext, aesKey)
             val decrypted = aesDecrypt(encrypted, aesKey)
             if (decrypted == plaintext) {
@@ -1358,7 +1446,7 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 ТЕСТ 11: Группы — генерация и распределение ключа", "📋 TEST 11: Groups — key generation and distribution"))
+        emit(tr("ТЕСТ 11: Группы — генерация и распределение ключа", "TEST 11: Groups — key generation and distribution"))
         try {
             val groupKey = GroupManager.generateGroupKey()
             emit(tr("  Групповой ключ: ${groupKey.size} байт", "  Group key: ${groupKey.size} bytes"))
@@ -1391,11 +1479,11 @@ object CryptoManager {
         }
         emit()
 
-        emit(tr("📋 ТЕСТ 12: Группы — шифрование/расшифровка сообщений", "📋 TEST 12: Groups — message encryption/decryption"))
+        emit(tr("ТЕСТ 12: Группы — шифрование/расшифровка сообщений", "TEST 12: Groups — message encryption/decryption"))
         try {
             val groupKey = GroupManager.generateGroupKey()
             val messages = listOf(
-                tr("Привет группе! 👋", "Hello group! 👋"),
+                tr("Привет группе!", "Hello group!"),
                 tr("Тест с эмодзи 🔐🛡️", "Test with emoji 🔐🛡️"),
                 "A".repeat(500)
             )
@@ -1444,18 +1532,68 @@ object CryptoManager {
         }
         emit()
 
-        val aliceId = "_test_alice_${System.currentTimeMillis()}"
-        val bobId   = "_test_bob_${System.currentTimeMillis()}"
+        // TESTS 13-16 simulate a real two-party handshake in a single
+        // process using two throwaway identities (fakeAlice/fakeBob),
+        // generated fresh purely for this test, combined with
+        // SessionKeyManager's identityOverride param (see its own doc
+        // comment). This used to self-loopback through the device's ONE
+        // real identity for both "Alice" and "Bob" — but
+        // ecdhWithKeystore() always signs/DHs with that single real
+        // identity regardless of which role is calling it, and
+        // receiveSession() requires contactId == fingerprint(the identity
+        // actually used) — so both roles' contactId collapsed onto the
+        // SAME value and receiveSession() silently clobbered
+        // initiateSession()'s sessions[] entry for it (or, after a
+        // previous partial fix to just the contactId label, threw an
+        // identity-mismatch SecurityException instead). Found and fixed
+        // together with the identityOverride addition, 2026-09-19.
+        // SPK/PQ prekeys are still this device's own real current ones —
+        // receiveSession() always resolves those via spk_id against
+        // currentSpk/currentPqKem, no override exists for that half, and
+        // it's fine: SPK/PQ public keys are bundle material that's
+        // already public in a real handshake too.
+        var aliceId = ""
+        var bobId = ""
         try {
 
             SessionKeyManager.initialize(context)
 
-            emit(tr("📋 ТЕСТ 13: X3DH — инициация сессии", "📋 TEST 13: X3DH — session initiation"))
-            val bobBundleJson = SessionKeyManager.generatePrekeyBundle()
-            val bobBundle     = SessionKeyManager.parsePrekeyBundle(bobBundleJson)
-            val (_, x3dhHeader) = SessionKeyManager.initiateSession(aliceId, bobBundle)
-            val aliceIdentity   = getPublicKeyString()
-            SessionKeyManager.receiveSession(bobId, aliceIdentity, x3dhHeader)
+            emit(tr("ТЕСТ 13: X3DH — инициация сессии", "TEST 13: X3DH — session initiation"))
+
+            fun freshIdentity(): java.security.KeyPair {
+                val kpg = KeyPairGenerator.getInstance("EC")
+                kpg.initialize(java.security.spec.ECGenParameterSpec("secp256r1"))
+                return kpg.generateKeyPair()
+            }
+            fun fingerprintOf(pub: java.security.PublicKey) = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(pub.encoded).take(8).joinToString("") { "%02X".format(it) }
+            fun signWith(kp: java.security.KeyPair, message: String): String {
+                val sig = Signature.getInstance("SHA256withECDSA")
+                sig.initSign(kp.private)
+                sig.update(message.toByteArray())
+                return Base64.encodeToString(sig.sign(), Base64.NO_WRAP)
+            }
+            fun fakeBundleFor(fakeIdentity: java.security.KeyPair): SessionKeyManager.PrekeyBundle {
+                val real = SessionKeyManager.getLocalPrekeyBundle()
+                return SessionKeyManager.PrekeyBundle(
+                    identityKey = Base64.encodeToString(fakeIdentity.public.encoded, Base64.NO_WRAP),
+                    signedPrekey = real.signedPrekey,
+                    spkSignature = signWith(fakeIdentity, real.signedPrekey),
+                    spkId = real.spkId,
+                    oneTimePrekeys = emptyList(),
+                    pqKemPublicKey = real.pqKemPublicKey,
+                    pqKemSignature = signWith(fakeIdentity, real.pqKemPublicKey)
+                )
+            }
+
+            val fakeAlice = freshIdentity()
+            val fakeBob   = freshIdentity()
+
+            aliceId = fingerprintOf(fakeBob.public)
+            val (_, x3dhHeader) = SessionKeyManager.initiateSession(aliceId, fakeBundleFor(fakeBob), identityOverride = fakeAlice)
+            val aliceIdentity   = Base64.encodeToString(fakeAlice.public.encoded, Base64.NO_WRAP)
+            bobId = fingerprintOf(fakeAlice.public)
+            SessionKeyManager.receiveSession(bobId, aliceIdentity, x3dhHeader, identityOverride = fakeBob)
 
             if (SessionKeyManager.hasSession(aliceId) && SessionKeyManager.hasSession(bobId)) {
                 emit(tr("  [OK] X3DH: сессии установлены у обеих сторон", "  [OK] X3DH: sessions established on both sides"))
@@ -1464,8 +1602,8 @@ object CryptoManager {
             }
             emit()
 
-            emit(tr("📋 ТЕСТ 14: Session — шифрование/расшифровка", "📋 TEST 14: Session — encryption/decryption"))
-            val testMessages = listOf("Hello Bob 🔐", tr("Второе сообщение", "Second message"), "Third msg!")
+            emit(tr("ТЕСТ 14: Session — шифрование/расшифровка", "TEST 14: Session — encryption/decryption"))
+            val testMessages = listOf("Hello Bob", tr("Второе сообщение", "Second message"), "Third msg!")
             var sessionRoundTripOk = true
             for (msg in testMessages) {
                 val (ct, hdr) = SessionKeyManager.encryptWithSession(aliceId, msg)
@@ -1498,7 +1636,7 @@ object CryptoManager {
             SessionKeyManager.decryptWithSession(bobId, ct2, hdr2)
             emit()
 
-            emit(tr("📋 ТЕСТ 15: Session — out-of-order доставка", "📋 TEST 15: Session — out-of-order delivery"))
+            emit(tr("ТЕСТ 15: Session — out-of-order доставка", "TEST 15: Session — out-of-order delivery"))
 
             val msgs = listOf("Out0", "Out1", "Out2")
             val encrypted15 = msgs.map { SessionKeyManager.encryptWithSession(aliceId, it) }
@@ -1516,16 +1654,21 @@ object CryptoManager {
             }
             emit()
 
-            emit(tr("📋 ТЕСТ 16: Session — изоляция (посторонний ключ)", "📋 TEST 16: Session — isolation (unrelated key)"))
+            emit(tr("ТЕСТ 16: Session — изоляция (посторонний ключ)", "TEST 16: Session — isolation (unrelated key)"))
             val (ctIso, hdrIso) = SessionKeyManager.encryptWithSession(aliceId, "Secret")
 
-            val malloryId = "_test_mallory_${System.currentTimeMillis()}"
-            val eveId     = "_test_eve_${System.currentTimeMillis()}"
+            // A second, genuinely unrelated fake-identity pair — same
+            // identityOverride mechanism as TEST 13 above, not a third
+            // self-loopback through this device's real identity.
+            var malloryId = ""
+            var eveId = ""
             try {
-                val eveBundleJson = SessionKeyManager.generatePrekeyBundle()
-                val eveBundle     = SessionKeyManager.parsePrekeyBundle(eveBundleJson)
-                val (_, eveHeader) = SessionKeyManager.initiateSession(malloryId, eveBundle)
-                SessionKeyManager.receiveSession(eveId, getPublicKeyString(), eveHeader)
+                val fakeMallory = freshIdentity()
+                val fakeEve     = freshIdentity()
+                malloryId = fingerprintOf(fakeMallory.public)
+                val (_, eveHeader) = SessionKeyManager.initiateSession(malloryId, fakeBundleFor(fakeMallory), identityOverride = fakeEve)
+                eveId = fingerprintOf(fakeEve.public)
+                SessionKeyManager.receiveSession(eveId, Base64.encodeToString(fakeEve.public.encoded, Base64.NO_WRAP), eveHeader, identityOverride = fakeMallory)
 
                 try {
                     val fakeDecrypt = SessionKeyManager.decryptWithSession(malloryId, ctIso, hdrIso)
@@ -1548,7 +1691,7 @@ object CryptoManager {
 
         emit()
 
-        emit(tr("📋 ТЕСТ 17: ML-KEM — постквантовый гибрид", "📋 TEST 17: ML-KEM — post-quantum hybrid"))
+        emit(tr("ТЕСТ 17: ML-KEM — постквантовый гибрид", "TEST 17: ML-KEM — post-quantum hybrid"))
         try {
             val pqKp = PqCrypto.generateKeyPair()
             val encapsulated = PqCrypto.encapsulate(pqKp.publicKey)

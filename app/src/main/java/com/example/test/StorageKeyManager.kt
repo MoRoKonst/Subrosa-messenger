@@ -60,6 +60,22 @@ object StorageKeyManager {
 
         smk?.fill(0)
         smk = newSmk
+
+        // Missing entirely before this fix, unlike unlockWithPassword()/
+        // unlockWithKeystore() below — SessionKeyManager.initialize() runs
+        // at app/service startup, BEFORE the user has registered/logged in,
+        // i.e. while this object is still locked. Its own generateOrRotateSpk()
+        // correctly leaves currentSpk/currentPqKem null in that case
+        // ("waiting for unlock") and relies entirely on a later
+        // reloadSessionsIfNeeded() call to actually generate/restore them
+        // once a real SMK exists. setup() (called on every register()/
+        // re-register, per LoginScreen.kt and RegisterScreen.kt — mints a
+        // brand-new SMK each time) never made that call, so currentSpk
+        // stayed permanently null for the rest of the process on any device
+        // that already had stored SPK data from a prior SMK generation.
+        // Ported from the identical Desktop bug, found live 2026-09-18 —
+        // see SessionKeyManager.kt's isWrappedUnderStaleSmk comment there.
+        SessionKeyManager.reloadSessionsIfNeeded()
     }
 
     fun unlockWithPassword(context: Context, password: String): Boolean {

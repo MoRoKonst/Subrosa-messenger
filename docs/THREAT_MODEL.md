@@ -31,8 +31,14 @@ Threat / Mitigation / Residual risk.**
   - Spent/replayed anonymous tokens are rejected identically to unknown/decoy ones (`spent_tokens`
     set, `Server/tests/test_security_invariants.py::test_spent_token_replay_rejected`).
   - `MAX_REGISTERED_USERS` + `POW_DIFFICULTY_BITS` bound Sybil-style mass identity minting
-    ([SECURITY.md #26](SECURITY.md#known-limitations)) — **opt-in, off by default** (`0` =
-    disabled for both); see [AUDIT_SETUP.md § Profile B](AUDIT_SETUP.md#2b-server--profile-b-production-equivalent-hardened-environment)
+    ([SECURITY.md #26](SECURITY.md#known-limitations)). **Corrected 2026-09-25**: this used to say
+    both are "opt-in, off by default (`0` = disabled)" — only `MAX_REGISTERED_USERS` actually
+    defaults to `0`/unbounded (though even then `REGISTERED_ACCOUNTS_HARD_MAX_ROWS`, default
+    1,000,000, still applies underneath as an always-on hard ceiling — `docs/KNOWN_SECURITY_ISSUES.md`
+    S6-56). `POW_DIFFICULTY_BITS` defaults to **18** (`server.py`:
+    `os.environ.get("POW_DIFFICULTY_BITS", "18")`) — real proof-of-work friction is on by default;
+    an operator has to explicitly set it to `0` to disable it. See
+    [AUDIT_SETUP.md § Profile B](AUDIT_SETUP.md#2b-server--profile-b-production-equivalent-hardened-environment)
     for the default-vs-hardened distinction across every opt-in control in this document.
 - **Residual risk:** no fuzzing/property-based testing of the malformed-input surface yet exists
   (`docs/TODO.md`, "Протокольное тестирование сервера"). Negative-input coverage (missing field,
@@ -124,44 +130,45 @@ Threat / Mitigation / Residual risk.**
     ([SECURITY.md § Device-Gated TOTP](SECURITY.md#device-gated-totp--recovery-codes)).
   - Backup import itself requires a valid TOTP code if the backup has `totp_enabled=true`, and the
     secret is deliberately never included in the backup file.
-### Recovery state machine (external review 2026-08-27: this needed to be one explicit diagram, not reconstructed across three documents)
+### Recovery state machine (external review 2026-08-27: this needed to be one explicit diagram, not reconstructed across three documents; corrected 2026-09-25 — the diagram below described a takeover window closed a month earlier, per `server.py`'s own "Changed 2026-08-30" comment, and had gone stale without anyone updating this section)
 
 ```
 TOTP_ENABLED (normal state)
      │
      │  new device_id + valid recovery code presented to register()
      ▼
-RECOVERY_CODE_CONSUMED
+ONE_RECOVERY_CODE_CONSUMED
      │  (atomic: UPDATE ... WHERE used=0, only one concurrent
      │   redemption of the same code can ever succeed --
      │   test_recovery_code_consumed_exactly_once_under_concurrency)
      ▼
-ALL_RECOVERY_CODES_FOR_ACCOUNT_INVALIDATED  +  TOTP_SECRET_DELETED
-     │
-     ▼
-TOTP_DISABLED  ◄── account sits here with NO device-gating at all,
-     │              indefinitely, until:
-     │
-     │  user manually re-enables from the now-trusted device
-     ▼
-TOTP_ENABLED (new secret, new recovery codes)
+TOTP_ENABLED (unchanged) — secret and every OTHER unused recovery
+     code stay live; the next new-device registration still needs a
+     valid TOTP code or one of the dwindling remaining codes, never
+     nothing
 ```
 
-**What protects the account between `TOTP_DISABLED` and re-enrollment?** Nothing beyond the
-identity private key itself. This is the residual risk below, not a hidden gap — the state machine
-above makes explicit exactly what "the recovery-code takeover window" means and why it has no time
-bound today.
+**Changed 2026-08-30** (`docs/TODO.md`, closing the "recovery-code takeover window" item this
+section used to describe as open): redeeming a recovery code used to wipe the TOTP secret *and every
+other unused code* in one shot, disabling device-gating for the account entirely, permanently, until
+the owner noticed and manually re-enrolled — an unbounded takeover window from a single stolen
+code+backup pair. It now consumes only the one code presented (`server.py`'s
+`db_check_and_consume_recovery_code`, atomic per-code). The account is never left ungated: every
+subsequent registration attempt from a new device still requires a live TOTP code or one of the
+remaining recovery codes. Deliberately-fresh re-enrollment (a genuinely new secret + new code set) is
+still available on demand via the `totp_setup`/`totp_disable` recovery-code path added in the same
+change — a user who just proved a lost authenticator can immediately replace it, rather than being
+locked into the old secret until codes run out.
 
-- **Residual risk — the recovery-code takeover window (open product decision, not a bug, but a
-  question a first audit should weigh in on, not just note):** once *any* concurrent recovery-code
-  redemption attempt succeeds, TOTP protection is disabled for the account entirely, permanently,
-  per the state machine above, until the legitimate owner manually re-enables it from the
-  now-trusted device. A stolen backup combined with a leaked/observed recovery code (both are
-  physically bundled if the owner wrote them down together) defeats the gate with no time bound —
-  and see Threat F's composite-attack note for the DB-theft variant of this same class of problem.
-  See `docs/TODO.md` — a proposed `RECOVERY_PENDING_REENROLLMENT` state has not been decided on.
-  **This should be treated as one of the primary open questions for the first audit**, not deferred
-  as a routine product-backlog item — external review's assessment, and this document agrees.
+- **Residual risk (narrowed, no longer unbounded):** an attacker who obtains even one valid recovery
+  code (physically bundled with a stolen backup if the owner wrote them down together) can register
+  one new device without a TOTP code — but each further new-device registration burns one more code
+  from the same finite, dwindling set (default 10, see `SECURITY.md` § Device-Gated TOTP), and the
+  legitimate owner is never silently left with zero device-gating the way the old behavior allowed.
+  See Threat F's composite-attack note for the DB-theft variant of the underlying "codes are
+  unsalted-hash-stored, so DB theft plus one code equals one device registration" risk, which this
+  change does not itself address (it only bounds the *per-code* blast radius, not what a stolen DB
+  reveals).
 
 ---
 
@@ -187,12 +194,20 @@ bound today.
     ([SECURITY.md #11, residual gap iii](SECURITY.md#known-limitations)).
 - **Mitigation:** anonymous token routing + blind mailbox reduce (not eliminate) directly-addressed
   traffic for most 1:1/group message types; batched prekey-bundle fetches pad the real target with
-  decoys drawn from the requester's real contacts.
+  decoys drawn from the requester's real contacts. **Added 2026-09-25** (this section previously
+  omitted it — a real gap, not just a stale claim): sealed-sender protects `anon_message` traffic
+  specifically against a server that's actively reading connection/memory state in real time, not
+  just passively logging — `anon_channel` plus `SenderCertManager` (`SECURITY.md` items 31–32,
+  shipped 2026-08-29) mean a fully malicious or compelled operator can no longer read the *sender* of
+  an `anon_message` off the connection that submitted it, even with live server-side access.
 - **Residual risk:** documented and explicit, not swept under the rug —
   [SECURITY.md #11's residual-gaps list](SECURITY.md#known-limitations) states plainly that batch
-  decoys leak the requester's contact-list size and membership, and that anon-routing coverage
-  isn't complete for every message type. This is original, unaudited protocol design, not an
-  implementation of a peer-reviewed anonymity standard — stated as such in SECURITY.md itself.
+  decoys still leak the requester's real contact-list *membership* to the server (corrected
+  2026-11-03: the *size* leak is now closed — `get_decoy_candidates` pads every batch to the same
+  size regardless of contact count, see SECURITY.md #11 for what changed and what didn't), and that
+  anon-routing coverage isn't complete for every message type. This is original, unaudited protocol
+  design, not an implementation of a peer-reviewed anonymity standard — stated as such in
+  SECURITY.md itself.
 
 ---
 
@@ -253,11 +268,16 @@ it explicitly.*
   content-level (128–512 random bytes prepended before encryption, 1024–4096 for files/images) and
   packet-level (whole outgoing envelope padded to the next 512-byte bucket). See
   [SECURITY.md § Traffic Analysis Resistance](SECURITY.md#traffic-analysis-resistance-padding).
-- **Residual risk:** explicitly **not** covered — this defends against *length*-based analysis
-  only. Timing-based correlation (e.g. noticing two users are always online/active within seconds
-  of each other) is an explicit non-goal, stated in
-  [SECURITY_MODEL.md](SECURITY_MODEL.md#explicit-non-goals). No cover-traffic/dummy-message
-  scheme exists to mask *when* real traffic occurs, only how big it looks.
+- **Residual risk:** explicitly **not fully covered** — this defends against *length*-based
+  analysis only. Timing-based correlation (e.g. noticing two users are always online/active within
+  seconds of each other) is an explicit non-goal, stated in
+  [SECURITY_MODEL.md](SECURITY_MODEL.md#explicit-non-goals). A cover-traffic scheme *does* exist
+  (`UserStorage.CoverTrafficMode` — Moderate/Aggressive, constant-rate decoy packets) — this
+  paragraph previously said no such scheme existed at all, which was true when written but went
+  stale once the feature shipped. It is **opt-in, defaults to OFF**, and even enabled it only adds
+  noise at a fixed interval — it does not claim to defeat a determined global correlating observer,
+  only to raise the cost of simple volume/timing analysis. Found stale 2026-09-25 while auditing
+  this section against actual `MessengerService.kt`/Desktop behavior.
 
 ## H. Physical device seizure / coercion
 
@@ -311,6 +331,34 @@ dedicated attacker class: screen visibility protection (`FLAG_SECURE`).*
   text programmatically, bypassing pixel-level capture protection). Shoulder-surfing itself has no
   technical mitigation beyond user awareness — this is a physical-environment risk, not a
   software one.
+
+---
+
+## J. Malicious or compromised federation peer
+
+*Added 2026-09-25 — federation (`FEDERATION_SECRET`/`FEDERATION_PEERS`, `forward_to_peers()`) is a
+real, code-present feature with its own trust boundary, distinct from Threat E's "operator of the
+server I'm directly connected to": a federation peer is a *different* server, authenticated only by
+a pre-shared secret, not a party either endpoint user chose to trust individually. Neither this file
+nor `SECURITY_MODEL.md` mentioned it before now.*
+
+- **Asset:** the DNS-resolution integrity of `federation_host_allowed()`'s allowlist check — i.e.
+  whether a peer hostname actually resolves to what was validated as safe to connect to.
+- **Attacker:** an entity with control over DNS answers for a configured federation peer's hostname
+  (on-path DNS spoofing, a compromised authoritative nameserver, or a peer operator who lets their
+  own DNS answer differently on a second lookup).
+- **Capability:** serve one IP to `federation_host_allowed()`'s validation check and a different one
+  moments later to `websockets.connect()`'s own independent resolution of the same hostname.
+- **Threat:** DNS TOCTOU/rebinding — the two resolutions are not atomic, so a narrow race could let
+  a hostname that passed the public-address allowlist check actually connect to a private/internal
+  address by the time the real connection is made.
+- **Mitigation:** federation is opt-in (unset by default — no peers are configured out of the box);
+  `FEDERATED_FORWARD_ALLOWED_TYPES` allowlists which message types cross a federation link at all
+  (S6-38); TLS with `CERT_REQUIRED`/`check_hostname=True` is unconditional on federation connections
+  (S6-21).
+- **Residual risk:** the DNS TOCTOU gap itself is open and undecided, not silently accepted —
+  tracked as [KNOWN_SECURITY_ISSUES.md OPEN-12](KNOWN_SECURITY_ISSUES.md), deliberately deferred
+  pending a decision on the right fix (e.g. resolve once and connect by IP rather than hostname).
 
 ---
 
