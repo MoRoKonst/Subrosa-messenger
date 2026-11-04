@@ -16,6 +16,16 @@ object ContactHealthManager {
     private const val PREFS_NAME = "contact_health"
     private fun prefs(ctx: Context) = EncryptedStorage.getEncryptedPrefs(ctx, PREFS_NAME)
 
+    // Guards unconfirmed_count_<contact>'s read-modify-write
+    // (recordOutgoingAttempt()/recordDelivered()) — was an unlocked
+    // get-then-+1-then-write, so two sends to the same contact racing on
+    // Dispatchers.IO could both read the same starting count and one
+    // increment would be lost, undercounting toward
+    // UNCONFIRMED_SEND_BLOCK_THRESHOLD. Not a broad lock — only these two
+    // functions' counter mutation is covered. Found in the 2026-09-13
+    // ContactHealthManager audit.
+    private val counterLock = Any()
+
     const val SILENCE_THRESHOLD_MS = 15 * 60 * 1000L
     const val MAILBOX_RETRY_WAIT_MS = 5 * 60 * 1000L
 
@@ -37,6 +47,16 @@ object ContactHealthManager {
     // unconfirmed sends can happen in well under 15 minutes.
     const val UNCONFIRMED_SEND_BLOCK_THRESHOLD = 10
 
+    // "Восстановить связь" — user-triggered manual courier round (see
+    // MessengerService.forceRestoreConnection()), for when both sides
+    // suspect the automatic self-healing can't reach them (each side's
+    // resupply message needs a still-valid token FROM the other, a
+    // deadlock the mailbox-based manual retry breaks out of). Cooldown
+    // exists because each attempt burns a fresh token batch + a mailbox
+    // round trip — cheap, but not free, and spamming it doesn't make the
+    // courier arrive any faster.
+    const val MANUAL_RESTORE_COOLDOWN_MS = 5 * 60 * 1000L
+
     enum class PingState { NONE, PINGED, MAILBOX_TRIED }
 
     /** Call whenever real traffic (a decrypted message, a session_init, an
@@ -51,7 +71,7 @@ object ContactHealthManager {
 
     /** Call when a `delivered` ack arrives for one of our own outgoing
      * messages to [contactId]. */
-    fun recordDelivered(ctx: Context, contactId: String) {
+    fun recordDelivered(ctx: Context, contactId: String) = synchronized(counterLock) {
         prefs(ctx).edit()
             .putLong("last_delivered_$contactId", System.currentTimeMillis())
             .putInt("unconfirmed_count_$contactId", 0)
@@ -62,7 +82,7 @@ object ContactHealthManager {
      * distinguishes "never talked to them" (not silence, just never
      * started) from "used to talk, now quiet". Also advances the
      * consecutive-unconfirmed-send counter used by isSendBlocked(). */
-    fun recordOutgoingAttempt(ctx: Context, contactId: String) {
+    fun recordOutgoingAttempt(ctx: Context, contactId: String) = synchronized(counterLock) {
         val count = getInt(ctx, "unconfirmed_count_$contactId") + 1
         prefs(ctx).edit()
             .putLong("last_out_$contactId", System.currentTimeMillis())
@@ -126,6 +146,24 @@ object ContactHealthManager {
     fun stateElapsedMs(ctx: Context, contactId: String): Long =
         System.currentTimeMillis() - getLong(ctx, "state_at_$contactId")
 
+    /** True unless [contactId]'s "restore connection" button was already
+     *  pressed within MANUAL_RESTORE_COOLDOWN_MS. Checked directly from the
+     *  UI (same convention as isSendBlocked()), before ever touching the
+     *  service. */
+    fun canManualRestore(ctx: Context, contactId: String): Boolean =
+        System.currentTimeMillis() - getLong(ctx, "last_manual_restore_$contactId") >= MANUAL_RESTORE_COOLDOWN_MS
+
+    /** Milliseconds remaining before canManualRestore() is true again — for
+     *  showing "подождите ещё N" in the UI instead of just hiding the
+     *  button silently. */
+    fun manualRestoreRemainingMs(ctx: Context, contactId: String): Long =
+        (MANUAL_RESTORE_COOLDOWN_MS - (System.currentTimeMillis() - getLong(ctx, "last_manual_restore_$contactId")))
+            .coerceAtLeast(0L)
+
+    fun recordManualRestore(ctx: Context, contactId: String) {
+        prefs(ctx).edit().putLong("last_manual_restore_$contactId", System.currentTimeMillis()).apply()
+    }
+
     /** Wipes all silence-tracking state for [contactId] — call on contact
      * deletion. Without this, re-adding the same fingerprint (fresh invite
      * exchange) inherits old last_in/last_out/last_delivered timestamps and
@@ -139,6 +177,7 @@ object ContactHealthManager {
             .remove("state_$contactId")
             .remove("state_at_$contactId")
             .remove("unconfirmed_count_$contactId")
+            .remove("last_manual_restore_$contactId")
             .apply()
     }
 }

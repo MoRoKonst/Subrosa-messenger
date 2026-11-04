@@ -29,6 +29,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -270,73 +271,223 @@ fun VideoCircleRecorder(
     val isRecordingState = rememberUpdatedState(isRecording)
     val isLockedState = rememberUpdatedState(isLocked)
 
+    // Telegram-composition video-note recorder: large dominant circle in the
+    // upper-middle area, no timer above it, and a compact translucent
+    // bottom bar (dot+timer, Отмена, large attached Send) once locked —
+    // copies Telegram's actual control placement rather than the earlier
+    // pass's "circle + two isolated buttons" layout. Recording logic
+    // (CameraX, hold/swipe-to-lock gesture, timer, output) is untouched
+    // below; this is the layout/visual half only.
+    val maxRecordingMs = 60_000L
+
+    // Frame-smooth ring progress, separate from the integer recordingSeconds
+    // that still drives the actual auto-stop/timer text — purely
+    // observational (elapsedRealtime-based), doesn't change when recording
+    // actually starts/stops/auto-stops.
+    var ringProgress by remember { mutableStateOf(0f) }
+    LaunchedEffect(isRecording) {
+        if (!isRecording) { ringProgress = 0f; return@LaunchedEffect }
+        val startElapsed = android.os.SystemClock.elapsedRealtime()
+        while (true) {
+            withFrameNanos {}
+            val now = android.os.SystemClock.elapsedRealtime()
+            ringProgress = ((now - startElapsed).toFloat() / maxRecordingMs).coerceIn(0f, 1f)
+        }
+    }
+
     Dialog(
         onDismissRequest = { stopAndFinish(false) },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = true)
     ) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xCC000000)),
-            contentAlignment = Alignment.Center
+                // Dim overlay over the chat, not a separate opaque camera
+                // app — was 0xCC (near-opaque) before.
+                .background(Color(0xB3000000))
         ) {
+            // Large, screen-width-driven circle — the dominant element.
+            val cameraDiameter = (maxWidth * 0.90f).coerceAtMost(330.dp)
+            val ringGap = 2.dp
+            val ringStroke = 3.dp
+            val ringContainer = cameraDiameter + (ringGap + ringStroke) * 2
 
-            Box(
-                modifier = Modifier.size(280.dp),
-                contentAlignment = Alignment.Center
-            ) {
+            // Upper-middle: circle block gets less space above it than
+            // below, where the bottom controls live.
+            Column(modifier = Modifier.fillMaxSize()) {
+                Spacer(modifier = Modifier.weight(1f))
                 Box(
                     modifier = Modifier
-                        .size(272.dp)
-                        .clip(CircleShape)
+                        .align(Alignment.CenterHorizontally)
+                        .size(ringContainer),
+                    contentAlignment = Alignment.Center
                 ) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PreviewView(ctx).apply {
-                                scaleType = PreviewView.ScaleType.FILL_CENTER
-                                previewViewRef = this
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-
-                if (isRecording) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val sweepAngle = (recordingSeconds / 60f) * 360f
-                        val strokeW = 7.dp.toPx()
+                        val strokeW = ringStroke.toPx()
                         val inset = strokeW / 2f
+                        val arcSize = Size(size.width - strokeW, size.height - strokeW)
                         drawArc(
-                            color = Color(0xFF4CAF50),
+                            color = Color.White.copy(alpha = 0.22f),
                             startAngle = -90f,
-                            sweepAngle = sweepAngle,
+                            sweepAngle = 360f,
                             useCenter = false,
                             topLeft = Offset(inset, inset),
-                            size = Size(size.width - strokeW, size.height - strokeW),
+                            size = arcSize,
                             style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                        )
+                        if (isRecording) {
+                            drawArc(
+                                color = Color(0xFF30D493),
+                                startAngle = -90f,
+                                sweepAngle = 360f * ringProgress,
+                                useCenter = false,
+                                topLeft = Offset(inset, inset),
+                                size = arcSize,
+                                style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                            )
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(cameraDiameter)
+                            .clip(CircleShape)
+                    ) {
+                        AndroidView(
+                            factory = { ctx ->
+                                PreviewView(ctx).apply {
+                                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                                    // CameraX defaults to a SurfaceView-backed
+                                    // PERFORMANCE mode, which composites on
+                                    // its own hardware layer outside
+                                    // Compose's normal draw/clip pipeline —
+                                    // inside a clipped circle that showed as
+                                    // a solid black disc. COMPATIBLE mode
+                                    // renders via TextureView instead, which
+                                    // is a regular View and respects
+                                    // Modifier.clip() correctly.
+                                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                                    previewViewRef = this
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
                 }
+                Spacer(modifier = Modifier.weight(1.15f))
             }
 
-            if (isRecording) {
+            // Idle-only: top-right close. Once recording starts, Отмена
+            // inside the bottom controls is the one cancel affordance —
+            // no duplicate.
+            if (!isRecording) {
                 Box(
                     modifier = Modifier
-                        .offset(y = (-170).dp)
-                        .background(Color(0x88000000), CircleShape)
-                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                        .align(Alignment.TopEnd)
+                        .padding(top = 24.dp, end = 24.dp)
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x66000000))
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                awaitPointerEvent()
+                                stopAndFinish(false)
+                            }
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text("${recordingSeconds}\"", color = Color.White, fontSize = 15.sp, fontFamily = JetBrainsMono)
+                    Icon(
+                        painter = painterResource(R.drawable.ic_close),
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = 48.dp),
-                contentAlignment = Alignment.BottomCenter
-            ) {
-                if (!isLocked) {
+            // Flip camera — lower-left, secondary, only while not locked
+            // (the locked bottom bar takes the full width at that point).
+            if (!isLocked) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 20.dp, bottom = 40.dp)
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x66000000))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { switchCamera() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_flip_camera),
+                        contentDescription = "Переключить камеру",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            if (!isLocked) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 36.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (isRecording) {
+                        // Compact timer near the record control — NOT above
+                        // the circle — plus the swipe-up-to-lock affordance
+                        // right above it. Both secondary, both gone once
+                        // locked.
+                        Row(
+                            modifier = Modifier
+                                .background(Color(0x80000000), CircleShape)
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFE53935))
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                String.format("%02d:%02d", recordingSeconds / 60, recordingSeconds % 60),
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontFamily = JetBrainsMono
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Icon(
+                            painter = painterResource(R.drawable.ic_caret_up),
+                            contentDescription = null,
+                            tint = Color(0x99FFFFFF),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x33FFFFFF)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_lock_simple),
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
+                    // Record control — same hold/swipe-up-to-lock gesture as
+                    // before, untouched.
                     Box(
                         modifier = Modifier
                             .size(76.dp)
@@ -391,141 +542,93 @@ fun VideoCircleRecorder(
                     }
 
                     if (!isRecording) {
+                        Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            "Удержи для записи",
+                            "Удерживайте для записи",
                             color = Color(0xAAFFFFFF),
-                            fontSize = 13.sp,
-                            fontFamily = JetBrainsMono,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = 88.dp)
+                            fontSize = 14.sp,
+                            fontFamily = JetBrainsMono
                         )
                     }
-
-                    if (isRecording) {
-                        Text(
-                            "↑ Свайп для фиксации",
-                            color = Color(0x99FFFFFF),
-                            fontSize = 12.sp,
-                            fontFamily = JetBrainsMono,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = 88.dp)
-                        )
-                    }
-                } else {
+                }
+            } else {
+                // Locked: recording continues hands-free, hold instruction
+                // is gone. Bottom bar copies Telegram's composition — a
+                // translucent pill holding the dot+timer and an "Отмена"
+                // text action, with a large accent Send circle visually
+                // attached to (overlapping) its right end.
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 32.dp)
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                ) {
+                    // Send button (64dp) is aligned to this Box's own right
+                    // edge below, overlapping the pill's background by
+                    // (64 - 40) = 24dp for the "attached" look — the pill's
+                    // own content needs at least that much clearance on its
+                    // end so the overlap lands on empty pill background, not
+                    // on the "Отмена" text (30dp content end-padding here,
+                    // a few dp more than the 24dp overlap as a safety
+                    // margin). Found live: 16dp wasn't enough and the button
+                    // covered the last few letters of "Отмена".
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 48.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                            .padding(end = 40.dp)
+                            .background(Color(0x66000000), RoundedCornerShape(30.dp))
+                            .padding(start = 18.dp, end = 30.dp, top = 14.dp, bottom = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(64.dp)
+                                .size(8.dp)
                                 .clip(CircleShape)
-                                .background(Color(0x99FF3333))
-                                .pointerInput(Unit) {
-                                    awaitPointerEventScope {
-                                        awaitPointerEvent()
-                                        stopAndFinish(false)
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_close),
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-
-                        Box(
+                                .background(Color(0xFFE53935))
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            String.format("%02d:%02d", recordingSeconds / 60, recordingSeconds % 60),
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontFamily = JetBrainsMono
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Text(
+                            "Отмена",
+                            color = Color(0xCCFFFFFF),
+                            fontSize = 15.sp,
+                            fontFamily = JetBrainsMono,
                             modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF4CAF50))
-                                .pointerInput(Unit) {
-                                    awaitPointerEventScope {
-                                        awaitPointerEvent()
-                                        stopAndFinish(true)
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_check),
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { stopAndFinish(false) }
+                        )
                     }
-                }
-            }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 24.dp, end = 24.dp),
-                contentAlignment = Alignment.TopEnd
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(Color(0x66000000))
-                        .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                awaitPointerEvent()
-                                stopAndFinish(false)
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_close),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 24.dp, start = 24.dp),
-                contentAlignment = Alignment.TopStart
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .align(Alignment.CenterEnd)
+                            .size(64.dp)
                             .clip(CircleShape)
-                            .background(Color(0x88000000))
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) { switchCamera() },
+                            .background(Color(0xFF30D493))
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    awaitPointerEvent()
+                                    stopAndFinish(true)
+                                }
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            painter = painterResource(R.drawable.ic_flip_camera),
-                            contentDescription = "Переключить камеру",
+                            painter = painterResource(R.drawable.ic_check),
+                            contentDescription = null,
                             tint = Color.White,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(26.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "Камера",
-                        color = Color(0xAAFFFFFF),
-                        fontSize = 10.sp,
-                        fontFamily = JetBrainsMono
-                    )
                 }
             }
         }

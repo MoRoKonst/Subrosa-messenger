@@ -88,3 +88,32 @@ icon_work/
 
 # Локальная свалка временных/сгенерированных файлов, не для репозитория
 /_scratch/
+
+# Сайт — публикуется отдельно, не через репозиторий
+/website/
+
+# Hypothesis test artifacts
+.hypothesis/
+
+# Debug-файлы сервера
+Server/totp_debug.txt
+
+# IDE — machine-specific
+/.idea/deploymentTargetSelector.xml
+/.idea/markdown.xml
+/app/.idea/
+
+# Android SDK папки в корне проекта — не часть репозитория
+/build-tools/
+/emulator/
+/platform-tools/
+/platforms/
+/sources/
+/licenses/
+/icons/
+
+# Scratch / temp файлы
+server_diff.txt
+/LOG/
+.knownPackages
+Beacon.jpg

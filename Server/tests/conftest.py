@@ -10,6 +10,9 @@ import tempfile
 import pytest
 import pytest_asyncio
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import protocol_harness as ph  # noqa: E402
+
 _TMP_DB_FD, _TMP_DB_PATH = tempfile.mkstemp(suffix=".db", prefix="subrosa_test_")
 os.close(_TMP_DB_FD)
 os.environ["DB_PATH"] = _TMP_DB_PATH
@@ -54,18 +57,115 @@ def reset_state():
     server.token_to_ws.clear()
     server.token_pending.clear()
     server.token_pending_created.clear()
+    server.token_pending_sizes.clear()
+    server.token_pending_total_bytes = 0
+    server.token_pending_total_items = 0
+    server.token_pending_reserved_bytes = 0
+    server.token_pending_reserved_items = 0
     server.ws_to_tokens.clear()
     server.known_tokens.clear()
     server.spent_tokens.clear()
     server.rate_limits.clear()
+    server.prekey_bundles.clear()
+    # prekey_mutation_locks is a plain self-pruning dict since S6-35 (was a
+    # defaultdict(asyncio.Lock) that grew forever) -- .clear() here is just
+    # belt-and-suspenders test isolation, not load-bearing: the registry is
+    # already expected to be empty by the time a fully-awaited previous test
+    # finishes, since every prekey_mutation_guard() holder/waiter prunes its
+    # own entry on exit.
+    server.prekey_mutation_locks.clear()
+    server.opk_pair_last_issued.clear()
+    server.opk_target_window.clear()
+    server.opk_global_window["count"] = 0
+    server.opk_global_window["reset_time"] = server.time.time()
+    server.global_prekey_publish_rate["count"] = 0
+    server.global_prekey_publish_rate["reset_time"] = server.time.time()
+    server.access_code_global_rate["count"] = 0
+    server.access_code_global_rate["reset_time"] = server.time.time()
+    server.new_account_global_rate["count"] = 0
+    server.new_account_global_rate["reset_time"] = server.time.time()
+    server.mailbox.clear()
+    server.mailbox_total_bytes = 0
+    server.mailbox_total_blobs = 0
+    server.global_offline_store_rate["count"] = 0
+    server.global_offline_store_rate["reset_time"] = server.time.time()
+    server.user_totp_secrets.clear()
+    server.totp_state_locks.clear()
+    server.delivered_msg_ids.clear()
+    server.federation_delivery_inflight.clear()
+    server.fed_forward_rate_per_ip.clear()
+    server.fed_forward_rate_global["count"] = 0
+    server.fed_forward_rate_global["reset_time"] = server.time.time()
+    server.anon_token_global_claim_rate["count"] = 0
+    server.anon_token_global_claim_rate["reset_time"] = server.time.time()
+    server.fed_pending.clear()
+    server.channels.clear()
+    server.channel_post_global_rate["count"] = 0
+    server.channel_post_global_rate["reset_time"] = server.time.time()
+    server.totp_setup_global_rate["count"] = 0
+    server.totp_setup_global_rate["reset_time"] = server.time.time()
+    server.media_chunk_user_rate.clear()
+    server.media_chunk_recipient_rate.clear()
+    server.media_chunk_global_rate["bytes"] = 0
+    server.media_chunk_global_rate["reset_time"] = server.time.time()
+    server.user_avatars.clear()
+    server.avatar_mutation_locks.clear()
+    server.avatar_update_global_rate["count"] = 0
+    server.avatar_update_global_rate["reset_time"] = server.time.time()
+    server.active_calls.clear()
+    server.call_signal_user_rate.clear()
+    server.call_signal_recipient_rate.clear()
+    server.call_signal_global_rate["bytes"] = 0
+    server.call_signal_global_rate["reset_time"] = server.time.time()
+    server.fcm_wakeup_last_sent.clear()
+    server.fcm_wakeup_inflight.clear()
+    server.fcm_wakeup_failure_until.clear()
+    server.fcm_wakeup_source_rate.clear()
+    server.fcm_wakeup_recipient_rate.clear()
+    server.fcm_push_global_rate["count"] = 0
+    server.fcm_push_global_rate["reset_time"] = server.time.time()
+    server.fcm_inflight_count = 0
+    server.fcm_session_conflict_last_sent.clear()
+    server.fcm_session_conflict_inflight.clear()
+    server.fcm_session_conflict_failure_until.clear()
+    server.chat_control_user_rate.clear()
+    server.chat_control_global_rate["bytes"] = 0
+    server.chat_control_global_rate["reset_time"] = server.time.time()
+    server.chat_control_recipient_rate.clear()
+    server.pending_flush_locks.clear()
+    server.voice_user_rate.clear()
+    server.voice_global_rate["bytes"] = 0
+    server.voice_global_rate["reset_time"] = server.time.time()
+    server.voice_recipient_rate.clear()
+    server.anon_relay_conn_rate.clear()
+    server.anon_relay_global_rate["bytes"] = 0
+    server.anon_relay_global_rate["reset_time"] = server.time.time()
+    server.anon_relay_recipient_rate.clear()
     with server.db_connect() as conn:
         for table in (
             "registered_fingerprints",
             "revoked_fingerprints",
             "server_access_codes",
             "totp_recovery_codes",
+            "prekey_bundles_db",
+            "pending_messages",
+            "authorized_devices",
+            "anon_token_claim_guard",
+            "channels",
+            "channel_posts",
+            "channel_subscribers",
+            "user_avatars",
         ):
             conn.execute(f"DELETE FROM {table}")
+        conn.execute(
+            "INSERT OR REPLACE INTO pending_messages_meta (id, total_rows, total_bytes) VALUES (1, 0, 0)"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO channel_posts_meta (id, total_rows, total_bytes) VALUES (1, 0, 0)"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO user_avatars_meta (id, total_rows, total_bytes) VALUES (1, 0, 0)"
+        )
         conn.commit()
     yield
 
@@ -78,3 +178,22 @@ async def running_server():
     async with server.websockets.serve(server.handle_client, "127.0.0.1", 0) as ws_server:
         port = ws_server.sockets[0].getsockname()[1]
         yield f"ws://127.0.0.1:{port}"
+
+
+# ─── Adversarial/stress suite fixtures (test_protocol_*.py) ────────────────
+# Deliberately a REAL subprocess (protocol_harness.ManagedServer), not the
+# in-process `running_server` fixture above -- these tests exercise things
+# (registration caps, PoW, process crashes, resource usage) that need a
+# genuinely separate OS process with its own isolated env vars/DB, not a
+# coroutine sharing this test process's own `server` module state. See
+# protocol_harness.py's own module docstring for the full safety story
+# (loopback-only, temp-DB-only, no production secrets in the child env).
+
+@pytest.fixture(scope="module")
+def managed_server():
+    srv = ph.ManagedServer()
+    srv.start()
+    try:
+        yield srv
+    finally:
+        srv.stop()

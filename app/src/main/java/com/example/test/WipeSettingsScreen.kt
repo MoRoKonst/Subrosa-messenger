@@ -18,9 +18,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.subrosa.messenger.ui.theme.SubrosaColors
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import kotlinx.coroutines.delay
+import androidx.compose.ui.res.painterResource
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,10 +71,10 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(s.wipeSettingsTitle, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+                title = { Text(s.wipeSettingsTitle, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.back)
+                        Icon(painterResource(R.drawable.ic_back_arrow), contentDescription = s.back)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -107,27 +107,11 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     Text(
                         s.wipeSettingsWarning,
                         modifier = Modifier.padding(12.dp),
-                        fontSize = 12.sp,
+                        fontSize = 14.sp,
                         lineHeight = 17.sp,
                         color = Color(0xFFFF8A80)
                     )
                 }
-
-                SectionHeader(s.guideWipeLevelsTitle, c.textPrimary.copy(alpha = 0.6f))
-                WipeLevelCard(
-                    title = s.wipeLevelHard,
-                    desc = s.wipeHardDesc,
-                    color = Color(0xFFFFA726),
-                    c = c
-                )
-                WipeLevelCard(
-                    title = s.wipeLevelNuclear,
-                    desc = s.wipeNuclearDesc,
-                    color = Color(0xFFEF5350),
-                    c = c
-                )
-
-                Spacer(Modifier.height(4.dp))
 
                 SectionHeader(s.dmsTitle, c.textPrimary.copy(alpha = 0.6f))
                 Card(
@@ -135,14 +119,14 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(s.dmsSubtitle, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
+                        Text(s.dmsSubtitle, fontSize = 14.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
 
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(s.dmsEnabledLabel, color = c.textPrimary, fontSize = 14.sp)
+                            Text(s.dmsEnabledLabel, color = c.textPrimary, fontSize = 16.sp)
                             Switch(
                                 checked = dmsEnabled,
                                 onCheckedChange = { enabled ->
@@ -157,7 +141,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                         }
 
                         if (dmsEnabled) {
-                            Text(s.dmsIntervalLabel, color = c.textPrimary.copy(alpha = 0.6f), fontSize = 13.sp)
+                            Text(s.dmsIntervalLabel, color = c.textPrimary.copy(alpha = 0.6f), fontSize = 15.sp)
                             // Sub-hour tiers (15/30 min) added for high-threat scenarios where
                             // a 2-hour check-in is too loose — see docs/ISSUE_backup_identity_hijack.md.
                             // Scrollable since 9 chips no longer fit one screen width.
@@ -184,7 +168,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                                 val minutes = (dmsRemaining % 3_600_000) / 60_000
                                 Text(
                                     s.dmsRemainingText(hours, minutes),
-                                    fontSize = 12.sp,
+                                    fontSize = 14.sp,
                                     color = Color(0xFF66BB6A)
                                 )
                             }
@@ -209,14 +193,14 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(s.timeoutWipeSubtitle, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
+                        Text(s.timeoutWipeSubtitle, fontSize = 14.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
 
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(s.timeoutWipeTitle, color = c.textPrimary, fontSize = 14.sp)
+                            Text(s.timeoutWipeTitle, color = c.textPrimary, fontSize = 16.sp)
                             Switch(
                                 checked = timeoutEnabled,
                                 onCheckedChange = { enabled ->
@@ -227,7 +211,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                         }
 
                         if (timeoutEnabled) {
-                            Text(s.timeoutWipeThresholdLabel, color = c.textPrimary.copy(alpha = 0.6f), fontSize = 13.sp)
+                            Text(s.timeoutWipeThresholdLabel, color = c.textPrimary.copy(alpha = 0.6f), fontSize = 15.sp)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 listOf(24, 48, 72).forEach { h ->
                                     FilterChip(
@@ -250,14 +234,14 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(s.wipeOnBreachSubtitle, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
+                        Text(s.wipeOnBreachSubtitle, fontSize = 14.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
 
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(s.wipeOnBreachTitle, color = c.textPrimary, fontSize = 14.sp)
+                            Text(s.wipeOnBreachTitle, color = c.textPrimary, fontSize = 16.sp)
                             Switch(
                                 checked = wipeOnBreach,
                                 onCheckedChange = { enabled ->
@@ -268,7 +252,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                         }
 
                         if (wipeOnBreach) {
-                            Text(s.wipeLevelLabel, color = c.textPrimary.copy(alpha = 0.6f), fontSize = 13.sp)
+                            Text(s.wipeLevelLabel, color = c.textPrimary.copy(alpha = 0.6f), fontSize = 15.sp)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 listOf(
                                     WipeManager.Level.HARD to s.wipeLevelHard,
@@ -280,7 +264,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                                             breachLevel = level
                                             UserStorage.setBreachWipeLevel(context, level.name)
                                         },
-                                        label = { Text(label, fontSize = 12.sp) }
+                                        label = { Text(label, fontSize = 14.sp) }
                                     )
                                 }
                             }
@@ -294,14 +278,14 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(s.panicButtonSubtitle, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
+                        Text(s.panicButtonSubtitle, fontSize = 14.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
 
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(s.panicButtonLabel, color = c.textPrimary, fontSize = 14.sp)
+                            Text(s.panicButtonLabel, color = c.textPrimary, fontSize = 16.sp)
                             Switch(
                                 checked = panicButtonEnabled,
                                 onCheckedChange = { enabled ->
@@ -315,13 +299,13 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
 
                         if (panicButtonEnabled) {
                             HorizontalDivider(color = c.textPrimary.copy(alpha = 0.1f))
-                            Text(s.panicButtonDecoySubtitle, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
+                            Text(s.panicButtonDecoySubtitle, fontSize = 14.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
                             Row(
                                 Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(s.panicButtonDecoyLabel, color = c.textPrimary, fontSize = 14.sp)
+                                Text(s.panicButtonDecoyLabel, color = c.textPrimary, fontSize = 16.sp)
                                 Switch(
                                     checked = panicButtonDecoy,
                                     onCheckedChange = { enabled ->
@@ -340,14 +324,14 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(s.calcDisguiseSubtitle, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
+                        Text(s.calcDisguiseSubtitle, fontSize = 14.sp, color = c.textPrimary.copy(alpha = 0.6f), lineHeight = 17.sp)
 
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(s.calcDisguiseLabel, color = c.textPrimary, fontSize = 14.sp)
+                            Text(s.calcDisguiseLabel, color = c.textPrimary, fontSize = 16.sp)
                             Switch(
                                 checked = calculatorDisguise || calculatorShowCodeEntry,
                                 onCheckedChange = { enabled ->
@@ -370,8 +354,8 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                             OutlinedTextField(
                                 value = calculatorUnlockText,
                                 onValueChange = { calculatorUnlockText = it },
-                                label = { Text(s.calcUnlockCodeLabel, fontSize = 12.sp) },
-                                placeholder = { Text(s.calcUnlockCodeHint, fontSize = 12.sp) },
+                                label = { Text(s.calcUnlockCodeLabel, fontSize = 14.sp) },
+                                placeholder = { Text(s.calcUnlockCodeHint, fontSize = 14.sp) },
                                 singleLine = true,
                                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
@@ -395,7 +379,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
                                 enabled = calculatorUnlockText.toDoubleOrNull() != null,
                                 colors = ButtonDefaults.buttonColors(containerColor = c.accent)
                             ) {
-                                Text(s.calcUnlockCodeSave, color = Color.White)
+                                Text(s.calcUnlockCodeSave, color = if (c.isDark) Color.White else c.textPrimary)
                             }
                         }
                     }
@@ -411,7 +395,7 @@ fun WipeSettingsScreen(onBack: () -> Unit) {
 private fun SectionHeader(title: String, color: Color) {
     Text(
         title.uppercase(),
-        fontSize = 11.sp,
+        fontSize = 13.sp,
         fontWeight = FontWeight.Bold,
         color = color,
         letterSpacing = 1.sp,
@@ -419,31 +403,3 @@ private fun SectionHeader(title: String, color: Color) {
     )
 }
 
-@Composable
-private fun WipeLevelCard(
-    title: String,
-    desc: String,
-    color: Color,
-    c: SubrosaColors
-) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = c.card),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
-                Modifier
-                    .size(8.dp)
-                    .background(color, shape = RoundedCornerShape(50))
-            )
-            Column {
-                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = c.textPrimary)
-                Text(desc, fontSize = 12.sp, color = c.textPrimary.copy(alpha = 0.6f))
-            }
-        }
-    }
-}

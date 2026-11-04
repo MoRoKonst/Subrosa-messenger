@@ -11,6 +11,22 @@ import javax.crypto.KeyGenerator
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+// id-only equals()/hashCode() removed (found live 2026-09-21, while
+// tracking down GroupInfoScreen.kt's "member removed but doesn't disappear
+// from admin's own list" report): every screen holds the active group as
+// `var group by remember { mutableStateOf<Group?>(...) }`, whose default
+// structuralEqualityPolicy short-circuits recomposition when the NEW value
+// `equals()`s the OLD one. With equals() comparing only `id`, reassigning
+// `group = GroupManager.getGroup(groupId)` after removeMember()/addMember()/
+// an avatar change persisted a DIFFERENT members/avatar list was silently
+// treated as "no change" by Compose — the state var updated, but nothing
+// ever recomposed to show it, since two Group instances for the same id
+// were always "equal" no matter what else differed. Same trap for every
+// `remember(group) { ... }` block (isAdmin, isCreator, etc.) — those also
+// never recomputed on a content-only change. A plain data class's default
+// structural equality (comparing every field) doesn't have this problem;
+// no code anywhere relies on id-only Group equality (checked: no Set<Group>/
+// distinctBy/contains() usage depends on it).
 data class Group(
     val id: String,
     val name: String,
@@ -20,17 +36,13 @@ data class Group(
     val createdBy: String,
     val createdAt: Long = System.currentTimeMillis(),
     val groupKey: ByteArray? = null,
-    val description: String = ""
-) {
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (javaClass != other?.javaClass) return false
-        other as Group
-        return id == other.id
-    }
-
-    override fun hashCode(): Int = id.hashCode()
-}
+    val description: String = "",
+    // Photo avatar (SecureFileStorage-encrypted blob path) — group chat
+    // previously had emoji-only avatars. Null means "use the emoji in
+    // `avatar` instead" (mirrors how imagePath/filePath work as optional
+    // alternates to plain text elsewhere in this codebase).
+    val avatarPath: String? = null
+)
 
 data class GroupMessage(
     val id: String,
@@ -48,7 +60,21 @@ data class GroupMessage(
     // 1:1 attachments use.
     val imagePath: String? = null,
     val filePath: String? = null,
-    val fileName: String? = null
+    val fileName: String? = null,
+    // Mirrors ChatScreen.kt's Message.videoPath/videoDuration — group chat
+    // previously had no video-circle (round video message) support at all,
+    // unlike 1:1. videoPath points at the same SecureFileStorage-encrypted
+    // blob file 1:1 video circles use.
+    val videoPath: String? = null,
+    val videoDuration: Int = 0,
+    // Mirrors ChatStorage.StoredMessage.replyToId — group chat previously had
+    // no reply support at all, unlike 1:1. The quoted preview is resolved at
+    // render time (GroupChatScreen.kt looks this id up in the already-loaded
+    // message list), same as Desktop's 1:1 pattern — no separate resolved
+    // `replyTo: GroupMessage?` field needed since GroupMessage already
+    // doubles as both the storage and UI model here (unlike 1:1's split
+    // StoredMessage/Message).
+    val replyToId: String? = null
 )
 
 object GroupManager {
@@ -145,6 +171,7 @@ object GroupManager {
                 put("createdBy", g.createdBy)
                 put("createdAt", g.createdAt)
                 put("description", g.description)
+                g.avatarPath?.let { put("avatarPath", it) }
                 if (g.groupKey != null) {
                     val groupKeyStored = if (StorageKeyManager.isUnlocked) {
                         StorageKeyManager.wrapBytes(g.groupKey)
@@ -208,7 +235,8 @@ object GroupManager {
                     createdBy = obj.getString("createdBy"),
                     createdAt = obj.getLong("createdAt"),
                     groupKey = groupKey,
-                    description = obj.optString("description", "")
+                    description = obj.optString("description", ""),
+                    avatarPath = obj.optString("avatarPath", null)
                 )
             }
 
@@ -253,6 +281,7 @@ object GroupManager {
                 put("createdBy", g.createdBy)
                 put("createdAt", g.createdAt)
                 put("description", g.description)
+                g.avatarPath?.let { put("avatarPath", it) }
                 if (g.groupKey != null) {
                     val groupKeyStored = if (StorageKeyManager.isUnlocked) {
                         StorageKeyManager.wrapBytes(g.groupKey)
@@ -312,6 +341,17 @@ object GroupManager {
             android.util.Log.w("GroupManager", "removeMember: $actorId is not admin of $groupId — rejected")
             return@synchronized
         }
+
+        // If the account being removed is THIS device's own account — whether
+        // by leaving voluntarily or being kicked and told about it remotely —
+        // there's no reason to keep a local record of a group we're no longer
+        // in. Found live: leaving only stripped us from the membership list,
+        // so the group silently stayed in the chat list forever afterward.
+        if (userId == UserStorage.getUserId(context)) {
+            deleteGroup(context, groupId)
+            return@synchronized
+        }
+
         val updatedMembers = group.members.toMutableList()
         val updatedAdmins = group.admins.toMutableList()
 
@@ -371,6 +411,8 @@ object GroupManager {
                 msg.imagePath?.let { put("imagePath", it) }
                 msg.filePath?.let { put("filePath", it) }
                 msg.fileName?.let { put("fileName", it) }
+                msg.videoPath?.let { put("videoPath", it); put("videoDuration", msg.videoDuration) }
+                msg.replyToId?.let { put("replyToId", it) }
             })
         }
 
@@ -395,6 +437,8 @@ object GroupManager {
                 msg.imagePath?.let { put("imagePath", it) }
                 msg.filePath?.let { put("filePath", it) }
                 msg.fileName?.let { put("fileName", it) }
+                msg.videoPath?.let { put("videoPath", it); put("videoDuration", msg.videoDuration) }
+                msg.replyToId?.let { put("replyToId", it) }
             })
         }
         prefs.edit().putString("messages", json.toString()).apply()
@@ -425,7 +469,10 @@ object GroupManager {
                     reactions = reactions,
                     imagePath = obj.optString("imagePath", null),
                     filePath = obj.optString("filePath", null),
-                    fileName = obj.optString("fileName", null)
+                    fileName = obj.optString("fileName", null),
+                    videoPath = obj.optString("videoPath", null),
+                    videoDuration = obj.optInt("videoDuration", 0),
+                    replyToId = obj.optString("replyToId", null)
                 )
             }.sortedBy { it.timestamp }
         } catch (e: Exception) {

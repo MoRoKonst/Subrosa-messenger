@@ -322,10 +322,10 @@ private fun DecoyListScreen(
                 title = {
                     Text(
                         text = "Subrosa",
-                        color = Color.White,
+                        color = c.textPrimary,
                         fontFamily = JetBrainsMono,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 22.sp
+                        fontSize = 24.sp
                     )
                 },
                 actions = {
@@ -339,14 +339,14 @@ private fun DecoyListScreen(
                     ) {
                         Text(
                             text = myDisplayName.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                            fontSize = 14.sp,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             fontFamily = JetBrainsMono
                         )
                     }
                     IconButton(onClick = {}) {
-                        Icon(Icons.Default.Add, contentDescription = null, tint = Color.White)
+                        Icon(painterResource(R.drawable.ic_plus), contentDescription = null, tint = c.textPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
@@ -381,7 +381,7 @@ private fun DecoyListScreen(
                         ) {
                             Text(
                                 text = chat.name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                                fontSize = 20.sp,
+                                fontSize = 22.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color.White,
                                 fontFamily = JetBrainsMono
@@ -391,9 +391,9 @@ private fun DecoyListScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = chat.name,
-                                fontSize = 16.sp,
+                                fontSize = 18.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
+                                color = c.textPrimary,
                                 fontFamily = JetBrainsMono,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -401,7 +401,7 @@ private fun DecoyListScreen(
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = chat.messages.lastOrNull()?.text ?: "",
-                                fontSize = 14.sp,
+                                fontSize = 16.sp,
                                 color = c.textPrimary.copy(alpha = 0.55f),
                                 fontFamily = JetBrainsMono,
                                 maxLines = 1,
@@ -443,7 +443,7 @@ private fun DecoyChatScreen(
         TopAppBar(
             navigationIcon = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                    Icon(painterResource(R.drawable.ic_back_arrow), contentDescription = null)
                 }
             },
             title = {
@@ -452,7 +452,7 @@ private fun DecoyChatScreen(
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 text = chat.name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                                fontSize = 18.sp,
+                                fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
@@ -463,12 +463,12 @@ private fun DecoyChatScreen(
                         Text(
                             chat.name,
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 18.sp,
-                            color = Color.White
+                            fontSize = 20.sp,
+                            color = c.textPrimary
                         )
                         Text(
                             "online",
-                            fontSize = 16.sp,
+                            fontSize = 18.sp,
                             color = c.accent
                         )
                     }
@@ -476,7 +476,7 @@ private fun DecoyChatScreen(
             },
             actions = {
                 IconButton(onClick = {}) {
-                    Icon(Icons.Default.MoreVert, contentDescription = null, tint = Color.White)
+                    Icon(painterResource(R.drawable.ic_menu), contentDescription = null, tint = c.textPrimary)
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
@@ -515,15 +515,16 @@ private fun DecoyChatScreen(
                         ) {
                             Text(
                                 msg.text,
-                                color = Color.White,
+                                color = c.textPrimary,
                                 fontFamily = JetBrainsMono,
-                                fontSize = 15.sp,
+                                fontSize = 17.sp,
                                 lineHeight = 18.sp,
                                 modifier = Modifier.weight(1f, fill = false)
                             )
                             if (msg.fromMe) {
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("✓✓", fontSize = 10.sp, color = Color(0xFF8899AA))
+                                Icon(painter = painterResource(R.drawable.ic_delivered_double),
+                                    contentDescription = null, tint = Color(0xFF8899AA), modifier = Modifier.size(10.dp))
                             }
                         }
                     }
@@ -574,14 +575,14 @@ private fun DecoyChatScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     maxLines = 3,
-                    textStyle = TextStyle(fontSize = 15.sp, color = Color.White),
+                    textStyle = TextStyle(fontSize = 17.sp, color = c.textPrimary),
                     cursorBrush = SolidColor(Color(0xFFFFD700)),
                     decorationBox = { innerTextField ->
                         if (inputText.isEmpty()) {
                             Text(
                                 "Message...",
-                                fontSize = 15.sp,
-                                color = Color(0x88FFFFFF),
+                                fontSize = 17.sp,
+                                color = c.textPrimary.copy(alpha = 0.53f),
                                 fontFamily = JetBrainsMono
                             )
                         }
@@ -603,7 +604,7 @@ private fun DecoyChatScreen(
                 enabled = inputText.isNotEmpty()
             ) {
                 Icon(
-                    Icons.Default.Send,
+                    painterResource(R.drawable.ic_send_arrow),
                     contentDescription = null,
                     tint = if (inputText.isNotEmpty()) c.accent else c.textPrimary.copy(alpha = 0.3f)
                 )

@@ -21,7 +21,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.res.painterResource
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -35,8 +37,10 @@ fun ChangePasswordScreen(onBack: () -> Unit) {
     var currentPassword by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
     var newPasswordRepeat by remember { mutableStateOf("") }
+    var totpCode by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
     var success by remember { mutableStateOf(false) }
+    val totpEnabled = remember { TotpManager.isEnabled(context) }
 
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = c.accent,
@@ -51,10 +55,10 @@ fun ChangePasswordScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(s.changePasswordTitle, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+                title = { Text(s.changePasswordTitle, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.back)
+                        Icon(painterResource(R.drawable.ic_back_arrow), contentDescription = s.back)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -78,7 +82,7 @@ fun ChangePasswordScreen(onBack: () -> Unit) {
             ) {
                 Text(
                     s.changePasswordDesc,
-                    fontSize = 13.sp,
+                    fontSize = 15.sp,
                     lineHeight = 18.sp,
                     color = c.textPrimary.copy(alpha = 0.75f)
                 )
@@ -102,12 +106,26 @@ fun ChangePasswordScreen(onBack: () -> Unit) {
                     label = { Text(s.changePasswordCurrent) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                    ),
                     textStyle = TextStyle(color = c.textPrimary),
                     colors = fieldColors,
                     modifier = Modifier
                         .fillMaxWidth()
                         .bringIntoViewRequester(currentBringIntoView)
-                        .onFocusEvent { if (it.isFocused) scope.launch { currentBringIntoView.bringIntoView() } }
+                        .onFocusEvent {
+                            // An immediate bringIntoView() targets the pre-keyboard
+                            // viewport (field often already "fits" then), so it does
+                            // nothing, and the IME covers the field once it finishes
+                            // sliding up with no further trigger. Delaying past the
+                            // IME's own show animation fixes this — same issue as
+                            // TotpSettingsScreen.kt.
+                            if (it.isFocused) scope.launch {
+                                delay(300)
+                                currentBringIntoView.bringIntoView()
+                            }
+                        }
                 )
 
                 val newBringIntoView = remember { BringIntoViewRequester() }
@@ -117,12 +135,20 @@ fun ChangePasswordScreen(onBack: () -> Unit) {
                     label = { Text(s.changePasswordNew) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                    ),
                     textStyle = TextStyle(color = c.textPrimary),
                     colors = fieldColors,
                     modifier = Modifier
                         .fillMaxWidth()
                         .bringIntoViewRequester(newBringIntoView)
-                        .onFocusEvent { if (it.isFocused) scope.launch { newBringIntoView.bringIntoView() } }
+                        .onFocusEvent {
+                            if (it.isFocused) scope.launch {
+                                delay(300)
+                                newBringIntoView.bringIntoView()
+                            }
+                        }
                 )
 
                 val repeatBringIntoView = remember { BringIntoViewRequester() }
@@ -132,23 +158,58 @@ fun ChangePasswordScreen(onBack: () -> Unit) {
                     label = { Text(s.changePasswordRepeat) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                    ),
                     textStyle = TextStyle(color = c.textPrimary),
                     colors = fieldColors,
                     modifier = Modifier
                         .fillMaxWidth()
                         .bringIntoViewRequester(repeatBringIntoView)
-                        .onFocusEvent { if (it.isFocused) scope.launch { repeatBringIntoView.bringIntoView() } }
+                        .onFocusEvent {
+                            if (it.isFocused) scope.launch {
+                                delay(300)
+                                repeatBringIntoView.bringIntoView()
+                            }
+                        }
                 )
 
+                if (totpEnabled) {
+                    val totpBringIntoView = remember { BringIntoViewRequester() }
+                    OutlinedTextField(
+                        value = totpCode,
+                        onValueChange = { totpCode = it; error = "" },
+                        label = { Text(s.backupTotpCodeLabel) },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        ),
+                        textStyle = TextStyle(color = c.textPrimary),
+                        colors = fieldColors,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .bringIntoViewRequester(totpBringIntoView)
+                            .onFocusEvent {
+                                if (it.isFocused) scope.launch {
+                                    delay(300)
+                                    totpBringIntoView.bringIntoView()
+                                }
+                            }
+                    )
+                }
+
                 if (error.isNotEmpty()) {
-                    Text(error, color = Color(0xFFEF5350), fontSize = 13.sp)
+                    Text(error, color = Color(0xFFEF5350), fontSize = 15.sp)
                 }
 
                 Button(
                     onClick = {
+                        val totpSecret = if (totpEnabled) TotpManager.getSecret(context) else null
                         when {
                             !UserStorage.checkPassword(context, currentPassword) ->
                                 error = s.changePasswordErrCurrentWrong
+                            totpEnabled && (totpSecret == null || !TotpManager.verifyCode(totpSecret, totpCode)) ->
+                                error = s.totpErrInvalidCode
                             newPassword.length < PasswordPolicy.MIN_LENGTH ->
                                 error = s.registerErrorPasswordLength
                             PasswordPolicy.isCommonPassword(newPassword) ->
@@ -166,7 +227,7 @@ fun ChangePasswordScreen(onBack: () -> Unit) {
                                     // longer decrypt local data, or vice versa.
                                     UserStorage.updatePassword(context, newPassword)
                                     StorageKeyManager.changePassword(context, newPassword)
-                                    currentPassword = ""; newPassword = ""; newPasswordRepeat = ""
+                                    currentPassword = ""; newPassword = ""; newPasswordRepeat = ""; totpCode = ""
                                     success = true
                                 } catch (e: Exception) {
                                     error = s.error(e.message ?: "")
@@ -177,7 +238,7 @@ fun ChangePasswordScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = c.accent)
                 ) {
-                    Text(s.changePasswordSubmit, color = Color.White)
+                    Text(s.changePasswordSubmit, color = if (c.isDark) Color.White else c.textPrimary)
                 }
             }
         }

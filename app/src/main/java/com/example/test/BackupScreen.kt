@@ -26,11 +26,14 @@ import androidx.compose.foundation.layout.size
 import androidx.core.content.FileProvider
 import java.io.File
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
+import com.subrosa.messenger.ui.theme.Inter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.ui.res.painterResource
 
-private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
+// App-wide font swap 2026-09-22 — name kept for API stability.
+private val AppFont = Inter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,7 +92,7 @@ fun BackupScreen(onBack: () -> Unit) {
                     BackupManager.importBackup(context, content, pwd, totpSecretInput, totpCodeInput, totpRecoveryCodeInput)
                 }
                 if (result.isSuccess) {
-                    message = "✓ ${result.getOrNull()}"
+                    message = "${result.getOrNull()}"
                     isError = false
                     password = ""
                     confirmPassword = ""
@@ -133,10 +136,10 @@ fun BackupScreen(onBack: () -> Unit) {
         containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Text(s.backupTitle, color = Color.White, fontFamily = AppFont) },
+                title = { Text(s.backupTitle, color = c.textPrimary, fontFamily = AppFont) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back, tint = Color.White)
+                        Icon(painterResource(R.drawable.ic_back_arrow), s.back, tint = c.textPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
@@ -158,7 +161,7 @@ fun BackupScreen(onBack: () -> Unit) {
             ) {
                 Text(
                     s.backupSubtitle,
-                    fontSize = 14.sp,
+                    fontSize = 16.sp,
                     color = c.textPrimary.copy(alpha = 0.6f),
                     fontFamily = AppFont
                 )
@@ -172,21 +175,21 @@ fun BackupScreen(onBack: () -> Unit) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
                             s.backupSecurityTitle,
-                            fontSize = 14.sp,
+                            fontSize = 16.sp,
                             color = Color(0xFFFF9800),
                             fontFamily = AppFont
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             s.backupSecurityText,
-                            fontSize = 12.sp,
+                            fontSize = 14.sp,
                             color = c.textPrimary.copy(alpha = 0.85f),
                             fontFamily = AppFont
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             s.backupSecurityTips,
-                            fontSize = 12.sp,
+                            fontSize = 14.sp,
                             color = c.textPrimary.copy(alpha = 0.6f),
                             fontFamily = AppFont
                         )
@@ -200,6 +203,9 @@ fun BackupScreen(onBack: () -> Unit) {
                     onValueChange = { password = it },
                     label = { Text(s.backupPassword, fontFamily = AppFont) },
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                    ),
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
                     colors = fieldColors
@@ -212,6 +218,9 @@ fun BackupScreen(onBack: () -> Unit) {
                     onValueChange = { confirmPassword = it },
                     label = { Text(s.backupRepeatPassword, fontFamily = AppFont) },
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                    ),
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
                     colors = fieldColors
@@ -233,7 +242,15 @@ fun BackupScreen(onBack: () -> Unit) {
                         !TotpManager.isEnabled(context) -> { message = s.backupErrTotpRequired; isError = true }
                         password.isEmpty() -> { message = s.backupErrEnterPassword; isError = true }
                         password != confirmPassword -> { message = s.backupErrPasswordMatch; isError = true }
-                        password.length < 8 -> { message = s.backupErrPasswordLength; isError = true }
+                        password.length < PasswordPolicy.MIN_LENGTH -> { message = s.backupErrPasswordLength; isError = true }
+                        // Found live 2026-08-30, alongside the restore-from-onboarding fix
+                        // (BackupManager.importBackup()): a weak/common backup password isn't
+                        // just an offline-brute-force risk against the exported file — it now
+                        // also becomes this device's actual local login password whenever the
+                        // backup is restored on a fresh install, so the same strength floor
+                        // RegisterScreen enforces for a normal password belongs here too. This
+                        // check was missing entirely; only length was enforced.
+                        PasswordPolicy.isCommonPassword(password) -> { message = s.registerErrorPasswordCommon; isError = true }
                         else -> {
                             val pwd = password
                             scope.launch {
@@ -257,7 +274,7 @@ fun BackupScreen(onBack: () -> Unit) {
                     Button(
                         onClick = {
                             launchExport { backup ->
-                                val file = File(context.cacheDir, "beacon_backup_tmp.backup")
+                                val file = File(context.cacheDir, "subrosa_backup_tmp.backup")
                                 try {
                                     file.writeText(backup)
                                     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
@@ -278,7 +295,7 @@ fun BackupScreen(onBack: () -> Unit) {
                         colors = ButtonDefaults.buttonColors(containerColor = c.topBar),
                         enabled = !isLoading
                     ) {
-                        Text(s.backupExport, fontFamily = AppFont, color = Color.White, fontSize = 13.sp)
+                        Text(s.backupExport, fontFamily = AppFont, color = c.textPrimary, fontSize = 15.sp)
                     }
                     Button(
                         onClick = {
@@ -291,7 +308,7 @@ fun BackupScreen(onBack: () -> Unit) {
                         colors = ButtonDefaults.buttonColors(containerColor = c.topBar),
                         enabled = !isLoading
                     ) {
-                        Text("В файлы", fontFamily = AppFont, color = Color.White, fontSize = 13.sp)
+                        Text("В файлы", fontFamily = AppFont, color = c.textPrimary, fontSize = 15.sp)
                     }
                 }
 
@@ -321,7 +338,7 @@ fun BackupScreen(onBack: () -> Unit) {
 
                 Text(
                     s.backupTotpRecoveryOr,
-                    fontSize = 12.sp,
+                    fontSize = 14.sp,
                     color = c.textPrimary.copy(alpha = 0.5f),
                     fontFamily = AppFont
                 )
@@ -361,7 +378,7 @@ fun BackupScreen(onBack: () -> Unit) {
                     Text(
                         message,
                         color = if (isError) c.error else Color(0xFF27AE60),
-                        fontSize = 14.sp,
+                        fontSize = 16.sp,
                         fontFamily = AppFont
                     )
                 }

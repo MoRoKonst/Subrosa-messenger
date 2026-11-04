@@ -3,10 +3,11 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-
-    <!-- Play: solid rightward triangle -->
     <path
-        android:pathData="M6,4 L6,20 L20,12 Z"
-        android:fillColor="#FFFFFF"/>
-
+        android:pathData="M7 4v16l13 -8l-13 -8"
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
 </vector>

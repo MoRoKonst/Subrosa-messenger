@@ -61,6 +61,14 @@ cp ../.env.example ../.env
 nano ../.env
 ```
 
+**Push notifications (FCM) — decide now, not later**: by default this
+deployment has no push provider configured, meaning background message
+delivery relies solely on the app's own reconnect behavior (queued, not
+lost, but can be delayed). If you want reliable background delivery, set
+`GOOGLE_APPLICATION_CREDENTIALS` to a Firebase service-account JSON path —
+see [DEPLOY.md's Push Notifications section](DEPLOY.md#push-notifications-fcm--deployment-profile)
+for the full "Standard vs. Strict No-Third-Party" trade-off before choosing.
+
 ### Step 4: Start Server
 
 ```bash

@@ -167,7 +167,7 @@ fun CalculatorScreen(onUnlock: () -> Unit) {
             if (pendingOp != null) {
                 Text(
                     "$pendingStr $pendingOp",
-                    fontSize = 20.sp,
+                    fontSize = 22.sp,
                     color = Color.White.copy(alpha = 0.45f),
                     textAlign = TextAlign.End
                 )
@@ -221,7 +221,7 @@ fun CalculatorScreen(onUnlock: () -> Unit) {
                         ) {
                             Text(
                                 btn.label,
-                                fontSize = 28.sp,
+                                fontSize = 30.sp,
                                 color = btn.fg,
                                 fontWeight = FontWeight.Normal,
                                 modifier = if (isWide) Modifier.padding(start = 34.dp) else Modifier

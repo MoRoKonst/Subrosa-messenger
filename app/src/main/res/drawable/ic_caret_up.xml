@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="256"
+    android:viewportHeight="256">
+    <!-- Phosphor Icons "caret-up" (fill weight) — from icons/иконки phosphor/SVGs/fill/caret-up-fill.svg -->
+    <path
+        android:pathData="M213.66,154.34l-80,-80a8,8,0,0,0,-11.32,0l-80,80A8,8,0,0,0,48,168H208a8,8,0,0,0,5.66,-13.66Z"
+        android:fillColor="#FF000000"/>
+</vector>

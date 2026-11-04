@@ -1,0 +1,19 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="256"
+    android:viewportHeight="256">
+    <!-- Phosphor Icons "qr-code" (fill weight) — from icons/иконки phosphor/SVGs/fill/qr-code-fill.svg.
+         Source SVG uses <rect rx> for the 3 finder squares; Android vector
+         drawables have no <rect> tag, so those were hand-converted to
+         equivalent rounded-rect path arcs, combined here with the source's
+         own path data for the connector glyph. -->
+    <path
+        android:pathData="M56,40H104A16,16 0 0 1 120,56V104A16,16 0 0 1 104,120H56A16,16 0 0 1 40,104V56A16,16 0 0 1 56,40Z
+                           M56,136H104A16,16 0 0 1 120,152V200A16,16 0 0 1 104,216H56A16,16 0 0 1 40,200V152A16,16 0 0 1 56,136Z
+                           M152,40H200A16,16 0 0 1 216,56V104A16,16 0 0 1 200,120H152A16,16 0 0 1 136,104V56A16,16 0 0 1 152,40Z
+                           M144,184a8,8,0,0,0,8-8V144a8,8,0,0,0-16,0v32A8,8,0,0,0,144,184Z
+                           M208,152H184v-8a8,8,0,0,0-16,0v56H144a8,8,0,0,0,0,16h32a8,8,0,0,0,8-8V168h24a8,8,0,0,0,0-16Z
+                           M208,184a8,8,0,0,0-8,8v16a8,8,0,0,0,16,0V192A8,8,0,0,0,208,184Z"
+        android:fillColor="#FF000000"/>
+</vector>

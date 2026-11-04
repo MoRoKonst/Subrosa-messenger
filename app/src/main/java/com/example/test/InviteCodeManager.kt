@@ -74,6 +74,13 @@ object InviteCodeManager {
         return "$PREFIX$encoded"
     }
 
+    // Fixed-size fields only (version+ts+nonce+tag+fp+ecPoint+nameLenByte+sig),
+    // with a zero-length name — the smallest a structurally valid payload
+    // could ever be. Checked before any ByteBuffer reads/allocations, not
+    // just relied upon via a BufferUnderflowException from a short get()
+    // call. Found in the 2026-09-13 cross-platform InviteCodeManager audit.
+    private const val MIN_PAYLOAD_SIZE = 1 + 4 + 8 + 16 + 8 + 65 + 1 + 64
+
     fun parseInviteCode(inviteCode: String): InviteData? {
         val code = inviteCode.trim()
         if (!code.startsWith(PREFIX)) return null
@@ -83,6 +90,7 @@ object InviteCodeManager {
                 code.removePrefix(PREFIX),
                 Base64.URL_SAFE or Base64.NO_WRAP
             )
+            if (payload.size < MIN_PAYLOAD_SIZE) return null
             val buf = ByteBuffer.wrap(payload)
 
             val version = buf.get()
@@ -102,6 +110,15 @@ object InviteCodeManager {
             val nameLen = buf.get().toInt() and 0xFF
             val nameBytes = ByteArray(nameLen).also { buf.get(it) }
             val rawSig = ByteArray(64).also { buf.get(it) }
+
+            // Reject non-canonical payloads — trailing bytes beyond the last
+            // declared field (the signature) would otherwise be silently
+            // ignored: they aren't covered by the signature either way (it's
+            // computed over exactly the fields above), so a payload with
+            // junk appended still parsed and verified successfully before
+            // this check. Found in the 2026-09-13 cross-platform
+            // InviteCodeManager audit.
+            if (buf.remaining() != 0) return null
 
             val x509Bytes = EC_P256_X509_HEADER + ecPoint
             val publicKeyB64 = Base64.encodeToString(x509Bytes, Base64.URL_SAFE or Base64.NO_WRAP)

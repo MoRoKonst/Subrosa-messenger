@@ -24,6 +24,11 @@ object SessionKeyManager {
     private const val MAX_SKIPPED_KEYS = 100
     private const val SKIPPED_KEY_TTL_MS = 7 * 24 * 60 * 60 * 1000L
     private const val SPK_GRACE_PERIOD_MS = 14 * 24 * 60 * 60 * 1000L
+    // How many past DH-ratchet epoch keys (recvRatchetPub values we've
+    // already stepped past) to remember, so a replayed/redelivered message
+    // from an old epoch can be recognized as stale instead of being
+    // mistaken for a genuine forward step — see nextRecvKey()'s comment.
+    private const val MAX_PREVIOUS_RATCHET_EPOCHS = 5
 
     data class PrekeyBundle(
         val identityKey: String,
@@ -58,7 +63,12 @@ object SessionKeyManager {
         val recvRatchetPub: ByteArray? = null,
 
         val skippedKeys: Map<String, ByteArray> = emptyMap(),
-        val skippedKeyTimestamps: Map<String, Long> = emptyMap()
+        val skippedKeyTimestamps: Map<String, Long> = emptyMap(),
+
+        // Base64 recvRatchetPub values from epochs we've already ratcheted
+        // past (most recent last), bounded by MAX_PREVIOUS_RATCHET_EPOCHS.
+        // Public keys, not secret — no SecureMemory.wipe needed.
+        val previousRecvRatchetPubs: List<String> = emptyList()
     )
 
     data class SendKeyResult(
@@ -110,6 +120,36 @@ object SessionKeyManager {
         loadAllSessions()
     }
 
+    /** True only when spk_private_key_$id is SMK-wrapped and fails to decrypt
+     *  under the CURRENT SMK with an AEAD tag mismatch specifically — i.e.
+     *  it was wrapped under a PREVIOUS, now-orphaned SMK. StorageKeyManager.setup()
+     *  mints a brand-new random SMK every time it runs (LoginScreen.kt and
+     *  RegisterScreen.kt both call it), so a re-registration on a device
+     *  that already has stored SPK data leaves that data permanently
+     *  undecryptable under the new SMK. Distinct from merely "locked"
+     *  (isUnlocked == false), which is NOT stale and must keep waiting for
+     *  unlock rather than discard a possibly-still-valid key.
+     *  Found live, 2026-09-18 (Desktop port of the same bug — see
+     *  SessionKeyManager.kt's isWrappedUnderStaleSmk on that platform):
+     *  without this check, the "no rotation needed" branch below left
+     *  currentSpk permanently null in this exact scenario — every
+     *  getLocalPrekeyBundle()-equivalent call threw "SPK не инициализирован"
+     *  forever, so this device's prekey bundle was never published and
+     *  peers' get_prekey_bundle for it returned null indefinitely. */
+    private fun isWrappedUnderStaleSmk(context: Context, id: Int): Boolean {
+        val encPrefs = EncryptedStorage.getEncryptedPrefs(context, "${PREFS_NAME}_secure")
+        val privB64 = encPrefs.getString("spk_private_key_${id}", null) ?: return false
+        if (!privB64.startsWith(StorageKeyManager.SMK_PREFIX) || !StorageKeyManager.isUnlocked) return false
+        return try {
+            StorageKeyManager.unwrapBytes(privB64)
+            false
+        } catch (e: javax.crypto.AEADBadTagException) {
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     private fun generateOrRotateSpk(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val encPrefs = EncryptedStorage.getEncryptedPrefs(context, "${PREFS_NAME}_secure")
@@ -118,7 +158,8 @@ object SessionKeyManager {
         val now = System.currentTimeMillis()
 
         val needsRotation = savedSpkId == -1 ||
-                (now - savedCreatedAt) > SPK_ROTATION_INTERVAL_MS
+                (now - savedCreatedAt) > SPK_ROTATION_INTERVAL_MS ||
+                (savedSpkId >= 0 && isWrappedUnderStaleSmk(context, savedSpkId))
 
         if (needsRotation) {
 
@@ -420,13 +461,47 @@ object SessionKeyManager {
         return prekeyBundleToJson(bundle)
     }
 
-    // NOTE on the PQ-hybrid crypto upgrade migration: unlike Desktop, Android
-    // does not need a one-time "reset pre-upgrade sessions" step here.
-    // MessengerService.connect() already calls deleteAllSessions() +
-    // initialize() on every single reconnect (see there), which wipes all
-    // local Double Ratchet state unconditionally — the very next reconnect
-    // after this upgrade ships already forces every contact through a fresh
-    // PQ-hybrid X3DH handshake, with no extra code required.
+    // NOTE on the PQ-hybrid crypto upgrade migration (updated 2026-09-13,
+    // SessionKeyManager cross-platform audit — the previous version of this
+    // comment was stale): MessengerService.connect() no longer calls
+    // deleteAllSessions() + initialize() on every reconnect — that
+    // unconditional per-reconnect wipe was itself root-caused and removed
+    // live 2026-08-17 (see connect()'s own comment) for destroying healthy
+    // sessions on routine reconnects, unrelated to any upgrade. It did,
+    // however, remain in place for the entire window the PQ-hybrid upgrade
+    // was rolled out and was still active for some time afterward — by
+    // the time it was removed, ordinary reconnect frequency (foreground/
+    // background transitions, network changes) had already forced every
+    // reachable installed session through at least one fresh PQ-hybrid
+    // X3DH handshake. initiateSession()/receiveSession() have never had a
+    // non-PQ code path since, so no session created from this point forward
+    // can be anything but PQ-hybrid either. Net effect: the migration this
+    // comment describes already happened historically; no supported
+    // upgrade path can still be carrying a pre-PQ session today, so no
+    // Desktop-style consumePendingPqMigrationContacts() equivalent is
+    // needed here. (Desktop needed its own explicit one-time migration
+    // specifically because it never had an equivalent reconnect-wipe safety
+    // net during its own PQ rollout.)
+
+    /** Diagnostics only (2026-08-31, chasing a persistent post-restore
+     *  BAD_DECRYPT) — lets CryptoManager.decrypt() log which SPK/PQ epoch
+     *  it's actually holding at decrypt time, without exposing key material. */
+    fun getCurrentSpkId(): Int = currentSpkId
+
+    /** Diagnostics only, same as above — whether a previous-epoch PQ key is
+     *  still in its grace period, and how much of it is left. */
+    fun getPreviousPqGraceRemainingMs(): Long? {
+        if (previousPqKem == null) return null
+        val remaining = SPK_GRACE_PERIOD_MS - (System.currentTimeMillis() - previousSpkCreatedAt)
+        return remaining.coerceAtLeast(0L)
+    }
+
+    /** Diagnostics only (2026-08-31) — the PUBLIC half of the same current PQ
+     *  KEM keypair, so CryptoManager.decrypt() can log a short hash of it
+     *  next to the sender's own logged hash of whatever key they sealed
+     *  against, to directly confirm (or rule out) a key mismatch instead of
+     *  inferring it from SPK id/timing alone. */
+    fun getCurrentPqPublicKeyForDiagnostics(): ByteArray? = currentPqKem?.publicKey
 
     /** Current PQ KEM private key — used by CryptoManager's hybrid legacy-ECDH decrypt(). */
     fun getCurrentPqPrivateKey(): ByteArray? = currentPqKem?.privateKey
@@ -436,6 +511,124 @@ object SessionKeyManager {
         if (previousPqKem == null) return null
         if (System.currentTimeMillis() - previousSpkCreatedAt > SPK_GRACE_PERIOD_MS) return null
         return previousPqKem?.privateKey
+    }
+
+    /** Snapshot of the current long-term prekey (SPK EC keypair + PQ KEM
+     *  keypair + when it was minted) — used only by BackupManager, see
+     *  restorePrekeyFromBackup()'s comment for why. */
+    data class PrekeySnapshot(
+        val spkId: Int,
+        val spkCreatedAt: Long,
+        val spkPublic: ByteArray,
+        val spkPrivate: ByteArray,
+        val pqPublic: ByteArray,
+        val pqPrivate: ByteArray
+    )
+
+    fun exportCurrentPrekeyForBackup(): PrekeySnapshot? {
+        val spk = currentSpk ?: return null
+        val pq = currentPqKem ?: return null
+        return PrekeySnapshot(
+            spkId = currentSpkId,
+            spkCreatedAt = spkCreatedAt,
+            spkPublic = spk.public.encoded,
+            spkPrivate = spk.private.encoded,
+            pqPublic = pq.publicKey,
+            pqPrivate = pq.privateKey
+        )
+    }
+
+    /** Found live 2026-09-02, after chasing the same symptom through two
+     *  earlier band-aids (the pendingResetContacts session_reset broadcast,
+     *  then pq_bundle_refresh for the hasSession()==true branch it missed):
+     *  neither actually addresses the root cause, they only try to notify
+     *  contacts *after the fact* that our prekey changed — fragile, since
+     *  it depends on tokens/mailbox state surviving the same wipe and on
+     *  the contact being reachable at all. The real problem is that
+     *  wipeCurrentIdentityData() + a fresh install always mints a brand
+     *  new SPK/PQ-KEM with NO grace period, because the old one was
+     *  physically deleted by WipeManager.hardWipe() and the backup never
+     *  carried a replacement — every restore is an unplanned, un-graced
+     *  key rotation. Normal scheduled rotation (generateOrRotateSpk()) is
+     *  never a problem precisely because it keeps the old key valid for
+     *  SPK_GRACE_PERIOD_MS (14 days) while contacts catch up naturally.
+     *  Restoring this snapshot into the fresh install's storage BEFORE
+     *  initialize() ever runs means generateOrRotateSpk() sees an existing
+     *  spk_id and treats this exactly like an ordinary reconnect (or, if
+     *  the backup is old enough that SPK_ROTATION_INTERVAL_MS has already
+     *  elapsed, an ordinary *scheduled* rotation with the real original
+     *  spkCreatedAt — so the restored key still correctly graduates into
+     *  "previous, valid for its own real 14-day grace window" instead of
+     *  vanishing outright). Contacts' already-cached copy of our bundle
+     *  just keeps working; nothing needs to notify anyone of anything.
+     *  Must be called before SessionKeyManager.initialize() runs for this
+     *  install — BackupManager.importBackup() does so right after it
+     *  restores the EC identity key, while StorageKeyManager is still
+     *  guaranteed unlocked from that same check. */
+    fun restorePrekeyFromBackup(context: Context, snapshot: PrekeySnapshot) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val encPrefs = EncryptedStorage.getEncryptedPrefs(context, "${PREFS_NAME}_secure")
+        prefs.edit()
+            .putInt("spk_id", snapshot.spkId)
+            .putLong("spk_created_at", snapshot.spkCreatedAt)
+            .putString("spk_public_${snapshot.spkId}", Base64.encodeToString(snapshot.spkPublic, Base64.NO_WRAP))
+            .putString("pq_kem_public_${snapshot.spkId}", Base64.encodeToString(snapshot.pqPublic, Base64.NO_WRAP))
+            .apply()
+        encPrefs.edit()
+            .putString("spk_private_key_${snapshot.spkId}", wrapKeyBytes(snapshot.spkPrivate))
+            .putString("pq_kem_private_key_${snapshot.spkId}", wrapKeyBytes(snapshot.pqPrivate))
+            .apply()
+        // In-memory state too, in case initialize() already ran earlier in
+        // this same process (e.g. BackupScreen's "already logged in"
+        // import path) and won't run again — otherwise the write above
+        // would sit correctly on disk but this process would keep using
+        // whatever it already had in memory until its next cold start.
+        currentSpkId = snapshot.spkId
+        spkCreatedAt = snapshot.spkCreatedAt
+        try {
+            val kf = KeyFactory.getInstance("EC")
+            currentSpk = KeyPair(
+                kf.generatePublic(X509EncodedKeySpec(snapshot.spkPublic)),
+                kf.generatePrivate(PKCS8EncodedKeySpec(snapshot.spkPrivate))
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "restorePrekeyFromBackup: не удалось восстановить SPK в памяти: ${e.message}")
+        }
+        currentPqKem = PqCrypto.PqKeyPair(snapshot.pqPublic, snapshot.pqPrivate)
+        Log.d(TAG, "Prekey восстановлен из бэкапа: spkId=${snapshot.spkId}")
+    }
+
+    /** Found live 2026-09-02: first attempt at this backed up the actual
+     *  OPK keypairs (like the "OpkSnapshot" name below used to imply) and
+     *  restored them verbatim. Looked right for a single restore, but OPKs
+     *  are one-time by protocol design (see receiveSession()'s consumeOpk()
+     *  call) — restoring the exact keypairs frozen in a backup FILE means
+     *  restoring that same file a second time hands out ids that may have
+     *  already been consumed for real in the meantime, either as a clean
+     *  "OPK N уже использован" SecurityException (already handled fine by
+     *  the existing get_prekey_bundle + session_reset self-heal, confirmed
+     *  live) or, worse, an id collision with a since-reissued one for a
+     *  silent wrong-key X3DH derivation — a new instance of the exact class
+     *  of bug this whole backup-restore effort exists to close.
+     *
+     *  Only the counter is worth carrying forward: it guarantees freshly
+     *  generated ids after a restore never reuse a number any contact might
+     *  still hold a reference to, without ever reusing actual one-time key
+     *  material. The pool itself is left for refillOpkPool() to populate
+     *  with brand-new keys, same as any ordinary top-up — no different from
+     *  what already happens after every fresh registration. */
+    fun exportOpkCounterForBackup(): Int = opkIdCounter.get()
+
+    fun restoreOpkCounterFromBackup(context: Context, counter: Int) {
+        if (counter <= 0) return
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // max(), not overwrite — never move the counter backward, in case
+        // this device's own post-wipe pool (generated before the restore
+        // ran, e.g. if something already touched SessionKeyManager this
+        // process) is already ahead of the backup's.
+        opkIdCounter.set(maxOf(opkIdCounter.get(), counter))
+        prefs.edit().putInt("opk_counter", opkIdCounter.get()).apply()
+        Log.d(TAG, "OPK-счётчик поднят из бэкапа: ${opkIdCounter.get()}")
     }
 
     // synchronized(this) added (external review 2026-08-23): every other
@@ -452,8 +645,40 @@ object SessionKeyManager {
     // bug found live 2026-08-17.
     fun initiateSession(
         contactId: String,
-        recipientBundle: PrekeyBundle
+        recipientBundle: PrekeyBundle,
+        // Test-only: overrides which local identity key pair is used for the
+        // ecdhWithKeystore() term below, instead of the device's real
+        // AndroidKeyStore-backed identity. Every real call site omits this
+        // (defaults to null → ecdhWithKeystore() behaves exactly as before,
+        // zero behavior change). Exists solely so runAdvancedTests()' TESTS
+        // 13-16 can simulate a genuine two-party handshake in a single
+        // process: ecdhWithKeystore() always uses this device's one real
+        // identity, so without an override, a self-loopback test's
+        // "Alice" and "Bob" roles collapse onto the same identity and the
+        // same sessions[contactId] map slot (see that test's own comment
+        // for the full derivation). See docs/SECURITY_INVARIANTS.md if this
+        // parameter is ever considered for a non-test caller — it must not be.
+        identityOverride: KeyPair? = null
     ): Pair<SessionState, JSONObject> = synchronized(this) {
+
+        // S6-46: cryptographic identity binding — the bundle's own identity
+        // public key must derive to the SAME fingerprint as the contact we
+        // actually asked for. Previously absent: nothing here checked the
+        // bundle's cryptographic material against contactId at all, so a
+        // server (or, for a federated target, an unauthenticated federation
+        // peer) that attached the wrong bundle to a requested fingerprint
+        // would have its substitution trusted silently — the outer "from"/
+        // requested-target label was treated as proof on its own. Checked
+        // BEFORE SPK/PQ signature trust, OPK use, or session creation, using
+        // the exact same fingerprint computation the server uses for every
+        // real account (sha256(identity DER bytes)[:8] hex uppercase — see
+        // docs/SECURITY_INVARIANTS.md #59).
+        val identityKeyBytes = Base64.decode(recipientBundle.identityKey, Base64.NO_WRAP)
+        val actualFingerprint = MessageDigest.getInstance("SHA-256").digest(identityKeyBytes)
+            .take(8).joinToString("") { "%02X".format(it) }
+        if (actualFingerprint != contactId) {
+            throw SecurityException("Identity-ключ bundle не совпадает с запрошенным $contactId — возможна подмена ключа!")
+        }
 
         val isSpkValid = CryptoManager.verify(
             recipientBundle.signedPrekey,
@@ -490,7 +715,7 @@ object SessionKeyManager {
         var dhR: ByteArray? = null
 
         try {
-            dh1 = ecdhWithKeystore(spkRecipient)
+            dh1 = if (identityOverride != null) ecdh(identityOverride.private, spkRecipient) else ecdhWithKeystore(spkRecipient)
             dh2 = ecdh(ephemeralKp.private, ikRecipient)
             dh3 = ecdh(ephemeralKp.private, spkRecipient)
 
@@ -566,11 +791,40 @@ object SessionKeyManager {
     }
 
     // synchronized(this) added -- see initiateSession() above for why.
+    //
+    // Defense-in-depth fingerprint binding (2026-09-13 cross-platform
+    // session_init audit): the real, authoritative check lives in the
+    // caller (MessengerService.processSessionInit()), BEFORE any cache is
+    // touched — this one exists only in case a future/other caller ever
+    // invokes receiveSession() directly without redoing that check itself.
+    // Not a substitute for the caller-side check: by the time this
+    // function runs, receiveSession() itself is already about to mutate
+    // `sessions[contactId]`, so this only protects against a caller that
+    // skipped its own verification, not against the caches
+    // processSessionInit() writes before calling this (there are none,
+    // now — see its own comment).
     fun receiveSession(
         contactId: String,
         senderIdentityKey: String,
-        x3dhHeader: JSONObject
+        x3dhHeader: JSONObject,
+        // Test-only override — see initiateSession()'s identityOverride
+        // param for the full rationale. Same contract: every real call
+        // site omits this, defaulting to null (ecdhWithKeystore() behaves
+        // exactly as before).
+        identityOverride: KeyPair? = null
     ): SessionState = synchronized(this) {
+        run {
+            val ikBytes = try {
+                Base64.decode(senderIdentityKey, Base64.NO_WRAP)
+            } catch (e: Exception) {
+                throw SecurityException("receiveSession: senderIdentityKey не является валидным Base64 для $contactId")
+            }
+            val actualFingerprint = MessageDigest.getInstance("SHA-256")
+                .digest(ikBytes).take(8).joinToString("") { "%02X".format(it) }
+            if (actualFingerprint != contactId) {
+                throw SecurityException("receiveSession: identity key не соответствует $contactId (реальный=$actualFingerprint)")
+            }
+        }
 
         val ephemeralPublicB64 = x3dhHeader.getString("ephemeral_key")
         val spkId = x3dhHeader.getInt("spk_id")
@@ -619,7 +873,7 @@ object SessionKeyManager {
 
         try {
             dh1 = ecdh(spk.private, ikSender)
-            dh2 = ecdhWithKeystore(ephemeralPublic)
+            dh2 = if (identityOverride != null) ecdh(identityOverride.private, ephemeralPublic) else ecdhWithKeystore(ephemeralPublic)
             dh3 = ecdh(spk.private, ephemeralPublic)
 
             if (opkId != null) {
@@ -746,11 +1000,14 @@ object SessionKeyManager {
         val currentDhPubB64 = state.recvRatchetPub?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
         val isDHStep = inDHRatchet && dhKeyB64 != currentDhPubB64
 
-        val epochPrefix = when {
-            !inDHRatchet      -> ""
-            !isDHStep         -> "$dhKeyB64:"
-            else              -> if (currentDhPubB64 != null) "$currentDhPubB64:" else ""
-        }
+        // Simplified 2026-09-02 (was a three-way `when` mixing dhKeyB64 and
+        // currentDhPubB64 depending on isDHStep) — always namespace by the
+        // epoch the INCOMING message actually claims (dhKeyB64), never by
+        // whatever we currently happen to have tracked. Those only differ
+        // while isDHStep is true, i.e. exactly the case that needs fixing
+        // below — see that comment for why "currently tracked" is the wrong
+        // thing to key skipped entries by.
+        val epochPrefix = if (inDHRatchet) "$dhKeyB64:" else ""
         val lookupKey = "$epochPrefix$expectedCounter"
 
         Log.d(TAG, "DEBUG-RATCHET nextRecvKey($contactId): expectedCounter=$expectedCounter " +
@@ -768,21 +1025,90 @@ object SessionKeyManager {
             return skippedKey
         }
 
-        if (expectedCounter <= state.recvCounter) {
-            // No skipped-key entry was found above for this exact lookupKey,
-            // yet expectedCounter isn't ahead of recvCounter either — this
-            // falls through to the "normal, in-order" derivation path below,
-            // which advances the chain and returns whatever key that
-            // produces. That's only correct if expectedCounter really is the
-            // current position; if it's a genuinely older counter (already
-            // passed, key evicted/never stored — e.g. an epochPrefix
-            // mismatch across a DH ratchet step), this silently derives the
-            // WRONG key and the caller will see a plain BAD_DECRYPT with no
-            // indication why. Logged to catch that case live — see
-            // docs/ISSUE_backup_identity_hijack.md, 2026-08-17.
-            Log.w(TAG, "DEBUG-RATCHET nextRecvKey($contactId): expectedCounter=$expectedCounter " +
-                "<= recvCounter=${state.recvCounter}, no skipped key for lookupKey=$lookupKey — " +
-                "falling through to normal derivation, likely wrong if expectedCounter != recvCounter")
+        // Found live 2026-09-02, after "новые сообщения после бэкапа и
+        // видеозвонка не доходят": the DH step used to happen only inside
+        // the ">" branch below (and separately, redundantly, inside "=="),
+        // so it only ever ran when expectedCounter already looked >=
+        // recvCounter. But performDHRatchetStep() resets BOTH sides'
+        // counters to 0 (see its sendCounter=0/recvCounter=0) — every
+        // epoch's first message therefore carries a LOW counter on the
+        // wire, completely unrelated to whatever recvCounter this session
+        // had accumulated under the PREVIOUS epoch (e.g. 4, after
+        // receiving 4 messages in the other party's last turn). Comparing
+        // a new epoch's low counter against the old epoch's recvCounter is
+        // comparing two unrelated numbers, and it very reliably lost:
+        // `expectedCounter < state.recvCounter` below unconditionally threw
+        // DuplicateOrStaleMessage — which deliberately never touches
+        // session state (see that throw's own comment), so recvRatchetPub/
+        // recvCounter stayed stuck on the old epoch forever. Every
+        // subsequent message of the new epoch then hit the exact same
+        // comparison against the exact same stale recvCounter and failed
+        // the same way — a session permanently wedged after the first
+        // "turn" flip following any restart of the ratchet, not a one-off
+        // dropped message. Stepping unconditionally, before any counter
+        // comparison, means the comparison below always happens against
+        // the epoch the incoming message actually belongs to — recvCounter
+        // is freshly 0 immediately after, so the old "<" throw can only
+        // ever fire for a genuine same-epoch replay from here on, which is
+        // the only case it was ever meant to catch.
+        if (isDHStep) {
+            // Found live 2026-09-03, immediately after the fix above: making
+            // the DH step unconditional/first removed an accidental
+            // safeguard the old code had — a redelivered message from an
+            // epoch we've already stepped PAST (server.py's token_pending
+            // fallback resends anything not yet acked, and this codebase
+            // relies on that for reliability) used to often land in the "<"
+            // branch below and get rejected before ever reaching the step
+            // logic, simply because old-epoch counters tend to be numerically
+            // lower. isDHStep only asks "does this differ from what I have
+            // right now", not "is this newer" — nothing stopped
+            // performDHRatchetStep from being re-run with a stale key,
+            // silently rolling rootKey/chain keys/ratchet keypair backward
+            // and resetting both counters to 0, corrupting the live epoch.
+            // A message keyed to an epoch we already have a history entry
+            // for can't be a genuine forward step — if it were legitimately
+            // still reachable, it would have been caught by the skippedKeys
+            // lookup above. Reject it the same safe way as any other
+            // duplicate, without touching session state.
+            if (dhKeyB64 in state.previousRecvRatchetPubs) {
+                throw DuplicateOrStaleMessage(contactId, expectedCounter, state.recvCounter)
+            }
+
+            val oldChainKey = state.recvChainKey
+            val oldRecvPubB64 = currentDhPubB64
+            state = performDHRatchetStep(state, dhKeyB64!!)
+            if (oldRecvPubB64 != null) {
+                val history = (state.previousRecvRatchetPubs + oldRecvPubB64)
+                    .takeLast(MAX_PREVIOUS_RATCHET_EPOCHS)
+                state = state.copy(previousRecvRatchetPubs = history)
+            }
+            SecureMemory.wipe(oldChainKey)
+            sessions[contactId] = state
+            saveSession(state)
+        }
+
+        if (expectedCounter < state.recvCounter) {
+            // Root-caused live 2026-08-30: this used to fall through to the
+            // "normal, in-order" derivation path below regardless, which
+            // unconditionally advances recvChainKey/recvCounter and returns
+            // whatever key that produces — correct ONLY when expectedCounter
+            // really is the current position. A genuinely older counter with
+            // no skipped-key entry (already consumed once, e.g. the server's
+            // token_pending fallback redelivering a message we already
+            // processed and ack'd, or the same message arriving twice via
+            // two transports) doesn't mean "derive the next key anyway" — it
+            // means "we've seen this already." Falling through silently
+            // derived a bogus key (BAD_DECRYPT with no clue why) AND advanced
+            // the chain/counter a second time for a message that wasn't
+            // actually next, permanently desyncing the ratchet from the
+            // sender's real position. Every message after that kept landing
+            // on the wrong chain offset — explains why session_reset only
+            // ever fixed it temporarily (fresh ratchet from 0) until the next
+            // duplicate delivery corrupted it again, on brand-new accounts
+            // with no backup/reinstall history involved at all. Thrown
+            // instead, without touching session state — caller treats this
+            // as "duplicate, safe to drop, ack it anyway" (see its comment).
+            throw DuplicateOrStaleMessage(contactId, expectedCounter, state.recvCounter)
         }
 
         if (expectedCounter > state.recvCounter) {
@@ -816,28 +1142,6 @@ object SessionKeyManager {
                 Log.w(TAG, "Буфер пропущенных ключей переполнен — вытеснено ${toEvict.size} старых")
             }
 
-            if (isDHStep) {
-
-                val preStep = state.copy(
-                    recvChainKey = chainKey,
-                    recvCounter  = expectedCounter,
-                    skippedKeys  = newSkipped,
-                    skippedKeyTimestamps = newTs
-                )
-                SecureMemory.wipe(state.recvChainKey)
-                state = performDHRatchetStep(preStep, dhKeyB64!!)
-                SecureMemory.wipe(chainKey)
-                sessions[contactId] = state
-
-                val messageKey  = ratchetStep(state.recvChainKey)
-                val nextChainKey = ratchetAdvance(state.recvChainKey)
-                SecureMemory.wipe(state.recvChainKey)
-                val newState = state.copy(recvChainKey = nextChainKey, recvCounter = 1)
-                sessions[contactId] = newState
-                saveSession(newState)
-                return messageKey
-            }
-
             val messageKey   = ratchetStep(chainKey)
             val nextChainKey = ratchetAdvance(chainKey)
             SecureMemory.wipe(chainKey)
@@ -852,14 +1156,6 @@ object SessionKeyManager {
             sessions[contactId] = newState2
             saveSession(newState2)
             return messageKey
-        }
-
-        if (isDHStep) {
-
-            val oldRecvCK = state.recvChainKey
-            state = performDHRatchetStep(state, dhKeyB64!!)
-            SecureMemory.wipe(oldRecvCK)
-            sessions[contactId] = state
         }
 
         val messageKey   = ratchetStep(state.recvChainKey)
@@ -1164,6 +1460,7 @@ object SessionKeyManager {
                     put("sendRatchetPriv", Base64.encodeToString(state.sendRatchetPriv, Base64.NO_WRAP))
                     put("sendRatchetPub",  Base64.encodeToString(state.sendRatchetPub,  Base64.NO_WRAP))
                     state.recvRatchetPub?.let { put("recvRatchetPub", Base64.encodeToString(it, Base64.NO_WRAP)) }
+                    put("previousRecvRatchetPubs", org.json.JSONArray(state.previousRecvRatchetPubs))
                 }
             }
             val jsonStr = json.toString()
@@ -1212,6 +1509,9 @@ object SessionKeyManager {
                         Base64.decode(json.getString("sendRatchetPub"), Base64.NO_WRAP) else ByteArray(0)
                     val recvRatchetPub = if (json.has("recvRatchetPub"))
                         Base64.decode(json.getString("recvRatchetPub"), Base64.NO_WRAP) else null
+                    val previousRecvRatchetPubs = json.optJSONArray("previousRecvRatchetPubs")?.let { arr ->
+                        (0 until arr.length()).map { i -> arr.getString(i) }
+                    } ?: emptyList()
 
                     val loadedState = SessionState(
                         contactId    = json.getString("contactId"),
@@ -1227,7 +1527,8 @@ object SessionKeyManager {
                         rootKey         = rootKey,
                         sendRatchetPriv = sendRatchetPriv,
                         sendRatchetPub  = sendRatchetPub,
-                        recvRatchetPub  = recvRatchetPub
+                        recvRatchetPub  = recvRatchetPub,
+                        previousRecvRatchetPubs = previousRecvRatchetPubs
                     )
                     sessions[loadedState.contactId] = loadedState
 
@@ -1266,4 +1567,11 @@ object SessionKeyManager {
 
     class SessionRotationRequired(val contactId: String) :
         Exception("Сессия с $contactId требует ротации (достигнут лимит ratchet)")
+
+    /** A message counter strictly behind recvCounter with no matching
+     *  skipped-key entry — already consumed once, not a decrypt failure.
+     *  See nextRecvKey()'s comment for why this must never fall through to
+     *  ordinary derivation (it would silently corrupt the ratchet). */
+    class DuplicateOrStaleMessage(val contactId: String, val expectedCounter: Int, val recvCounter: Int) :
+        Exception("Повторное/устаревшее сообщение от $contactId: counter=$expectedCounter, ожидался >= $recvCounter")
 }

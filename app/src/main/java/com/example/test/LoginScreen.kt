@@ -26,8 +26,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
+import com.subrosa.messenger.ui.theme.Inter
 
-private val AppFont = FontFamily(Font(R.font.jetbrainsmono_regular))
+// App-wide font swap 2026-09-22 — name kept for API stability.
+private val AppFont = Inter
 
 @Composable
 fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
@@ -93,22 +95,11 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                "💬",
-                fontSize = 64.sp,
-                modifier = Modifier
-                    .padding(bottom = 16.dp)
-                    .graphicsLayer {
-                        alpha = emojiAlpha
-                        translationY = (1f - emojiAlpha) * -60f
-                    }
-            )
-
-            Text(
                 "Subrosa Messenger",
-                fontSize = 24.sp,
+                fontSize = 26.sp,
                 fontWeight = FontWeight.Bold,
                 color = c.accent,
-                fontFamily = AppFont,
+                fontFamily = com.subrosa.messenger.ui.theme.NotoSerifJP,
                 modifier = Modifier
                     .padding(bottom = 8.dp)
                     .graphicsLayer {
@@ -119,7 +110,7 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
 
             Text(
                 s.loginGreeting(displayName),
-                fontSize = 16.sp,
+                fontSize = 18.sp,
                 color = c.textPrimary.copy(alpha = 0.6f),
                 fontFamily = AppFont,
                 modifier = Modifier
@@ -142,6 +133,9 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
                     label = { Text(s.loginPassword, fontFamily = AppFont) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                    ),
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     textStyle = TextStyle(color = c.textPrimary, fontFamily = AppFont),
                     colors = fieldColors
@@ -151,7 +145,7 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
                     Text(
                         text = error,
                         color = c.error,
-                        fontSize = 13.sp,
+                        fontSize = 15.sp,
                         fontFamily = AppFont,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
@@ -205,7 +199,7 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
                     if (isLoading) {
                         CircularProgressIndicator(color = c.accent, modifier = Modifier.size(24.dp))
                     } else {
-                        Text(s.loginButton, fontSize = 18.sp, fontFamily = AppFont, color = Color.White)
+                        Text(s.loginButton, fontSize = 20.sp, fontFamily = AppFont, color = c.textPrimary)
                     }
                 }
 
@@ -228,12 +222,12 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = c.accent),
                         border = androidx.compose.foundation.BorderStroke(1.dp, c.accent)
                     ) {
-                        Text(s.loginBiometric, fontSize = 16.sp, fontFamily = AppFont)
+                        Text(s.loginBiometric, fontSize = 18.sp, fontFamily = AppFont)
                     }
                 }
             } else {
                 CircularProgressIndicator(modifier = Modifier.padding(16.dp), color = c.accent)
-                Text(s.loginWaitingBiometric, fontSize = 14.sp, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
+                Text(s.loginWaitingBiometric, fontSize = 16.sp, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
             }
             }
             }
@@ -243,7 +237,7 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
             onClick = { showNotMeConfirm = true },
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp)
         ) {
-            Text(s.loginNotMe, color = c.error, fontSize = 14.sp, fontFamily = AppFont)
+            Text(s.loginNotMe, color = c.error, fontSize = 16.sp, fontFamily = AppFont)
         }
     }
 
@@ -251,7 +245,7 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
         AlertDialog(
             onDismissRequest = { showNotMeConfirm = false },
             containerColor = c.dialog,
-            title = { Text(s.loginNotMeTitle, color = Color.White, fontFamily = AppFont) },
+            title = { Text(s.loginNotMeTitle, color = c.textPrimary, fontFamily = AppFont) },
             text = { Text(s.loginNotMeText, color = c.textPrimary, fontFamily = AppFont) },
             confirmButton = {
                 TextButton(onClick = {

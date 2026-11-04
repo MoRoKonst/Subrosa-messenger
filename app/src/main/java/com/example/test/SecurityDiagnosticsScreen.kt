@@ -25,6 +25,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.subrosa.messenger.ui.theme.SubrosaColors
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
+import androidx.compose.ui.res.painterResource
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,6 +45,9 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
     val lastIdsResult by ParanoidMode.lastIdsResult.collectAsState()
     var isIdsRunning by remember { mutableStateOf(false) }
     var alertUrl by remember { mutableStateOf(UserStorage.getAlertUrl(context)) }
+    var alertUrlError by remember { mutableStateOf(false) }
+    var alertTestStatus by remember { mutableStateOf<Boolean?>(null) }
+    var isTestingAlert by remember { mutableStateOf(false) }
 
     LaunchedEffect(testLines.size) {
         if (testLines.isNotEmpty()) {
@@ -59,13 +63,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
     )
 
     fun shouldShow(line: String): Boolean {
-        val t = line.trim()
-        return t.isEmpty() ||
-            "[OK]" in t || "[FAIL]" in t || "[WARN]" in t ||
-            t.startsWith("📋") ||
-            t.startsWith("🔐") || t.startsWith("💣") || t.startsWith("🔬") || t.startsWith("") ||
-            (t.length > 4 && t.all { it == '═' || it == ' ' }) ||
-            "Если видишь" in t || "Покрыто:" in t
+        return true
     }
 
     fun runSuite(block: (onLine: (String) -> Unit) -> Unit) {
@@ -93,7 +91,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { showParanoidConfirm = false },
             title = { Text(s.paranoidModeConfirmTitle, fontWeight = FontWeight.Bold, color = Color(0xFFFF6B6B)) },
-            text = { Text(s.paranoidModeConfirmText, fontSize = 13.sp, lineHeight = 19.sp, color = c.textPrimary) },
+            text = { Text(s.paranoidModeConfirmText, fontSize = 15.sp, lineHeight = 19.sp, color = c.textPrimary) },
             confirmButton = {
                 Button(
                     onClick = { showParanoidConfirm = false; ParanoidMode.setEnabled(context, true) },
@@ -110,10 +108,10 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(s.diagTitle, fontSize = 18.sp, color = Color.White) },
+                title = { Text(s.diagTitle, fontSize = 20.sp, color = c.textPrimary) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back, tint = Color.White)
+                        Icon(painterResource(R.drawable.ic_back_arrow), s.back, tint = c.textPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
@@ -153,11 +151,11 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                                 s.paranoidModeTitle,
                                 fontWeight = FontWeight.Bold,
                                 color = if (paranoid) Color(0xFFFF6B6B) else c.textPrimary,
-                                fontSize = 14.sp
+                                fontSize = 16.sp
                             )
                             Text(
                                 s.paranoidModeSub,
-                                fontSize = 11.sp,
+                                fontSize = 13.sp,
                                 color = if (paranoid) Color(0xFFCC8888) else c.textPrimary.copy(alpha = 0.6f),
                                 lineHeight = 14.sp
                             )
@@ -168,7 +166,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                                     s.paranoidModeActive,
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                                     color = Color(0xFFFF6B6B),
-                                    fontSize = 12.sp,
+                                    fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -177,7 +175,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                                 checked = false,
                                 onCheckedChange = { if (it) showParanoidConfirm = true },
                                 colors = SwitchDefaults.colors(
-                                    uncheckedThumbColor = Color.White,
+                                    uncheckedThumbColor = c.textPrimary,
                                     uncheckedTrackColor = c.cardAlt
                                 )
                             )
@@ -198,15 +196,15 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text(s.idsTitle, fontWeight = FontWeight.Bold, color = c.textPrimary, fontSize = 14.sp)
+                            Text(s.idsTitle, fontWeight = FontWeight.Bold, color = c.textPrimary, fontSize = 16.sp)
                             if (lastIdsResult == null) {
-                                Text("—", fontSize = 11.sp, color = c.textPrimary.copy(alpha = 0.4f))
+                                Text("—", fontSize = 13.sp, color = c.textPrimary.copy(alpha = 0.4f))
                             } else if (lastIdsResult!!.isEmpty()) {
-                                Text(s.idsClean, fontSize = 11.sp, color = Color(0xFF66BB6A))
+                                Text(s.idsClean, fontSize = 13.sp, color = Color(0xFF66BB6A))
                             } else {
                                 Text(
                                     s.idsThreatFound + ": " + lastIdsResult!!.threats.joinToString(", ") { it.label },
-                                    fontSize = 11.sp, color = Color(0xFFFF9800), lineHeight = 14.sp
+                                    fontSize = 13.sp, color = Color(0xFFFF9800), lineHeight = 14.sp
                                 )
                             }
                         }
@@ -221,43 +219,82 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                             },
                             enabled = !isIdsRunning,
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = c.primaryBlue, contentColor = Color.White)
+                            colors = ButtonDefaults.buttonColors(containerColor = c.primaryBlue, contentColor = if (c.isDark) Color.White else c.textPrimary)
                         ) {
-                            Text(if (isIdsRunning) "..." else s.idsScanBtn, fontSize = 13.sp)
+                            Text(if (isIdsRunning) "..." else s.idsScanBtn, fontSize = 15.sp)
                         }
                     }
                 }
 
                 Card(colors = CardDefaults.cardColors(containerColor = c.card)) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = alertUrl,
-                            onValueChange = { alertUrl = it },
-                            placeholder = { Text(s.alertUrlHint, fontSize = 11.sp) },
-                            label = { Text(s.alertUrlLabel, fontSize = 11.sp) },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            textStyle = LocalTextStyle.current.copy(fontSize = 12.sp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = c.primaryBlue,
-                                unfocusedBorderColor = c.cardAlt,
-                                focusedTextColor = c.textPrimary,
-                                unfocusedTextColor = c.textPrimary,
-                                cursorColor = c.primaryBlue,
-                                focusedLabelColor = c.primaryBlue,
-                                unfocusedLabelColor = c.textPrimary.copy(alpha = 0.6f)
+                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = alertUrl,
+                                onValueChange = { alertUrl = it; alertUrlError = false; alertTestStatus = null },
+                                placeholder = { Text(s.alertUrlHint, fontSize = 13.sp) },
+                                label = { Text(s.alertUrlLabel, fontSize = 13.sp) },
+                                isError = alertUrlError,
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                textStyle = LocalTextStyle.current.copy(fontSize = 14.sp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = c.primaryBlue,
+                                    unfocusedBorderColor = c.cardAlt,
+                                    focusedTextColor = c.textPrimary,
+                                    unfocusedTextColor = c.textPrimary,
+                                    cursorColor = c.primaryBlue,
+                                    focusedLabelColor = c.primaryBlue,
+                                    unfocusedLabelColor = c.textPrimary.copy(alpha = 0.6f)
+                                )
                             )
-                        )
-                        FilledTonalButton(
-                            onClick = { UserStorage.setAlertUrl(context, alertUrl.trim()) },
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                        ) { Text(s.alertUrlSave, fontSize = 12.sp) }
+                            FilledTonalButton(
+                                onClick = {
+                                    val trimmed = alertUrl.trim()
+                                    if (ParanoidMode.isValidAlertUrl(trimmed)) {
+                                        alertUrlError = false
+                                        alertTestStatus = null
+                                        UserStorage.setAlertUrl(context, trimmed)
+                                    } else {
+                                        alertUrlError = true
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                            ) { Text(s.alertUrlSave, fontSize = 14.sp) }
+                            FilledTonalButton(
+                                onClick = {
+                                    val trimmed = alertUrl.trim()
+                                    if (trimmed.isBlank() || !ParanoidMode.isValidAlertUrl(trimmed)) {
+                                        alertUrlError = true
+                                        return@FilledTonalButton
+                                    }
+                                    alertUrlError = false
+                                    isTestingAlert = true
+                                    alertTestStatus = null
+                                    scope.launch {
+                                        alertTestStatus = ParanoidMode.testAlert(context, trimmed)
+                                        isTestingAlert = false
+                                    }
+                                },
+                                enabled = !isTestingAlert,
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                            ) { Text(if (isTestingAlert) "..." else s.alertUrlTestBtn, fontSize = 14.sp) }
+                        }
+                        if (alertUrlError) {
+                            Text(s.alertUrlInvalid, fontSize = 12.sp, color = c.error, modifier = Modifier.padding(top = 4.dp))
+                        }
+                        alertTestStatus?.let { ok ->
+                            Text(
+                                if (ok) s.alertUrlTestOk else s.alertUrlTestFail,
+                                fontSize = 12.sp,
+                                color = if (ok) Color(0xFF66BB6A) else c.error,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
                     }
                 }
 
@@ -276,8 +313,8 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                     },
                     enabled = !isRunning,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = c.primaryBlue, contentColor = Color.White)
-                ) { Text(if (isRunning) s.diagRunning else s.diagBasic, fontSize = 14.sp) }
+                    colors = ButtonDefaults.buttonColors(containerColor = c.primaryBlue, contentColor = if (c.isDark) Color.White else c.textPrimary)
+                ) { Text(if (isRunning) s.diagRunning else s.diagBasic, fontSize = 16.sp) }
             }
 
             Surface(
@@ -300,7 +337,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                                 text = s.diagInitText,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp,
+                                fontSize = 14.sp,
                                 color = Color(0xFF4A5568)
                             )
                         }
@@ -314,7 +351,7 @@ fun SecurityDiagnosticsScreen(onBack: () -> Unit) {
                                     text = "▊",
                                     modifier = Modifier.padding(start = 12.dp, top = 2.dp),
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 13.sp,
+                                    fontSize = 15.sp,
                                     color = Color(0xFFD9A566).copy(alpha = cursorAlpha)
                                 )
                             }
@@ -336,9 +373,9 @@ private fun TestLine(line: String, c: SubrosaColors) {
     }
 
     val isSep = t.length > 6 && t.all { it == '═' || it == ' ' }
-    val isTitle = t.startsWith("🔐") || t.startsWith("💣") || t.startsWith("🔬") ||
-            t.startsWith("")
-    val isTestHeader = t.startsWith("📋")
+    val isTestHeader = t.startsWith("ТЕСТ ") || t.startsWith("НЕГАТИВНЫЙ ТЕСТ ") ||
+            t.startsWith("TEST ") || t.startsWith("NEGATIVE TEST ")
+    val isTitle = !isTestHeader
     val isOk  = "[OK]" in t
     val isFail = "[FAIL]" in t
     val isWarn = "[WARN]" in t

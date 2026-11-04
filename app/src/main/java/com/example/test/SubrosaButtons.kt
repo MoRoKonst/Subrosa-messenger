@@ -76,7 +76,10 @@ fun PortholeSendButton(
         Icon(
             painter = painterResource(R.drawable.ic_send_arrow),
             contentDescription = "Отправить",
-            tint = Color.White,
+            // Background is a gradient between c.primaryBlue and c.accent — both are
+            // the same bright mint in LIGHT (same as they already are in NAVY), so
+            // White only stays legible for the dark themes.
+            tint = if (c.isDark) Color.White else c.textPrimary,
             modifier = Modifier.size((size * 0.55f).dp)
         )
     }
