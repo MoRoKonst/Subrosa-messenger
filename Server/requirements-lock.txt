@@ -25,6 +25,6 @@
 websockets==17.1
 cryptography==50.0.1
 cffi==2.1.1
-pycparser==3.0
+pycparser==3.12
 miniupnpc==2.3.3
 sqlcipher3-binary==0.6.0
