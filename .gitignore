@@ -76,8 +76,12 @@ meminfo_watch.log
 # Статья (черновик, публикуется отдельно)
 Статья.md
 
-# Внутренний план подготовки к security-аудиту — не для публичного репо
+# Внутренние документы — не для публичного репо
 docs/AUDIT_PREPARATION_NEXT_STEPS.md
+docs/TODO.md
+docs/HANDOFF_*.md
+docs/Article_EN.md
+docs/ISSUE_*.md
 
 # Desktop client — build artifacts
 /desktop/build/
