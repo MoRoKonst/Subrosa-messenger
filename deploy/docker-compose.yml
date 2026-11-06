@@ -6,8 +6,15 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     container_name: subrosa-messenger-server
+    # Loopback only. nginx reaches the server over the compose network
+    # (upstream subrosa-server:9000), so nothing needs this port published
+    # externally -- and the server runs with --dev, i.e. no TLS of its own.
+    # Publishing it on all interfaces put the plaintext protocol straight on
+    # the public internet, which is KL-25 ("server port 9000 directly
+    # reachable", Critical) reintroduced through the deployment everyone is
+    # told to use. The host binding is kept for local debugging.
     ports:
-      - "9000:9000"
+      - "127.0.0.1:9000:9000"
     env_file:
       - ../.env
     environment:

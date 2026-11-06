@@ -21,4 +21,4 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "beacon-desktop"
+rootProject.name = "subrosa-desktop"

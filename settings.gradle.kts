@@ -19,10 +19,10 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven { url = uri("https://jitpack.io") }  // ← добавь
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
-rootProject.name = "TEST @"
+rootProject.name = "subrosa"
 include(":app")
  
