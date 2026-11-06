@@ -1,10 +1,10 @@
-package com.subrosa.desktop
+﻿package com.subrosa.desktop
 
 /**
  * Desktop port of Android's ContactHealthManager ("Забота о собеседнике" —
  * peer health-check for established 1:1 channels). See
  * docs/ISSUE_backup_identity_hijack.md, "взаимный health-check контактов
- * через N времени тишины", and app/src/main/java/com/example/test/
+ * через N времени тишины", and app/src/main/java/com/subrosa/messenger/
  * ContactHealthManager.kt for the Android original this mirrors field-for-
  * field. sendAnonTokensTo()-style reactive token refresh alone doesn't
  * notice a channel gone quiet *after* it was established — this tracks

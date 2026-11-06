@@ -1,4 +1,4 @@
-# Threat Model
+﻿# Threat Model
 
 *Read [SECURITY_MODEL.md](SECURITY_MODEL.md) first — it defines what this project is and isn't
 trying to protect. This document works through specific attacker classes against that backdrop:
@@ -73,7 +73,7 @@ Threat / Mitigation / Residual risk.**
   - **Fixed:** `GroupManager`'s mutators (`addMember`/`removeMember`/`promoteToAdmin`) now verify
     the caller (`actorId`) is an admin *inside the manager itself*, not only at UI call sites —
     `removeMember` keeps a self-removal exception. Regression-tested in
-    `app/src/test/java/com/example/test/GroupManagerTest.kt` (Robolectric).
+    `app/src/test/java/com/subrosa/messenger/GroupManagerTest.kt` (Robolectric).
 - **Residual risk:** the `GroupManager` authorization gap specifically is closed and tested (was
   the highest-priority open item under this threat). **Also fixed (2026-08-28):**
   `message_delete`/`disappear_timer`/`group_message_delete` — the last unreviewed handlers under

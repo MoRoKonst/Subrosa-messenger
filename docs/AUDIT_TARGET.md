@@ -1,4 +1,4 @@
-# Audit Target
+﻿# Audit Target
 
 *The frozen reference point for the first external audit. If you're reviewing this project later
 than the date below, ask for a fresh `AUDIT_TARGET.md` rather than assuming `main` still matches
@@ -31,7 +31,7 @@ rewrite of this one.
 - Server (`Server/server.py`) — Python/asyncio/websockets 17.x.
 - CI/SAST pipeline — see `docs/CI_SAST_PLAN.md` for what's configured and why.
 - Security regression tests — `Server/tests/test_security_invariants.py` (8 protocol-level
-  invariants) and `app/src/test/java/com/example/test/GroupManagerTest.kt` (9 group-authorization/
+  invariants) and `app/src/test/java/com/subrosa/messenger/GroupManagerTest.kt` (9 group-authorization/
   rotation invariants, Robolectric-backed).
 - `docs/SECURITY_MODEL.md`, `docs/THREAT_MODEL.md`, `docs/SCOPE.md`, `docs/AUDIT_SETUP.md`,
   `docs/KNOWN_SECURITY_ISSUES.md` — written same session as this tag, cross-checked against the

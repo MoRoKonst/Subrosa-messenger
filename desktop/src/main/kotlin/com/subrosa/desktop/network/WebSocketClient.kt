@@ -1,4 +1,4 @@
-package com.subrosa.desktop
+﻿package com.subrosa.desktop
 
 /**
  * Desktop equivalent of Android's MessengerService.
@@ -4617,7 +4617,7 @@ object WebSocketClient {
             }
 
             // ── "Забота о собеседнике": peer health-check ping/pong ────────────
-            // See ContactHealthManager.kt and app/src/main/java/com/example/test/
+            // See ContactHealthManager.kt and app/src/main/java/com/subrosa/messenger/
             // MessengerService.kt's mirror of this. Receiving either type just
             // proves the channel is alive right now — reset the silence clock.
             // A pong is sent back via sendAnonOrDirect like any other packet.

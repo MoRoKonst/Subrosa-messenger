@@ -1,4 +1,4 @@
-# Audit Setup
+﻿# Audit Setup
 
 *Reproducible local environment for an external reviewer — no production credentials, no real
 user data, no external runtime services or production infrastructure required. Internet access
@@ -170,7 +170,7 @@ spent-token replay rejection — see `Server/tests/test_security_invariants.py` 
 ```
 
 9 tests covering `GroupManager`'s internal authorization check and the removed-member/rotated-key
-invariant — see `app/src/test/java/com/example/test/GroupManagerTest.kt`.
+invariant — see `app/src/test/java/com/subrosa/messenger/GroupManagerTest.kt`.
 
 **Full CI pipeline** (build, lint, SAST, secret scan, dependency review) runs on every push/PR —
 see `.github/workflows/` and `docs/CI_SAST_PLAN.md` for what's configured, or just check the
@@ -179,7 +179,7 @@ Actions tab at the audit-target commit for a live green/red status.
 ## 6. Reading order for context, not just running code
 
 If you want the design intent before diving into `Server/server.py` (2900+ lines) or the Android
-client (25k+ lines across `app/src/main/java/com/example/test/`):
+client (25k+ lines across `app/src/main/java/com/subrosa/messenger/`):
 
 1. [SECURITY_MODEL.md](SECURITY_MODEL.md) — what's protected, explicit non-goals.
 2. [THREAT_MODEL.md](THREAT_MODEL.md) — attacker classes, what stops each one, residual risk.

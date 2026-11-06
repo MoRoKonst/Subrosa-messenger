@@ -1,4 +1,4 @@
-# Сценарии поведения
+﻿# Сценарии поведения
 
 ## Зачем этот файл
 
@@ -55,7 +55,7 @@
 его в "Добавить контакт".
 
 **Шаг 1 — A генерирует код** (`InviteCodeManager.generateInviteCode()`,
-[InviteCodeManager.kt:26](app/src/main/java/com/example/test/InviteCodeManager.kt:26)):
+[InviteCodeManager.kt:26](app/src/main/java/com/subrosa/messenger/InviteCodeManager.kt:26)):
 версия формата + таймстамп + nonce + свежий случайный 16-байтный
 mailbox-тег + fingerprint A + публичный ключ A + отображаемое имя, всё
 подписано ECDSA, `bc:` + Base64. Развилки нет — всегда пишется текущий
@@ -65,7 +65,7 @@ mailbox-тег + fingerprint A + публичный ключ A + отображ�
 
 **Шаг 2 — B вставляет код**
 (`InviteCodeManager.parseInviteCode()` + `verifyInviteCode()`,
-[ChatsScreen.kt:403](app/src/main/java/com/example/test/ChatsScreen.kt:403)):
+[ChatsScreen.kt:403](app/src/main/java/com/subrosa/messenger/ChatsScreen.kt:403)):
   ├─ **Подпись неверна или payload повреждён** → `parseInviteCode`
   │  возвращает null или `verifyInviteCode` возвращает false → тост
   │  "неверный или истёкший инвайт-код", ничего не добавляется.
@@ -89,7 +89,7 @@ mailbox-тег + fingerprint A + публичный ключ A + отображ�
 и должен попросить у отправителя код заново.
 
 **Шаг 3 — попытка bootstrap** (`sendAnonTokensTo`,
-[MessengerService.kt:3283](app/src/main/java/com/example/test/MessengerService.kt:3283)):
+[MessengerService.kt:3283](app/src/main/java/com/subrosa/messenger/MessengerService.kt:3283)):
   ├─ **У B уже есть живой анон-токен для A** → отправить токены через
   │  `anon_message` напрямую. Никогда не верно при настоящем первом
   │  контакте (ещё неоткуда взять токен) — упомянуто здесь, потому что та
@@ -155,7 +155,7 @@ mailbox-тег + fingerprint A + публичный ключ A + отображ�
      обычные сообщения, так что сигнала об ошибке доставки нет вообще.
      ~~Приемлемо ли бесконечное молчание?~~ — **сделано**
      (`bootstrapChannelFor()`/`checkChannelStuck()`,
-     [MessengerService.kt:3529](app/src/main/java/com/example/test/MessengerService.kt:3529)):
+     [MessengerService.kt:3529](app/src/main/java/com/subrosa/messenger/MessengerService.kt:3529)):
      повторные попытки каждые 30с (первые 3 раза), затем каждые 90с —
      без верхней границы, транзиентная проблема может само-разрешиться
      позже. Спустя `CHANNEL_STUCK_THRESHOLD_MS` (5 минут) без успеха —
@@ -175,7 +175,7 @@ mailbox-тег + fingerprint A + публичный ключ A + отображ�
 чисто реактивна, но поверх неё теперь есть отдельный фоновый механизм —
 "Забота о собеседнике" (`ContactHealthManager.kt` +
 `checkContactSilence()`,
-[MessengerService.kt:3803](app/src/main/java/com/example/test/MessengerService.kt:3803),
+[MessengerService.kt:3803](app/src/main/java/com/subrosa/messenger/MessengerService.kt:3803),
 вызывается при каждом `isConnected`-событии): контакт считается
 "молчащим" (`isSilent()`), когда **и** входящих сообщений, **и**
 `delivered`-подтверждений на свои исходящие не было дольше
@@ -316,13 +316,13 @@ opk_id если использован, session_id, DH ratchet pub, PQ-шифр�
   │  под нагрузкой. **И даже для этого узкого случая на клиенте уже
   │  есть синхронная сверка**, вопреки тому, что было написано здесь
   │  раньше: `receiveSession()`
-  │  ([SessionKeyManager.kt:613](app/src/main/java/com/example/test/SessionKeyManager.kt:613))
+  │  ([SessionKeyManager.kt:613](app/src/main/java/com/subrosa/messenger/SessionKeyManager.kt:613))
   │  вызывает `consumeOpk(opkId)`, который возвращает `null`, если этот
   │  OPK уже потреблён локально (переиспользован сервером) — и сразу
   │  бросает `SecurityException`, синхронно, в момент самого handshake,
   │  а не "проявляется как ошибка расшифровки позже", как утверждалось
   │  тут раньше. `processSessionInit()`
-  │  ([MessengerService.kt:3912](app/src/main/java/com/example/test/MessengerService.kt:3912))
+  │  ([MessengerService.kt:3912](app/src/main/java/com/subrosa/messenger/MessengerService.kt:3912))
   │  ловит это исключение и уже самовосстанавливается: запрашивает
   │  свежий prekey bundle себе и шлёт отправителю `session_reset` —
   │  никакого нового кода этот сценарий не требует.
@@ -597,7 +597,7 @@ Argon2id устойчивее к перебору на GPU/ASIC, чем PBKDF2, 
   решено, сделано.** Раньше это было `❓` НЕ ПРОДУМАНО (смешение старой и
   новой identity в одном хранилище). Теперь `importBackup()` вызывает
   `wipeCurrentIdentityData()`
-  ([BackupManager.kt:28](app/src/main/java/com/example/test/BackupManager.kt:28))
+  ([BackupManager.kt:28](app/src/main/java/com/subrosa/messenger/BackupManager.kt:28))
   **до** восстановления содержимого бэкапа — `UserStorage.logout()`
   (username/user_id/password_hash + сами чаты/очередь сообщений),
   `GroupManager.clearAll()`, `AnonTokenManager.clearAll()`,
@@ -1310,7 +1310,7 @@ disguise, тема/язык. Это отличает эту кнопку от с
 сценария, `BackupScreen.kt` после успешного импорта форсирует полный
 перезапуск `MessengerService`** (`context.stopService(...)` +
 `context.startForegroundService(...)`,
-[BackupScreen.kt:103](app/src/main/java/com/example/test/BackupScreen.kt:103)),
+[BackupScreen.kt:103](app/src/main/java/com/subrosa/messenger/BackupScreen.kt:103)),
 именно чтобы `onStartCommand()` пересчитал `username`/identity из уже
 изменённого хранилища, а не продолжал жить со старым кэшем. Шаг 2 ниже —
 это уже описание того окна рассинхрона, которое существовало бы **без**

@@ -1,4 +1,4 @@
-# Security Invariants
+﻿# Security Invariants
 
 *Created 2026-08-30. This is not a new set of rules — every invariant below is already
 implemented and described in prose somewhere in `SECURITY.md`/`ARCHITECTURE.md`. The point of
@@ -1472,7 +1472,7 @@ convention.*
     by an inner `if not username: continue` so it couldn't durably write under a bogus key) kept this
     from being an authorization bypass, but it was still an unnecessary weakening of an otherwise-
     strict rule, and a legitimate bundle publication racing this way could be silently dropped.
-    Where: `app/src/main/java/com/example/test/MessengerService.kt` (the actual fix) and `server.py`
+    Where: `app/src/main/java/com/subrosa/messenger/MessengerService.kt` (the actual fix) and `server.py`
     (removing the now-unneeded exception).
     **Fixed at the source, not by further loosening the server.** Android's polled `handshakeDone`
     Boolean is replaced by a `CompletableDeferred<Unit>` pair — `handshakeReady` and

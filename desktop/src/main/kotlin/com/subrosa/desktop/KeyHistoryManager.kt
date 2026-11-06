@@ -1,11 +1,11 @@
-package com.subrosa.desktop
+﻿package com.subrosa.desktop
 
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * Desktop port of Android's KeyHistoryManager (TOFU key-history store).
- * Field-for-field mirror of app/src/main/java/com/example/test/
+ * Field-for-field mirror of app/src/main/java/com/subrosa/messenger/
  * KeyHistoryManager.kt, backed by DesktopStorage instead of
  * EncryptedSharedPreferences. See WebSocketClient's "prekey_bundle_response"
  * handler for where checkKeyChange()/the "revoked" flag drive

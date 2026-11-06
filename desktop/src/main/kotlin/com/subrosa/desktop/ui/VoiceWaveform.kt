@@ -1,4 +1,4 @@
-package com.subrosa.desktop
+﻿package com.subrosa.desktop
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -16,7 +16,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 
 /** Telegram-style playback waveform — mirrors Android's identical
- *  Composable exactly (see app/src/main/java/com/example/test/VoiceWaveform.kt
+ *  Composable exactly (see app/src/main/java/com/subrosa/messenger/VoiceWaveform.kt
  *  for the full rationale). [bars] amplitude values (0f..1f), portion left
  *  of [progress] drawn in [color], the rest in [dimColor]. detectDragGestures
  *  alone handles both tap-to-seek (onDragStart fires at the initial
