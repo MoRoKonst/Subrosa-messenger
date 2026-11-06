@@ -1226,6 +1226,10 @@ fun SecuritySettingsScreen(
     var showLockDialog     by remember { mutableStateOf(false) }
     var showPanicDialog    by remember { mutableStateOf(false) }
     var panicPassword      by remember { mutableStateOf("") }
+    var panicPasswordError by remember { mutableStateOf("") }
+    // Validating the panic password runs checkPassword() -> PBKDF2 at 100k
+    // iterations; it must not happen on the main thread.
+    val panicScope = rememberCoroutineScope()
     var hideNotif          by remember { mutableStateOf(UserStorage.getHideNotificationContent(context)) }
     var currentLock        by remember { mutableStateOf(UserStorage.getAutoLockTimeout(context)) }
     var biometricEnabled   by remember { mutableStateOf(UserStorage.getBiometricUnlockEnabled(context)) }
@@ -1591,9 +1595,10 @@ fun SecuritySettingsScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = panicPassword,
-                        onValueChange = { panicPassword = it },
+                        onValueChange = { panicPassword = it; panicPasswordError = "" },
                         label = { Text(s.profilePanicFieldLabel, fontFamily = AppFont) },
                         singleLine = true,
+                        isError = panicPasswordError.isNotEmpty(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = c.accent,
                             unfocusedBorderColor = c.textPrimary.copy(alpha = 0.6f),
@@ -1603,19 +1608,56 @@ fun SecuritySettingsScreen(
                             cursorColor = c.accent
                         )
                     )
+                    if (panicPasswordError.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            panicPasswordError,
+                            color = Color(0xFFEF5350),
+                            fontFamily = AppFont,
+                            fontSize = 14.sp
+                        )
+                    }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (panicPassword.isNotBlank()) {
-                        UserStorage.setPanicPassword(context, panicPassword)
+                    // Validation used to be `isNotBlank()` and nothing else.
+                    // Two gaps, the second destructive:
+                    //
+                    //  - PasswordPolicy is enforced on registration and on
+                    //    password change, but was skipped here — so the one
+                    //    password in the app that triggers irreversible data
+                    //    loss was the only one with no floor on it. A short
+                    //    panic password is also the one most likely to be hit
+                    //    by the owner's own typo.
+                    //  - Nothing stopped it being set to the *login* password.
+                    //    PasswordGate checks panic first (it must, so duress is
+                    //    never rate-limited), so an identical pair silently
+                    //    turns every subsequent normal login into a wipe, with
+                    //    no warning at the point of setting it and no way back.
+                    val candidate = panicPassword
+                    panicScope.launch {
+                        val problem = withContext(Dispatchers.IO) {
+                            when {
+                                candidate.length < PasswordPolicy.MIN_LENGTH -> s.registerErrorPasswordLength
+                                PasswordPolicy.isCommonPassword(candidate) -> s.registerErrorPasswordCommon
+                                UserStorage.checkPassword(context, candidate) -> s.profilePanicErrSameAsLogin
+                                else -> null
+                            }
+                        }
+                        if (problem != null) {
+                            panicPasswordError = problem
+                            return@launch
+                        }
+                        withContext(Dispatchers.IO) { UserStorage.setPanicPassword(context, candidate) }
                         showPanicDialog = false
                         panicPassword = ""
+                        panicPasswordError = ""
                     }
                 }) { Text(s.save, color = c.accent, fontFamily = AppFont) }
             },
             dismissButton = {
-                TextButton(onClick = { showPanicDialog = false }) {
+                TextButton(onClick = { showPanicDialog = false; panicPasswordError = "" }) {
                     Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
                 }
             }

@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -40,6 +42,13 @@ class GroupManagerTest {
         // authorization/membership logic under test doesn't depend on the
         // storage layer being encrypted.
         GroupManager.prefsProvider = { ctx, name -> ctx.getSharedPreferences(name, Context.MODE_PRIVATE) }
+        // removeMember() also needs this device's own id, which in production
+        // comes from UserStorage ("user_prefs") and so does NOT go through
+        // prefsProvider above -- without this second override it throws
+        // SecurityException under Robolectric. "me" is deliberately an id no
+        // test group contains, so the self-removal branch only fires when a
+        // test actually asks for it.
+        GroupManager.selfIdProvider = { "SELF-NOT-A-MEMBER" }
         context.getSharedPreferences("groups", Context.MODE_PRIVATE).edit().clear().commit()
         GroupManager.saveGroup(
             context,
@@ -83,6 +92,49 @@ class GroupManagerTest {
         assertFalse("removed member must not appear in persisted membership", group.members.contains(memberC))
         assertTrue(group.members.contains(admin))
         assertTrue(group.members.contains(memberB))
+    }
+
+    @Test
+    fun `leaving a group drops the local record entirely, not just our membership`() {
+        // The branch guarded by selfIdProvider. It exists because of a live
+        // bug where leaving stripped us from the member list but left the
+        // group sitting in the chat list forever -- so asserting "we are no
+        // longer a member" is not enough, the group must be gone.
+        GroupManager.selfIdProvider = { memberB }
+
+        GroupManager.removeMember(context, groupId, memberB, memberB)
+
+        assertNull(
+            "leaving must delete the local group record, not merely update membership",
+            GroupManager.getGroup(context, groupId)
+        )
+    }
+
+    @Test
+    fun `being kicked by an admin also drops the local record`() {
+        // Same branch reached the other way round: the removal is authorized
+        // by an admin rather than self-initiated, but the account removed is
+        // still this device's own.
+        GroupManager.selfIdProvider = { memberC }
+
+        GroupManager.removeMember(context, groupId, admin, memberC)
+
+        assertNull(
+            "being removed must delete the local group record",
+            GroupManager.getGroup(context, groupId)
+        )
+    }
+
+    @Test
+    fun `removing someone else leaves our own group record in place`() {
+        GroupManager.selfIdProvider = { admin }
+
+        GroupManager.removeMember(context, groupId, admin, memberC)
+
+        val group = GroupManager.getGroup(context, groupId)
+        assertNotNull("removing another member must not delete our own record", group)
+        assertFalse(group!!.members.contains(memberC))
+        assertTrue(group.members.contains(admin))
     }
 
     @Test

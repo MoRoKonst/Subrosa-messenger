@@ -153,41 +153,45 @@ fun LoginScreen(onLoggedIn: () -> Unit, onPanicMode: () -> Unit = {}) {
 
                 Button(
                     onClick = {
-                        val (canLogin, remainingSeconds) = LoginAttemptManager.canAttemptLogin(context)
-                        if (!canLogin) {
-                            val minutes = remainingSeconds / 60
-                            val seconds = remainingSeconds % 60
-                            error = s.loginTooManyAttempts(minutes, seconds)
-                            return@Button
-                        }
                         if (password.isBlank()) { error = s.loginEnterPassword; return@Button }
 
                         scope.launch {
                             isLoading = true
                             delay(500)
 
-                            if (UserStorage.isPanicPassword(context, password)) {
-
-                                isLoading = false
-                                onPanicMode()
-                                return@launch
-                            } else if (UserStorage.checkPassword(context, password)) {
-
-                                if (UserStorage.isDecoyMode(context)) {
+                            // Panic-before-lockout ordering, the attempt counter
+                            // and running PBKDF2 off the main thread all live in
+                            // PasswordGate — see that file for why this must not
+                            // be reimplemented per screen.
+                            when (val outcome = PasswordGate.evaluate(context, password)) {
+                                is PasswordGate.Outcome.Panic -> {
                                     isLoading = false
                                     onPanicMode()
-                                } else {
-
-                                    withContext(Dispatchers.IO) {
-                                        if (!StorageKeyManager.isSetup(context))
-                                            StorageKeyManager.setup(context, password)
-                                        else
-                                            StorageKeyManager.unlockWithPassword(context, password)
-                                    }
-                                    onLoggedIn()
+                                    return@launch
                                 }
-                            } else {
-                                error = s.loginWrongPassword
+                                is PasswordGate.Outcome.Correct -> {
+                                    if (UserStorage.isDecoyMode(context)) {
+                                        isLoading = false
+                                        onPanicMode()
+                                    } else {
+                                        withContext(Dispatchers.IO) {
+                                            if (!StorageKeyManager.isSetup(context))
+                                                StorageKeyManager.setup(context, password)
+                                            else
+                                                StorageKeyManager.unlockWithPassword(context, password)
+                                        }
+                                        onLoggedIn()
+                                    }
+                                }
+                                is PasswordGate.Outcome.LockedOut -> {
+                                    error = s.loginTooManyAttempts(
+                                        outcome.remainingSeconds / 60,
+                                        outcome.remainingSeconds % 60
+                                    )
+                                }
+                                is PasswordGate.Outcome.Wrong -> {
+                                    error = s.loginWrongPassword
+                                }
                             }
                             isLoading = false
                         }

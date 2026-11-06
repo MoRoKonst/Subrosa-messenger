@@ -20,7 +20,9 @@ object SenderCertManager {
     // presenting an already-expired cert to a recipient.
     private const val REFRESH_MARGIN_SEC = 4 * 3600L
 
-    // Pinned per-deployment, same pattern as CertificatePinner.TRUSTED_PINS —
+    // Pinned per-deployment, same pattern as NetworkConfig.CERT_PINS (which
+    // comes from the SUBROSA_CERT_PINS build property; the old, never-called
+    // CertificatePinner.kt this comment used to point at has been deleted) —
     // each self-hosted server generates its own signing keypair on first run
     // (server.py's _load_or_create_cert_signing_key()) and prints the public
     // key (base64 SubjectPublicKeyInfo DER) to its startup log. The operator

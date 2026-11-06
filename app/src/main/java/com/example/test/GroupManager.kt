@@ -93,6 +93,20 @@ object GroupManager {
     internal var prefsProvider: (Context, String) -> android.content.SharedPreferences =
         { context, name -> EncryptedStorage.getEncryptedPrefs(context, name) }
 
+    // Second test seam, same reason as prefsProvider above and added for the
+    // same failure mode. removeMember() needs this device's own account id to
+    // decide whether a removal is "I am leaving" (drop the local group record
+    // entirely) or "someone else was removed" (just update the membership
+    // list). It used to read UserStorage.getUserId() directly, which goes to
+    // EncryptedStorage for "user_prefs" and so routed around prefsProvider —
+    // under Robolectric that throws SecurityException, and it took out the
+    // four GroupManagerTest cases that reach that branch. Those are the
+    // regression tests cited for KL-15 in docs/KNOWN_SECURITY_ISSUES.md
+    // (High: a rotated group key could reach a just-removed member), so they
+    // were silently not protecting anything.
+    internal var selfIdProvider: (Context) -> String =
+        { context -> UserStorage.getUserId(context) }
+
     private fun prefs(context: Context) = prefsProvider(context, PREFS_NAME)
 
     fun generateGroupKey(): ByteArray {
@@ -347,7 +361,7 @@ object GroupManager {
         // there's no reason to keep a local record of a group we're no longer
         // in. Found live: leaving only stripped us from the membership list,
         // so the group silently stayed in the chat list forever afterward.
-        if (userId == UserStorage.getUserId(context)) {
+        if (userId == selfIdProvider(context)) {
             deleteGroup(context, groupId)
             return@synchronized
         }

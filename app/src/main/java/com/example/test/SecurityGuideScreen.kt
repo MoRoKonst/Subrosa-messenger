@@ -42,7 +42,10 @@ fun SecurityGuideScreen(onBack: () -> Unit) {
     val c = LocalSubrosaColors.current
     val bgGradient = Brush.verticalGradient(listOf(c.gradientStart, c.gradientEnd))
 
-    val items = remember {
+    // Keyed on `s`: the list captures every string eagerly, so a keyless
+    // remember() left the whole guide in the previous language after an
+    // in-app language switch until the screen was destroyed.
+    val items = remember(s) {
         listOf(
             GuideItem(s.guideInviteTitle, s.guideInviteDesc),
             GuideItem(s.guideKeyVerifyTitle, s.guideKeyVerifyDesc),
@@ -55,6 +58,8 @@ fun SecurityGuideScreen(onBack: () -> Unit) {
             GuideItem(s.guideEmergencyTitle, s.guideEmergencyDesc),
             GuideItem(s.guideAutoLockTitle, s.guideAutoLockDesc),
             GuideItem(s.guideBackupTitle, s.guideBackupDesc),
+            GuideItem(s.guideAttachmentsBackupTitle, s.guideAttachmentsBackupDesc),
+            GuideItem(s.guideArchiveTitle, s.guideArchiveDesc),
             GuideItem(s.guideTorTitle, s.guideTorDesc),
             GuideItem(s.guideCoverTitle, s.guideCoverDesc),
             GuideItem(s.guideDiagnosticsTitle, s.guideDiagnosticsDesc),
@@ -66,6 +71,7 @@ fun SecurityGuideScreen(onBack: () -> Unit) {
             GuideItem(s.guidePanicButtonTitle, s.guidePanicButtonDesc),
             GuideItem(s.guideServiceNotifTitle, s.guideServiceNotifDesc),
             GuideItem(s.guideWipeLevelsTitle, s.guideWipeLevelsDesc),
+            GuideItem(s.guideWipeScopeTitle, s.guideWipeScopeDesc),
             GuideItem(s.guideCalcDisguiseTitle, s.guideCalcDisguiseDesc),
             GuideItem(s.guideSelfHealTitle, s.guideSelfHealDesc),
             GuideItem(s.guideCompromisedTitle, s.guideCompromisedDesc)

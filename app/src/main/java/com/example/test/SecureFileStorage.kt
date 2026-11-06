@@ -39,6 +39,34 @@ object SecureFileStorage {
             EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB
         ).build().openFileInput().use { it.readBytes() }
 
+    /**
+     * Streaming variants, added for backup export/import of attachments.
+     *
+     * [read]/[write] hold the entire plaintext in memory, which is fine for the
+     * messaging paths (one attachment at a time, already loaded for display)
+     * but not for a backup that may walk hundreds of them — and a video circle
+     * is easily tens of MB. The caller is responsible for closing the stream.
+     */
+    fun openInput(context: Context, file: File): java.io.InputStream =
+        EncryptedFile.Builder(
+            file,
+            context,
+            masterKeyAlias(),
+            EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB
+        ).build().openFileInput()
+
+    fun openOutput(context: Context, file: File): java.io.OutputStream {
+        file.parentFile?.mkdirs()
+        // EncryptedFile refuses to open an output stream over an existing file.
+        if (file.exists()) file.delete()
+        return EncryptedFile.Builder(
+            file,
+            context,
+            masterKeyAlias(),
+            EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB
+        ).build().openFileOutput()
+    }
+
     fun decryptToTemp(context: Context, encFile: File, tempFileName: String): File {
         val bytes = read(context, encFile)
         val temp = File(context.cacheDir, "tmp_$tempFileName")

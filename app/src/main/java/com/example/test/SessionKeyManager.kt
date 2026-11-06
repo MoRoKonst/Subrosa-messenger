@@ -1233,6 +1233,29 @@ object SessionKeyManager {
         opkPool.clear()
         currentSpk = null
 
+        // Found during the 2026-11-06 wipe review: the ML-KEM-768 private key
+        // cached here survived every wipe. `currentSpk = null` was the only
+        // long-term key material this function dropped, and even that just
+        // drops the reference. currentPqKem was neither wiped nor nulled, so
+        // a 2400-byte post-quantum private key stayed live in the heap for
+        // the rest of the process — which matters precisely on the one wipe
+        // path that does not kill the process (wipeForDecoyKeepAlive), i.e.
+        // the duress path, where someone is holding the unlocked phone.
+        //
+        // Its arrays are ours (plain ByteArray from PqCrypto), so unlike the
+        // EC KeyPairs above they can actually be overwritten rather than just
+        // unreferenced. currentSpk/opkPool hold java.security.KeyPair, whose
+        // private keys are provider-owned objects with no working destroy() —
+        // for those, dropping the reference is the most that can be done
+        // in-process, and the backstop is the Process.killProcess() at the end
+        // of WipeManager.hardWipe().
+        currentPqKem?.let {
+            SecureMemory.wipe(it.privateKey)
+            SecureMemory.wipe(it.publicKey)
+        }
+        currentPqKem = null
+        currentSpkId = 0
+
         appContext?.let { ctx ->
             try {
                 val encPrefs = EncryptedStorage.getEncryptedPrefs(ctx, "${PREFS_NAME}_sessions")

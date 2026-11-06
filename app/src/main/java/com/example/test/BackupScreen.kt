@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -37,7 +38,7 @@ private val AppFont = Inter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BackupScreen(onBack: () -> Unit) {
+fun BackupScreen(onBack: () -> Unit, onOpenArchive: () -> Unit = {}) {
     androidx.activity.compose.BackHandler { onBack() }
     val context = LocalContext.current
     val s = LocalStrings.current
@@ -50,6 +51,7 @@ fun BackupScreen(onBack: () -> Unit) {
     var isError by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var pendingBackupContent by remember { mutableStateOf<String?>(null) }
+    var includeAttachments by remember { mutableStateOf(false) }
     var totpSecretInput by remember { mutableStateOf("") }
     var totpCodeInput by remember { mutableStateOf("") }
     var totpRecoveryCodeInput by remember { mutableStateOf("") }
@@ -58,21 +60,39 @@ fun BackupScreen(onBack: () -> Unit) {
     val saveFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
-        if (uri == null) {
-            pendingBackupContent = null
-            return@rememberLauncherForActivityResult
-        }
-        val content = pendingBackupContent ?: return@rememberLauncherForActivityResult
-        try {
-            context.contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
-            message = s.backupCreated
-            isError = false
-            pendingBackupContent = null
-            password = ""
-            confirmPassword = ""
-        } catch (e: Exception) {
-            message = s.error(e.message ?: "")
-            isError = true
+        uri ?: return@rememberLauncherForActivityResult
+        val pwd = password
+        val withAttachments = includeAttachments
+        scope.launch {
+            isLoading = true
+            try {
+                val stats = withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        BackupManager.exportToStream(context, pwd, withAttachments, out)
+                    } ?: throw java.io.IOException("openOutputStream returned null")
+                }
+                message = if (stats.attachmentCount > 0) {
+                    s.backupCreatedWithAttachments(
+                        stats.attachmentCount,
+                        formatBytes(stats.attachmentBytes),
+                        stats.missingAttachments
+                    )
+                } else {
+                    s.backupCreated
+                }
+                isError = false
+                password = ""
+                confirmPassword = ""
+            } catch (e: Exception) {
+                // A partially written file is worse than none: it looks like a
+                // backup and fails at the moment it is needed. The export
+                // cannot be rolled back through the ContentResolver reliably,
+                // so say plainly that the file must not be trusted.
+                message = s.backupExportFailed(e.message ?: e.javaClass.simpleName)
+                isError = true
+            } finally {
+                isLoading = false
+            }
         }
     }
 
@@ -84,12 +104,18 @@ fun BackupScreen(onBack: () -> Unit) {
         scope.launch {
             isLoading = true
             try {
-                val content = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)
-                        ?.bufferedReader()?.readText() ?: ""
-                }
                 val result = withContext(Dispatchers.IO) {
-                    BackupManager.importBackup(context, content, pwd, totpSecretInput, totpCodeInput, totpRecoveryCodeInput)
+                    // Stream-based, and the source is a factory because the
+                    // container version can only be told from the first bytes
+                    // — see BackupManager.importFromStream. A version 8 file
+                    // with attachments must never be slurped into a String
+                    // first, which is what this replaced.
+                    BackupManager.importFromStream(
+                        context,
+                        { context.contentResolver.openInputStream(uri)
+                            ?: throw java.io.IOException("openInputStream returned null") },
+                        pwd, totpSecretInput, totpCodeInput, totpRecoveryCodeInput
+                    )
                 }
                 if (result.isSuccess) {
                     message = "${result.getOrNull()}"
@@ -228,6 +254,66 @@ fun BackupScreen(onBack: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(24.dp))
 
+                // Checked == version 8 (BackupContainer, streamed). Unchecked
+                // == the unchanged version 7 string, which is the format the
+                // Desktop client can read — stated in the label rather than
+                // left for someone to discover mid-recovery.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { includeAttachments = !includeAttachments },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = includeAttachments,
+                        onCheckedChange = { includeAttachments = it },
+                        colors = CheckboxDefaults.colors(checkedColor = c.accent)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            s.backupIncludeAttachments,
+                            fontSize = 15.sp,
+                            color = c.textPrimary,
+                            fontFamily = AppFont
+                        )
+                        Text(
+                            if (includeAttachments) s.backupIncludeAttachmentsOn
+                            else s.backupIncludeAttachmentsOff,
+                            fontSize = 12.sp,
+                            color = c.textPrimary.copy(alpha = 0.55f),
+                            fontFamily = AppFont
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                /** Shared gate for both export buttons. Returns true if the export may proceed. */
+                fun validateExport(): Boolean = when {
+                    // TOTP was opt-in — an important protection left as a
+                    // toggle nobody was pointed at. Export is the one
+                    // moment that actually matters (it's what creates the
+                    // file+password-only attack surface in the first
+                    // place), so gate it here rather than at onboarding —
+                    // no hard app-wide lockout risk if someone loses the
+                    // secret later, since they simply can't create a new
+                    // backup until they re-enable TOTP, existing backups
+                    // are unaffected.
+                    !TotpManager.isEnabled(context) -> { message = s.backupErrTotpRequired; isError = true; false }
+                    password.isEmpty() -> { message = s.backupErrEnterPassword; isError = true; false }
+                    password != confirmPassword -> { message = s.backupErrPasswordMatch; isError = true; false }
+                    password.length < PasswordPolicy.MIN_LENGTH -> { message = s.backupErrPasswordLength; isError = true; false }
+                    // Found live 2026-08-30, alongside the restore-from-onboarding fix
+                    // (BackupManager.importBackup()): a weak/common backup password isn't
+                    // just an offline-brute-force risk against the exported file — it now
+                    // also becomes this device's actual local login password whenever the
+                    // backup is restored on a fresh install, so the same strength floor
+                    // RegisterScreen enforces for a normal password belongs here too. This
+                    // check was missing entirely; only length was enforced.
+                    PasswordPolicy.isCommonPassword(password) -> { message = s.registerErrorPasswordCommon; isError = true; false }
+                    else -> true
+                }
+
                 fun launchExport(onSuccess: (String) -> Unit) {
                     when {
                         // TOTP was opt-in — an important protection left as a
@@ -293,14 +379,26 @@ fun BackupScreen(onBack: () -> Unit) {
                         },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = c.topBar),
-                        enabled = !isLoading
+                        // Share goes through a FileProvider copy in the cache
+                        // directory, which means the whole backup exists twice
+                        // for the duration. Acceptable for a metadata-only
+                        // file; not for one carrying gigabytes of video. With
+                        // attachments on, the only offered route is the picker
+                        // below, which streams straight into the destination.
+                        enabled = !isLoading && !includeAttachments
                     ) {
                         Text(s.backupExport, fontFamily = AppFont, color = c.textPrimary, fontSize = 15.sp)
                     }
                     Button(
                         onClick = {
-                            launchExport { backup ->
-                                pendingBackupContent = backup
+                            if (validateExport()) {
+                                // Destination first, export second: with
+                                // attachments the file is written as a stream,
+                                // so the output URI has to exist before the
+                                // export starts. The v7 path no longer builds
+                                // its string up front either — one flow for
+                                // both keeps the two from drifting.
+                                message = ""
                                 saveFileLauncher.launch(BackupManager.getBackupFileName())
                             }
                         },
@@ -308,8 +406,17 @@ fun BackupScreen(onBack: () -> Unit) {
                         colors = ButtonDefaults.buttonColors(containerColor = c.topBar),
                         enabled = !isLoading
                     ) {
-                        Text("В файлы", fontFamily = AppFont, color = c.textPrimary, fontSize = 15.sp)
+                        Text(s.backupToFiles, fontFamily = AppFont, color = c.textPrimary, fontSize = 15.sp)
                     }
+                }
+                if (includeAttachments) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        s.backupShareDisabledWithAttachments,
+                        fontSize = 12.sp,
+                        color = c.textPrimary.copy(alpha = 0.5f),
+                        fontFamily = AppFont
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -372,6 +479,29 @@ fun BackupScreen(onBack: () -> Unit) {
                         Text(s.backupImport, fontFamily = AppFont)
                     }
                 }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Sits directly under Import on purpose: this is the
+                // non-destructive half of the same question ("what's in my
+                // backup file?"), and someone who only wants to read an old
+                // conversation should find it before they reach for the button
+                // that replaces their identity.
+                OutlinedButton(
+                    onClick = onOpenArchive,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = c.textPrimary),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, c.fieldBorder)
+                ) {
+                    Text(s.archiveOpen, fontFamily = AppFont)
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    s.archiveSubtitle,
+                    fontSize = 12.sp,
+                    color = c.textPrimary.copy(alpha = 0.5f),
+                    fontFamily = AppFont
+                )
 
                 if (message.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(16.dp))

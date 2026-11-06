@@ -7,6 +7,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import org.bouncycastle.crypto.generators.Argon2BytesGenerator
@@ -93,7 +94,106 @@ object BackupManager {
         return "subrosa_backup_${sdf.format(java.util.Date())}.bin"
     }
 
+    /**
+     * One attachment the export intends to carry: the blob id (which is also
+     * its filename stem under `files/blobs/`, and is reused verbatim on
+     * restore so paths are recomputed per device instead of trusted from the
+     * file) and the device-encrypted source.
+     */
+    internal data class AttachmentRef(val blobId: String, val file: File)
+
+    /**
+     * Version-7 export: metadata only, one Base64 string, byte-identical to
+     * what every previous build produced. Kept as the default path because it
+     * is the format the Desktop client can import — see [exportToStream].
+     */
     fun exportBackup(context: Context, password: String): String {
+        val jsonBytes = buildBackupJson(context, null).toString().toByteArray(Charsets.UTF_8)
+        val compressedBytes = gzip(jsonBytes)
+        SecureMemory.wipe(jsonBytes)
+        val result = encryptBackup(compressedBytes, password)
+        SecureMemory.wipe(compressedBytes)
+        return result
+    }
+
+    /** Totals reported back to the UI so the user is told what actually went into the file. */
+    data class ExportStats(
+        val version: Int,
+        val attachmentCount: Int,
+        val attachmentBytes: Long,
+        /** Attachments referenced by a message whose blob file is gone from disk. */
+        val missingAttachments: Int
+    )
+
+    /**
+     * Streaming export. The destination is chosen *before* the export runs
+     * (the SAF picker hands over a `content://` URI), which is the only way an
+     * attachment-bearing backup can be written without holding it in memory.
+     *
+     * [includeAttachments] = false reproduces [exportBackup] exactly — the
+     * same v7 Base64 string, just written to a stream — so turning the option
+     * off keeps cross-platform (Desktop) import working. Turning it on
+     * switches to [BackupContainer], which the Desktop client cannot read yet;
+     * the UI says so rather than letting the user discover it during a
+     * recovery.
+     */
+    fun exportToStream(
+        context: Context,
+        password: String,
+        includeAttachments: Boolean,
+        out: java.io.OutputStream
+    ): ExportStats {
+        if (!includeAttachments) {
+            val text = exportBackup(context, password)
+            out.write(text.toByteArray(Charsets.US_ASCII))
+            out.flush()
+            return ExportStats(7, 0, 0L, 0)
+        }
+
+        val refs = mutableListOf<AttachmentRef>()
+        val json = buildBackupJson(context, refs)
+
+        var bytes = 0L
+        var missing = 0
+        BackupContainer.Writer(out, password).use { writer ->
+            writer.writeMetadata(json.toString())
+            refs.forEach { ref ->
+                // A message can outlive its blob — expiring attachments and
+                // manual deletions both leave the path behind. The blob id is
+                // still listed in the metadata (the reader walks that list), so
+                // an absent file is written as a zero-length blob rather than
+                // skipped, which keeps the frame sequence aligned with the
+                // list. On restore that surfaces as an attachment that won't
+                // open, which is the truth, instead of every *subsequent*
+                // attachment being restored under the wrong id.
+                if (!ref.file.exists()) {
+                    missing++
+                    writer.writeBlob(ref.blobId, java.io.ByteArrayInputStream(ByteArray(0)))
+                    return@forEach
+                }
+                try {
+                    SecureFileStorage.openInput(context, ref.file).use { input ->
+                        bytes += writer.writeBlob(ref.blobId, input)
+                    }
+                } catch (e: Exception) {
+                    // Undecryptable blob (e.g. written under a Keystore key
+                    // that a previous identity reset destroyed). Same
+                    // reasoning as above: keep the sequence aligned.
+                    Log.w("BackupManager", "Вложение ${ref.blobId} не прочитано: ${e.message}")
+                    missing++
+                    writer.writeBlob(ref.blobId, java.io.ByteArrayInputStream(ByteArray(0)))
+                }
+            }
+        }
+        out.flush()
+        return ExportStats(BackupContainer.VERSION, refs.size, bytes, missing)
+    }
+
+    /**
+     * Builds the metadata object. [attachments] non-null switches the format to
+     * version 8 and collects every referenced blob; null produces version 7.
+     */
+    private fun buildBackupJson(context: Context, attachments: MutableList<AttachmentRef>?): JSONObject {
         if (!StorageKeyManager.isUnlocked) {
             throw IllegalStateException("Приложение заблокировано — сначала разблокируйте его, чтобы экспортировать бэкап")
         }
@@ -123,7 +223,7 @@ object BackupManager {
         }
 
         val backup = JSONObject().apply {
-            put("version", 7)
+            put("version", if (attachments != null) BackupContainer.VERSION else 7)
             put("timestamp", System.currentTimeMillis())
             put("totp_enabled", TotpManager.isEnabled(context))
             // Hashes only, not the raw codes — same principle as the secret
@@ -157,7 +257,7 @@ object BackupManager {
                 val privRaw = StorageKeyManager.unwrapBytes(privStored)
                 put("ec_private_key", Base64.encodeToString(privRaw, Base64.NO_WRAP))
                 put("ec_public_key", pubB64)
-                privRaw.fill(0)
+                SecureMemory.wipe(privRaw)
             }
 
             // Found live 2026-09-02: without this, every restore forces an
@@ -276,7 +376,19 @@ object BackupManager {
                             put("text", msg.text)
                             put("isOwn", msg.isOwn)
                             put("timestamp", msg.timestamp)
-
+                            if (attachments != null) {
+                                describeAttachment(
+                                    target = this,
+                                    attachments = attachments,
+                                    imagePath = msg.imagePath,
+                                    voicePath = msg.voicePath,
+                                    videoPath = msg.videoPath,
+                                    filePath = msg.filePath,
+                                    fileName = msg.fileName,
+                                    voiceDuration = msg.voiceDuration,
+                                    videoDuration = msg.videoDuration
+                                )
+                            }
                         })
                     }
                 }
@@ -319,20 +431,145 @@ object BackupManager {
                             put("text", msg.text)
                             put("timestamp", msg.timestamp)
                             put("isOwn", msg.isOwn)
+                            if (attachments != null) {
+                                describeAttachment(
+                                    target = this,
+                                    attachments = attachments,
+                                    imagePath = msg.imagePath,
+                                    voicePath = null,
+                                    videoPath = msg.videoPath,
+                                    filePath = msg.filePath,
+                                    fileName = msg.fileName,
+                                    voiceDuration = 0,
+                                    videoDuration = msg.videoDuration
+                                )
+                            }
                         })
                     }
                 }
             })
         }
 
-        val jsonBytes = backup.toString().toByteArray(Charsets.UTF_8)
-        val compressedBytes = gzip(jsonBytes)
-        jsonBytes.fill(0)
+        // Authoritative blob order. The reader walks *this* list, not the
+        // message arrays, so import does not depend on reproducing the exact
+        // iteration order the export happened to use — which was the fragile
+        // part of the first draft of this format.
+        if (attachments != null) {
+            backup.put("attachments", JSONArray().apply {
+                attachments.forEach { put(it.blobId) }
+            })
+        }
 
-        val result = encryptBackup(compressedBytes, password)
-        compressedBytes.fill(0)
+        return backup
+    }
 
-        return result
+    /**
+     * Records one message's attachment (a message carries at most one) and
+     * writes the fields import needs to rewire it.
+     *
+     * The stored path is not carried over. It is an absolute path from the
+     * device that wrote it, and the only part worth keeping is the blob id —
+     * the filename stem — from which the importing device recomputes its own
+     * path via `SecureFileStorage.blobFile`. A path from the file is never
+     * trusted: it would be an attacker-controlled string being handed to
+     * `File()` on restore.
+     */
+    private fun describeAttachment(
+        target: JSONObject,
+        attachments: MutableList<AttachmentRef>,
+        imagePath: String?,
+        voicePath: String?,
+        videoPath: String?,
+        filePath: String?,
+        fileName: String?,
+        voiceDuration: Int,
+        videoDuration: Int
+    ) {
+        val (kind, path) = when {
+            imagePath != null -> "image" to imagePath
+            voicePath != null -> "voice" to voicePath
+            videoPath != null -> "video" to videoPath
+            filePath != null  -> "file"  to filePath
+            else -> return
+        }
+
+        val file = File(path)
+        // Only blobs are carried. Anything outside `files/blobs/` is either a
+        // legacy layout or something that does not belong in a backup, and
+        // silently exporting whatever a path happens to point at is how a
+        // backup ends up containing files nobody meant to share.
+        if (file.parentFile?.name != "blobs" || !file.name.endsWith(".enc")) return
+        val blobId = file.name.removeSuffix(".enc")
+        // A blob id becomes a filename on the importing device, so it must not
+        // be able to escape the directory or collide with a path separator.
+        if (blobId.isEmpty() || blobId.any { it == '/' || it == '\\' || it == '.' }) return
+
+        attachments.add(AttachmentRef(blobId, file))
+        target.put("blob", blobId)
+        target.put("blobKind", kind)
+        if (fileName != null) target.put("fileName", fileName)
+        if (kind == "voice" && voiceDuration > 0) target.put("voiceDuration", voiceDuration)
+        if (kind == "video" && videoDuration > 0) target.put("videoDuration", videoDuration)
+    }
+
+    /**
+     * Import from a stream, auto-detecting the container.
+     *
+     * [source] is a factory rather than a stream because the format can only
+     * be identified from the first 6 bytes, and the v7 path then needs the
+     * whole thing from the beginning as text — reopening is cheaper and far
+     * less error-prone than trying to make `content://` streams reliably
+     * markable.
+     */
+    fun importFromStream(
+        context: Context,
+        source: () -> java.io.InputStream,
+        password: String,
+        totpSecret: String? = null,
+        totpCode: String? = null,
+        recoveryCode: String? = null
+    ): Result<String> {
+        val sniff = try {
+            source().use { input ->
+                val head = ByteArray(BackupContainer.SNIFF_LEN)
+                var read = 0
+                while (read < head.size) {
+                    val n = input.read(head, read, head.size - read)
+                    if (n < 0) break
+                    read += n
+                }
+                head.copyOf(read)
+            }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+
+        if (!BackupContainer.isV8Container(sniff)) {
+            val text = try {
+                source().use { it.bufferedReader().readText() }
+            } catch (e: Exception) {
+                return Result.failure(e)
+            }
+            return importBackup(context, text, password, totpSecret, totpCode, recoveryCode)
+        }
+
+        return try {
+            BackupContainer.Reader(source(), password).use { reader ->
+                val json = reader.readMetadata()
+                importBackup(
+                    context = context,
+                    encryptedData = "",
+                    password = password,
+                    totpSecret = totpSecret,
+                    totpCode = totpCode,
+                    recoveryCode = recoveryCode,
+                    preDecryptedJson = json,
+                    blobs = reader
+                )
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     fun importBackup(
@@ -341,21 +578,30 @@ object BackupManager {
         password: String,
         totpSecret: String? = null,
         totpCode: String? = null,
-        recoveryCode: String? = null
+        recoveryCode: String? = null,
+        /** Already-decrypted metadata, for the v8 path where the container reader owns decryption. */
+        preDecryptedJson: String? = null,
+        /** Positioned just past the metadata frame; blobs are read from it in the order `attachments` lists. */
+        blobs: BackupContainer.Reader? = null
     ): Result<String> {
         return try {
-            val decryptedBytes = decryptBackup(encryptedData, password)
+            val backup: JSONObject
+            if (preDecryptedJson != null) {
+                backup = JSONObject(preDecryptedJson)
+            } else {
+                val decryptedBytes = decryptBackup(encryptedData, password)
 
-            val jsonBytes = try {
-                val decompressed = ungzip(decryptedBytes)
-                decryptedBytes.fill(0)
-                decompressed
-            } catch (e: Exception) {
-                decryptedBytes
+                val jsonBytes = try {
+                    val decompressed = ungzip(decryptedBytes)
+                    SecureMemory.wipe(decryptedBytes)
+                    decompressed
+                } catch (e: Exception) {
+                    decryptedBytes
+                }
+
+                backup = JSONObject(String(jsonBytes, Charsets.UTF_8))
+                SecureMemory.wipe(jsonBytes)
             }
-
-            val backup = JSONObject(String(jsonBytes, Charsets.UTF_8))
-            jsonBytes.fill(0)
 
             // Captured before any of the SMK/UserStorage fixups below run —
             // distinguishes "genuinely fresh device" (RegisterScreen's import
@@ -564,7 +810,7 @@ object BackupManager {
                 val ecPrefs = EncryptedStorage.getEncryptedPrefs(context, "beacon_ec_keys_enc")
                 val privToStore = StorageKeyManager.wrapBytes(privRaw)
                 ecPrefs.edit().putString("ec_priv", privToStore).putString("ec_pub", pubB64).commit()
-                privRaw.fill(0)
+                SecureMemory.wipe(privRaw)
 
                 try {
                     val pubBytes = Base64.decode(pubB64, Base64.NO_WRAP)
@@ -614,6 +860,59 @@ object BackupManager {
             // under the OLD identity's key, invisible once the app starts
             // reading as the new one. Found while wiring the wipe above.
             val username = UserStorage.getUserId(context)
+
+            // Attachments, before the messages that point at them. Restored in
+            // the order `attachments` declares, which is the order the frames
+            // were written — the container's AAD chain requires exactly that
+            // order and fails loudly on any other.
+            //
+            // Each blob is re-encrypted on the way in: the bytes arrive
+            // protected by the backup password and land under *this* device's
+            // Keystore key via SecureFileStorage. That re-encryption is why
+            // attachments can move between devices at all, and it means a
+            // restored blob is no more readable on a stolen phone than one
+            // received normally.
+            var restoredAttachments = 0
+            var failedAttachments = 0
+            if (blobs != null) {
+                val ids = backup.optJSONArray("attachments")
+                for (i in 0 until (ids?.length() ?: 0)) {
+                    val blobId = ids!!.optString(i, "")
+                    if (blobId.isEmpty() || blobId.any { it == '/' || it == '\\' || it == '.' }) {
+                        // Cannot be skipped silently: the frames for this id are
+                        // in the file and must still be consumed, or every later
+                        // attachment is read against the wrong AAD.
+                        blobs.skipBlob(blobId)
+                        failedAttachments++
+                        continue
+                    }
+                    val target = SecureFileStorage.blobFile(context.filesDir, blobId)
+                    try {
+                        val written = SecureFileStorage.openOutput(context, target).use { out ->
+                            blobs.readBlob(blobId, out)
+                        }
+                        // A zero-length blob is what the export writes for an
+                        // attachment whose file was already gone; keep the
+                        // message but don't leave an empty file pretending to
+                        // be openable media.
+                        if (written == 0L) {
+                            target.delete()
+                            failedAttachments++
+                        } else {
+                            restoredAttachments++
+                        }
+                    } catch (e: Exception) {
+                        Log.w("BackupManager", "Вложение $blobId не восстановлено: ${e.message}")
+                        target.delete()
+                        failedAttachments++
+                        // A failure inside readBlob leaves the reader mid-blob
+                        // with no way to resynchronise, so the rest of the
+                        // attachments are unreachable. Stop trying rather than
+                        // emitting a cascade of misleading failures.
+                        break
+                    }
+                }
+            }
 
             if (backup.has("servers")) {
                 val servers = backup.getJSONArray("servers")
@@ -674,12 +973,20 @@ object BackupManager {
                 for (i in 0 until messages.length()) {
                     val obj = messages.getJSONObject(i)
                     val contact = obj.getString("contact")
+                    val blobPath = attachmentPath(context, obj)
+                    val kind = obj.optString("blobKind", "")
                     messagesByContact.getOrPut(contact) { mutableListOf() }.add(
                         ChatStorage.StoredMessage(
                             text      = obj.getString("text"),
                             isOwn     = obj.getBoolean("isOwn"),
-                            timestamp = obj.getLong("timestamp")
-
+                            timestamp = obj.getLong("timestamp"),
+                            imagePath = blobPath.takeIf { kind == "image" },
+                            voicePath = blobPath.takeIf { kind == "voice" },
+                            videoPath = blobPath.takeIf { kind == "video" },
+                            filePath  = blobPath.takeIf { kind == "file" },
+                            fileName  = obj.optString("fileName", null),
+                            voiceDuration = obj.optInt("voiceDuration", 0),
+                            videoDuration = obj.optInt("videoDuration", 0)
                         )
                     )
                 }
@@ -730,6 +1037,8 @@ object BackupManager {
                 for (i in 0 until groupMessages.length()) {
                     val obj = groupMessages.getJSONObject(i)
 
+                    val blobPath = attachmentPath(context, obj)
+                    val kind = obj.optString("blobKind", "")
                     val msg = GroupMessage(
                         id = java.util.UUID.randomUUID().toString(),
                         groupId = obj.getString("group_id"),
@@ -737,7 +1046,12 @@ object BackupManager {
                         senderName = obj.getString("sender_name"),
                         text = obj.getString("text"),
                         timestamp = obj.getLong("timestamp"),
-                        isOwn = obj.getBoolean("isOwn")
+                        isOwn = obj.getBoolean("isOwn"),
+                        imagePath = blobPath.takeIf { kind == "image" },
+                        videoPath = blobPath.takeIf { kind == "video" },
+                        filePath  = blobPath.takeIf { kind == "file" },
+                        fileName  = obj.optString("fileName", null),
+                        videoDuration = obj.optInt("videoDuration", 0)
                     )
 
                     GroupManager.saveGroupMessage(context, username, msg)
@@ -760,27 +1074,35 @@ object BackupManager {
                 " ВНИМАНИЕ: этот бэкап не содержал ключ личности — у вас НОВЫЙ фингерпринт, старые контакты вас не найдут, пока вы не обменяетесь с ними инвайт-кодом заново."
             } else ""
 
+            val attachmentNote = when {
+                blobs == null -> ""
+                failedAttachments > 0 ->
+                    " Вложений восстановлено: $restoredAttachments, не удалось: $failedAttachments."
+                restoredAttachments > 0 -> " Вложений восстановлено: $restoredAttachments."
+                else -> ""
+            }
+
             if (recoveryUsed) {
-                Result.success("Импортировано успешно (версия $version). TOTP-защита сброшена резервным кодом — включите её заново в настройках.$identityWarning")
+                Result.success("Импортировано успешно (версия $version). TOTP-защита сброшена резервным кодом — включите её заново в настройках.$attachmentNote$identityWarning")
             } else {
-                Result.success("Импортировано успешно (версия $version)$identityWarning")
+                Result.success("Импортировано успешно (версия $version)$attachmentNote$identityWarning")
             }
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    private fun gzip(data: ByteArray): ByteArray {
+    internal fun gzip(data: ByteArray): ByteArray {
         val bos = ByteArrayOutputStream()
         GZIPOutputStream(bos).use { it.write(data) }
         return bos.toByteArray()
     }
 
-    private fun ungzip(data: ByteArray): ByteArray {
+    internal fun ungzip(data: ByteArray): ByteArray {
         return GZIPInputStream(ByteArrayInputStream(data)).use { it.readBytes() }
     }
 
-    private fun encryptBackup(data: ByteArray, password: String): String {
+    internal fun encryptBackup(data: ByteArray, password: String): String {
         val salt = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
         val iv   = ByteArray(12).also { java.security.SecureRandom().nextBytes(it) }
         val key  = deriveKey(password, salt)
@@ -794,11 +1116,11 @@ object BackupManager {
             val combined = salt + iv + encrypted
             return Base64.encodeToString(combined, Base64.NO_WRAP)
         } finally {
-            key.fill(0)
+            SecureMemory.wipe(key)
         }
     }
 
-    private fun decryptBackup(encryptedB64: String, password: String): ByteArray {
+    internal fun decryptBackup(encryptedB64: String, password: String): ByteArray {
         val combined = Base64.decode(encryptedB64, Base64.NO_WRAP)
 
         if (combined.size < 32 + 12 + 16) {
@@ -815,11 +1137,28 @@ object BackupManager {
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
             return cipher.doFinal(encrypted)
         } finally {
-            key.fill(0)
+            SecureMemory.wipe(key)
         }
     }
 
-    private fun deriveKey(password: String, salt: ByteArray): ByteArray {
+    /**
+     * Path for a message's restored attachment, or null.
+     *
+     * Returns a path only if the blob actually landed on disk, so a v7 backup
+     * (no `blob` field), a v8 backup imported by a build that skipped the blob,
+     * and an attachment whose source file was missing at export time all come
+     * out the same way: the message is kept, the attachment is absent, and the
+     * UI shows it as such instead of holding a path to a file that isn't there.
+     */
+    private fun attachmentPath(context: Context, obj: JSONObject): String? {
+        val blobId = obj.optString("blob", "")
+        if (blobId.isEmpty() || blobId.any { it == '/' || it == '\\' || it == '.' }) return null
+        val file = SecureFileStorage.blobFile(context.filesDir, blobId)
+        return if (file.exists() && file.length() > 0) file.absolutePath else null
+    }
+
+    /** `internal` so [BackupContainer] derives the v8 key with identical parameters rather than a second copy of them. */
+    internal fun deriveKey(password: String, salt: ByteArray): ByteArray {
         val params = Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
             .withSalt(salt)
             .withParallelism(1)
@@ -843,7 +1182,7 @@ object BackupManager {
             gen.generateBytes(passwordChars, key)
             return key
         } finally {
-            passwordChars.fill('\u0000')
+            SecureMemory.wipe(passwordChars)
         }
     }
 }

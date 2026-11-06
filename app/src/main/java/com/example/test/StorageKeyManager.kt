@@ -58,7 +58,7 @@ object StorageKeyManager {
             }
         }.apply()
 
-        smk?.fill(0)
+        SecureMemory.wipe(smk)
         smk = newSmk
 
         // Missing entirely before this fix, unlike unlockWithPassword()/
@@ -86,7 +86,7 @@ object StorageKeyManager {
             val blob = Base64.decode(encB64,  Base64.NO_WRAP)
             val salt = Base64.decode(saltB64, Base64.NO_WRAP)
             val decrypted = decryptWithPassword(blob, password, salt)
-            smk?.fill(0)
+            SecureMemory.wipe(smk)
             smk = decrypted
             SessionKeyManager.reloadSessionsIfNeeded()
             true
@@ -100,7 +100,7 @@ object StorageKeyManager {
         return try {
             val blob = Base64.decode(encB64, Base64.NO_WRAP)
             val decrypted = decryptWithKeystore(blob)
-            smk?.fill(0)
+            SecureMemory.wipe(smk)
             smk = decrypted
             migrateKsKeyIfNeeded(context, decrypted)
             SessionKeyManager.reloadSessionsIfNeeded()
@@ -111,7 +111,7 @@ object StorageKeyManager {
     }
 
     fun lock() {
-        smk?.fill(0)
+        SecureMemory.wipe(smk)
         smk = null
     }
 
@@ -157,11 +157,35 @@ object StorageKeyManager {
     private fun prefs(context: Context) =
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
 
+    /**
+     * Two copies used to be left behind on every call, both now wiped:
+     *
+     *  - `password.toCharArray()` was created inline, so nothing held a
+     *    reference to zero afterwards. `spec.clearPassword()` only clears
+     *    `PBEKeySpec`'s own internal clone, not the array we handed it.
+     *  - `raw` — the derived 256-bit key — was passed straight into
+     *    `SecretKeySpec`, which *clones* its input. The original stayed on the
+     *    heap for the GC to get to eventually, next to the password.
+     *
+     * `SecretKeySpec`'s own clone cannot be reached from here (AOSP does not
+     * implement `destroy()` on it) and neither can whatever the provider
+     * copies during `Cipher.init`. See [SecureMemory]'s class doc.
+     */
     private fun deriveKey(password: String, salt: ByteArray): SecretKey {
-        val spec = PBEKeySpec(password.toCharArray(), salt, PBKDF2_ITER, 256)
-        val raw  = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
-        spec.clearPassword()
-        return SecretKeySpec(raw, "AES")
+        val chars = password.toCharArray()
+        var raw: ByteArray? = null
+        try {
+            val spec = PBEKeySpec(chars, salt, PBKDF2_ITER, 256)
+            try {
+                raw = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
+            } finally {
+                spec.clearPassword()
+            }
+            return SecretKeySpec(raw, "AES")
+        } finally {
+            SecureMemory.wipe(chars)
+            SecureMemory.wipe(raw)
+        }
     }
 
     private fun encryptWithPassword(smkBytes: ByteArray, password: String, salt: ByteArray): ByteArray {

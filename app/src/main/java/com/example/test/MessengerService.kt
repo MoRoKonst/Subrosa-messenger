@@ -171,13 +171,33 @@ class MessengerService : Service() {
             })
             Log.d(TAG, "OkHttpClient: маршрут через Tor SOCKS5 (без DNS-утечки)")
         }
-        if (NetworkConfig.CERT_PIN.isNotEmpty() && NetworkConfig.SERVER_HOSTNAME.isNotEmpty()) {
+        if (NetworkConfig.isPinningActive) {
             builder.certificatePinner(
                 okhttp3.CertificatePinner.Builder()
-                    .add(NetworkConfig.SERVER_HOSTNAME, NetworkConfig.CERT_PIN)
+                    .apply {
+                        NetworkConfig.CERT_PINS.forEach { pin ->
+                            add(NetworkConfig.SERVER_HOSTNAME, pin)
+                        }
+                    }
                     .build()
             )
-            Log.d(TAG, "Certificate pinning включён для ${NetworkConfig.SERVER_HOSTNAME}")
+            Log.d(
+                TAG,
+                "Certificate pinning включён для ${NetworkConfig.SERVER_HOSTNAME}, " +
+                    "пинов: ${NetworkConfig.CERT_PINS.size}"
+            )
+        } else if (!BuildConfig.DEBUG) {
+            // Unreachable by construction: assembleRelease fails when the pin
+            // list is empty, unless someone passed the documented override.
+            // Logged loudly rather than running silently unpinned, which is the
+            // exact state this rework existed to make impossible.
+            Log.e(
+                TAG,
+                "ВНИМАНИЕ: release-сборка без certificate pinning — подлинность сервера " +
+                    "держится только на системном хранилище CA. Пересоберите с SUBROSA_CERT_PINS."
+            )
+        } else {
+            Log.d(TAG, "Certificate pinning выключен (debug-сборка)")
         }
         return builder.build()
     }
@@ -989,67 +1009,17 @@ class MessengerService : Service() {
         }
     }
 
+    /**
+     * The 5-volume-press trigger. This was a third hand-written copy of the
+     * wipe, and it had drifted into being the weakest of the three: it never
+     * deleted the `beacon_smk_wrap` Keystore alias, never called
+     * `StorageKeyManager.lock()` (which docs/SECURITY.md and
+     * SECURITY_INVARIANTS.md #22 both state is the first operation of *any*
+     * wipe) and never dismissed the panic notification that outlives the
+     * process. Delegating removes the copy rather than re-synchronising it.
+     */
     private fun performEmergencyWipe() {
-        var savedPasswordHash: String? = null
-        var savedUsername: String? = null
-        var savedUserId: String? = null
-        var savedCalcDisguise = false
-        var savedCalcUnlockResult: Float? = null
-        try {
-            val enc = EncryptedStorage.getEncryptedPrefs(this, "user_prefs")
-            savedPasswordHash  = enc.getString("password_hash", null)
-            savedUsername      = enc.getString("username",      null)
-            savedUserId        = enc.getString("user_id",       null)
-            // See WipeManager.hardWipe() for why the code must travel with the flag.
-            if (enc.getBoolean("calculator_disguise", false) && enc.contains("calculator_unlock_result")) {
-                savedCalcDisguise = true
-                savedCalcUnlockResult = enc.getFloat("calculator_unlock_result", 0f)
-            }
-        } catch (_: Exception) {}
-
-        try {
-            SessionKeyManager.deleteAllSessions()
-            CryptoManager.deleteKeys()
-            try {
-                val ks = java.security.KeyStore.getInstance("AndroidKeyStore")
-                ks.load(null)
-                listOf("_androidx_security_master_key", "_androidx_security_crypto_master_key_")
-                    .filter { ks.containsAlias(it) }
-                    .forEach { ks.deleteEntry(it) }
-            } catch (_: Exception) {}
-
-            val dataDir = applicationInfo.dataDir
-            File(dataDir, "shared_prefs").deleteRecursively()
-            filesDir.deleteRecursively()
-            cacheDir.deleteRecursively()
-            externalCacheDir?.deleteRecursively()
-            File(dataDir, "databases").deleteRecursively()
-            File(dataDir, "app_webview").deleteRecursively()
-            File(dataDir, "no_backup").deleteRecursively()
-            getExternalFilesDir(null)?.parentFile?.deleteRecursively()
-
-            stopSelf()
-
-            if (savedUsername != null && savedPasswordHash != null || savedCalcDisguise) {
-                try {
-                    val ed = getSharedPreferences("beacon_recovery", Context.MODE_PRIVATE).edit()
-                    if (savedUsername != null && savedPasswordHash != null) {
-                        ed.putString("username",      savedUsername)
-                          .putString("user_id",       savedUserId ?: "")
-                          .putString("password_hash", savedPasswordHash)
-                    }
-                    if (savedCalcDisguise) {
-                        ed.putBoolean("calculator_disguise", true)
-                        savedCalcUnlockResult?.let { ed.putFloat("calculator_unlock_result", it) }
-                    }
-                    ed.commit()
-                } catch (_: Exception) {}
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Emergency wipe error: ${e.message}", e)
-        } finally {
-            android.os.Process.killProcess(android.os.Process.myPid())
-        }
+        WipeManager.hardWipe(this, withDecoy = true)
     }
 
     override fun onCreate() {

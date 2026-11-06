@@ -101,6 +101,10 @@ interface IStr3 {
     val profilePanicSetStatus: String; val profilePanicEnterLabel: String
     val profilePanicInstruction: String
     val profilePanicFieldLabel: String; val profileLanguageToggle: String
+    // Panic password must never collide with the login password: whichever is
+    // checked first wins, and the panic check runs first, so an identical pair
+    // turns every normal login into an irreversible duress wipe.
+    val profilePanicErrSameAsLogin: String; val changePasswordErrSameAsPanic: String
     val profileThemeLabel: String; val profileThemeNavy: String
     val profileThemeDark: String; val profileThemeLight: String
     val profileInvalidCodeFormat: String; val profileInvalidOrExpiredCode: String
@@ -115,6 +119,33 @@ interface IStr3 {
     val backupErrPasswordMatch: String; val backupErrPasswordLength: String
     val backupErrTotpRequired: String
     val backupErrEnterForDecrypt: String
+    // Read-only offline archive viewer (BackupArchive/ArchiveScreen) — lets a
+    // backup be read without importing it, so history stays reachable after
+    // the server is gone.
+    val archiveTitle: String; val archiveSubtitle: String
+    val archiveNoticeTitle: String; val archiveNoticeText: String
+    val archivePick: String; val archiveOpen: String
+    val archiveOpening: String; val archiveBadPassword: String
+    val archiveUnreadable: (String) -> String
+    val archiveSummary: (Int, Int) -> String
+    val archiveCreatedAt: (String) -> String
+    val archiveEmpty: String; val archiveAttachmentMissing: String
+    val archiveNoAttachmentsNote: String; val archiveClose: String
+    val archiveGroupTag: String; val archiveNotAvailableInDecoy: String
+    val archiveFileTooLarge: String
+    // Version-8 attachment export (BackupContainer) + attachment display in
+    // the read-only viewer.
+    val backupToFiles: String
+    val backupIncludeAttachments: String
+    val backupIncludeAttachmentsOn: String; val backupIncludeAttachmentsOff: String
+    val backupShareDisabledWithAttachments: String
+    val backupCreatedWithAttachments: (Int, String, Int) -> String
+    val backupExportFailed: (String) -> String
+    val archiveAttachmentImage: String; val archiveAttachmentVoice: String
+    val archiveAttachmentVideo: String; val archiveAttachmentFile: String
+    val archiveAttachmentOpen: String; val archiveAttachmentSave: String
+    val archiveAttachmentSaved: String; val archiveAttachmentUnavailable: String
+    val archiveAttachmentLoading: String
 }
 
 interface IStr4 {
@@ -357,6 +388,16 @@ interface IStr10 {
     // (wipe-on-breach, calculator disguise) also have a guide article.
     val guideWipeOnBreachTitle: String; val guideWipeOnBreachDesc: String
     val guideCalcDisguiseTitle: String; val guideCalcDisguiseDesc: String
+    // Added 2026-11-06: the read-only archive viewer had no article, and
+    // nothing in the guide explained what a wipe actually reaches (or, just as
+    // importantly, what it deliberately does not — an exported backup file).
+    val guideArchiveTitle: String; val guideArchiveDesc: String
+    val guideWipeScopeTitle: String; val guideWipeScopeDesc: String
+    // Added 2026-11-06 with the version-8 container: the attachments export
+    // option is a real trade-off (archive completeness vs file size and
+    // cross-platform import), so it gets its own article rather than a
+    // sentence buried in the backup one.
+    val guideAttachmentsBackupTitle: String; val guideAttachmentsBackupDesc: String
 }
 
 data class AppStrings(
@@ -541,6 +582,8 @@ private val ru3 = object : IStr3 {
     override val profilePanicEnterLabel = "Введите пароль для экстренного удаления:"
     override val profilePanicInstruction = "Сценарий использования:\n① В экстренной ситуации введите этот пароль один раз — все данные сотрутся.\n② После перезапуска войдите своим обычным паролем."
     override val profilePanicFieldLabel = "Panic пароль"
+    override val profilePanicErrSameAsLogin = "Panic-пароль не должен совпадать с обычным паролем входа — иначе каждый ваш вход будет стирать данные"
+    override val changePasswordErrSameAsPanic = "Новый пароль совпадает с panic-паролем — выберите другой"
     override val profileLanguageToggle = "English"
     override val profileThemeLabel = "Тема"
     override val profileThemeNavy = "Изумрудная"
@@ -568,6 +611,45 @@ private val ru3 = object : IStr3 {
     override val backupErrPasswordLength = "Пароль должен быть минимум 8 символов"
     override val backupErrTotpRequired = "Сначала включите TOTP-защиту (Профиль → Двухфакторная защита) — без неё файл бэкапа и пароль дают полный доступ к identity, второго фактора нет"
     override val backupErrEnterForDecrypt = "Введите пароль для расшифровки"
+    override val archiveTitle = "Чтение бэкапа"
+    override val archiveSubtitle = "Открыть файл бэкапа только для чтения — без восстановления и без сервера"
+    override val archiveNoticeTitle = "Что делает этот режим"
+    override val archiveNoticeText = "Файл расшифровывается в памяти и показывается как текст. Ничего не записывается на устройство, текущая identity не затрагивается, ключи из бэкапа не восстанавливаются — отправлять сообщения от этого аккаунта по-прежнему нельзя. Сервер не нужен: расшифровка полностью локальная. При выходе с экрана или сворачивании приложения расшифрованная копия сбрасывается, и пароль нужно будет ввести заново."
+    override val archivePick = "Выбрать файл бэкапа"
+    override val archiveOpen = "Открыть для чтения"
+    override val archiveOpening = "Расшифровка…"
+    override val archiveBadPassword = "Неверный пароль или файл повреждён"
+    override val archiveUnreadable: (String) -> String = { d -> "Файл расшифрован, но прочитать содержимое не удалось: $d" }
+    override val archiveSummary: (Int, Int) -> String = { threads, messages -> "Переписок: $threads · Сообщений: $messages" }
+    override val archiveCreatedAt: (String) -> String = { d -> "Бэкап от $d" }
+    override val archiveEmpty = "В этом бэкапе нет сообщений"
+    override val archiveAttachmentMissing = "[вложение не входит в бэкап]"
+    override val archiveNoAttachmentsNote = "Вложения доступны только если при экспорте была включена опция «Включить вложения». В бэкапах без неё хранится один текст, и сообщения с фото, видео, голосовыми или файлами будут помечены как недоступные."
+    override val archiveClose = "Закрыть и очистить"
+    override val archiveGroupTag = "группа"
+    override val archiveNotAvailableInDecoy = "Недоступно"
+    override val archiveFileTooLarge = "Файл слишком большой для чтения в памяти"
+    override val backupToFiles = "В файлы"
+    override val backupIncludeAttachments = "Включить вложения"
+    override val backupIncludeAttachmentsOn = "Фото, видео, голосовые и файлы войдут в бэкап. Файл будет значительно больше, и его не сможет прочитать настольный клиент (новый формат)."
+    override val backupIncludeAttachmentsOff = "Только текст переписки — как раньше. Такой файл читается и настольным клиентом."
+    override val backupShareDisabledWithAttachments = "С вложениями доступно только сохранение «В файлы»: отправка через другие приложения делает вторую копию файла, что недопустимо при большом размере."
+    override val backupCreatedWithAttachments: (Int, String, Int) -> String = { count, size, missing ->
+        val base = "Резервная копия создана. Вложений: $count ($size)."
+        if (missing > 0) "$base Не удалось прочитать: $missing — эти файлы уже отсутствовали на устройстве." else base
+    }
+    override val backupExportFailed: (String) -> String = { d ->
+        "Экспорт не завершён: $d. НЕ используйте созданный файл — он записан не полностью. Удалите его и попробуйте снова."
+    }
+    override val archiveAttachmentImage = "Фото"
+    override val archiveAttachmentVoice = "Голосовое сообщение"
+    override val archiveAttachmentVideo = "Видео"
+    override val archiveAttachmentFile = "Файл"
+    override val archiveAttachmentOpen = "Показать"
+    override val archiveAttachmentSave = "Сохранить"
+    override val archiveAttachmentSaved = "Сохранено"
+    override val archiveAttachmentUnavailable = "Вложение недоступно в этом файле"
+    override val archiveAttachmentLoading = "Извлечение…"
 }
 
 private val ru4 = object : IStr4 {
@@ -975,13 +1057,13 @@ private val ru10 = object : IStr10 {
     override val guideTotpTitle = "Двухфакторная защита (TOTP)"
     override val guideTotpDesc = "Обязательный код из приложения-аутентификатора (как Google Authenticator), без которого этот аккаунт нельзя зарегистрировать на новом устройстве, даже если ключи и пароль украдены. Сохраните резервные коды, выданные при настройке, отдельно от телефона. Резервный код пускает на новое устройство, если аутентификатор потерян, но не отключает защиту сам по себе — сразу после входа настройте TOTP заново на этом устройстве (для этого понадобится ещё один резервный код)."
     override val guidePanicTitle = "Panic password"
-    override val guidePanicDesc = "Второй пароль для входа, отличный от основного. Введённый вместо основного, он показывает правдоподобный фейковый мессенджер с выдуманными чатами, а настоящие ключи и переписка в это время безвозвратно удаляются в фоне — используйте, если вас заставляют разблокировать Subrosa."
+    override val guidePanicDesc = "Второй пароль для входа, отличный от основного. Введённый вместо основного, он показывает правдоподобный фейковый мессенджер с выдуманными чатами, а настоящие ключи и переписка в это время безвозвратно удаляются в фоне — используйте, если вас заставляют разблокировать Subrosa. Две детали, на которые он рассчитан: приложение после этого не закрывается и не перезапускается (резкое закрытие само выдало бы подмену), а ограничение на число попыток входа к нему не применяется — он сработает даже если вы перед этим несколько раз ошиблись в основном пароле и вход временно заблокирован. Фейковые переписки генерируются один раз при настройке и дальше не меняются, поэтому при повторном открытии будут те же чаты, что и в первый раз."
     override val guideEmergencyTitle = "Тревожная кнопка"
     override val guideEmergencyDesc = "5 нажатий кнопки громкости вниз за 3 секунды — мгновенное удаление ключей и переписки без единого подтверждения, работает даже с заблокированным экраном. По умолчанию просто удаляет данные; тумблер «Режим Decoy после вайпа» (тот же, что и у кнопки паники в уведомлении — настройка общая на обе) включает вместо этого показ фейкового мессенджера, как у пароля под принуждением. Требует включения через Спец. возможности Android (см. инструкцию в Профиле)."
     override val guideAutoLockTitle = "Автоблокировка"
     override val guideAutoLockDesc = "Приложение блокируется паролем/биометрией через заданное время бездействия. Чем короче интервал, тем меньше окно, в течение которого кто-то может взять разблокированный телефон и открыть переписку."
     override val guideBackupTitle = "Резервное копирование"
-    override val guideBackupDesc = "Зашифрованный файл со всеми ключами и историей сообщений. Защищён паролем, а восстановление на новом устройстве дополнительно требует TOTP-секрет — одного файла и пароля к нему недостаточно. Храните файл, пароль и TOTP-секрет в разных местах."
+    override val guideBackupDesc = "Зашифрованный файл со всеми ключами и историей сообщений. Защищён паролем (Argon2id), а восстановление на новом устройстве дополнительно требует TOTP-секрет — одного файла и пароля к нему недостаточно. Храните файл, пароль и TOTP-секрет в разных местах. Два важных свойства файла: он переживает любой уровень экстренного удаления, потому что лежит вне приложения — если вы делаете вайп, удалите копию бэкапа отдельно; и его можно прочитать без сервера и без восстановления, см. «Чтение бэкапа без восстановления». По умолчанию в бэкап попадает только текст; вложения включаются отдельной опцией при экспорте — см. «Вложения в бэкапе»."
     override val guideTorTitle = "Tor"
     override val guideTorDesc = "Маршрутизация соединения с сервером через сеть Tor (нужен установленный Orbot), скрывает ваш IP-адрес от самого сервера. Выключен по умолчанию — включение добавляет 10-15 секунд к запуску приложения.\n\nВажно: это касается только соединения с сервером (вход, сообщения, сигнализация звонков — кто кому звонит). Сама аудио/видео-передача звонка через Tor не идёт: WebRTC не умеет ходить через SOCKS-прокси Orbot и соединяется напрямую или через relay-сервер в обход него. За IP именно во время звонка отвечает отдельная настройка «Скрывать IP во время звонков» — Tor и она не мешают друг другу, но и не заменяют одна другую: включайте обе, если нужна защита и там, и там."
     override val guideCoverTitle = "Постоянный трафик"
@@ -1001,7 +1083,7 @@ private val ru10 = object : IStr10 {
     override val guidePanicButtonTitle = "Кнопка паники в уведомлении"
     override val guidePanicButtonDesc = "Третий, отдельный способ экстренного удаления (помимо пароля под принуждением и кнопок громкости) — постоянное уведомление с кнопкой «Удалить всё», видной сразу, без разворачивания, в том числе на заблокированном экране. Всё равно требует хотя бы одного касания экрана — кнопки громкости остаются единственным способом сработать полностью вслепую, вообще не глядя на экран. Можно включить тот же фейковый экран вместо мгновенного закрытия приложения — настраивается отдельно."
     override val guideWipeLevelsTitle = "Уровни уничтожения (Hard / Nuclear)"
-    override val guideWipeLevelsDesc = "Hard удаляет все ключи, файлы и данные приложения, но намеренно сохраняет в скрытом месте хеш пароля — это нужно, чтобы после удаления приложение всё ещё могло узнать владельца по decoy-паролю. Nuclear делает то же самое без единого исключения: это системный вызов Android «Очистить данные», который гарантированно стирает вообще всё, включая ту запись, которую Hard оставляет — после Nuclear восстановить доступ через decoy-пароль уже нельзя. Разные функции экстренного удаления используют разные уровни по умолчанию (например, «мёртвая рука» всегда бьёт максимально жёстко — Nuclear, ей компромисс с decoy-восстановлением не нужен)."
+    override val guideWipeLevelsDesc = "Hard удаляет все ключи, файлы и данные приложения. Единственное исключение — если включён декой-режим: тогда Hard сохраняет минимальный профиль (имя и хеш пароля) в заново созданном зашифрованном хранилище, чтобы после удаления приложение могло узнать владельца и показать фейковый мессенджер. Без декой-режима не сохраняется ничего. Nuclear исключений не делает вообще: это системный вызов Android «Очистить данные», который стирает весь каталог приложения целиком, включая запись, которую мог бы оставить Hard — поэтому Nuclear и декой-режим несовместимы в принципе, после Nuclear приложение не отличит владельца от любого другого человека. Разные функции экстренного удаления используют разные уровни по умолчанию (например, «мёртвая рука» всегда бьёт максимально жёстко — Nuclear, ей компромисс с decoy-восстановлением не нужен). Подробный список того, что именно стирается, — в статье «Что именно удаляет вайп»."
     override val guideHideNotifTitle = "Скрывать текст в уведомлениях"
     override val guideHideNotifDesc = "Уведомление о новом сообщении показывает только «Новое сообщение» без имени отправителя и текста — если кто-то посмотрит на экран заблокированного телефона или уведомление увидят на умных часах/в шторке, содержимое переписки не раскроется. Сами сообщения по-прежнему приходят и сохраняются как обычно — скрывается только то, что показывается в уведомлении."
     override val guideHideIpCallsTitle = "Скрывать IP во время звонков"
@@ -1018,6 +1100,12 @@ private val ru10 = object : IStr10 {
     override val guideWipeOnBreachDesc = "Если система обнаружения вторжений (IDS) фиксирует критическую угрозу — например, срабатывание режима паранои или взлом honey-токена — приложение автоматически уничтожает данные без дополнительного подтверждения, тем же уровнем (Hard или Nuclear), который вы выбрали заранее. Это последняя линия защиты на случай, если у вас физически не будет возможности нажать кнопку паники самостоятельно."
     override val guideCalcDisguiseTitle = "Маскировка под калькулятор"
     override val guideCalcDisguiseDesc = "Меняет иконку и название приложения на «Калькулятор» — при беглом осмотре телефона мессенджер не бросается в глаза среди других приложений. Открывается вводом заданного вами числового выражения, результат которого равен вашему секретному коду; обычный калькулятор при этом продолжает работать как обычно для любых других вычислений."
+    override val guideArchiveTitle = "Чтение бэкапа без восстановления"
+    override val guideArchiveDesc = "Открывает файл бэкапа только для чтения: расшифровка идёт локально, в памяти, сервер для этого не нужен — переписку можно прочитать, даже если сервер выключен навсегда. Этот режим намеренно умеет меньше, чем импорт: он не записывает ничего на устройство, не затрагивает текущую identity и не восстанавливает ключи из файла, поэтому открытие архива не даёт возможности отправлять сообщения от того аккаунта. Нужен только пароль бэкапа; TOTP-код не требуется, потому что ничего не восстанавливается. При сворачивании приложения расшифрованная копия сбрасывается. Вложения видны, только если бэкап делали с включённой опцией «Включить вложения»; иначе такие сообщения помечаются как недоступные. Фото открываются прямо в читалке, любое вложение можно сохранить в отдельный файл — это единственный способ что-то вынести с этого экрана, и он требует явного действия."
+    override val guideWipeScopeTitle = "Что именно удаляет вайп"
+    override val guideWipeScopeDesc = "Любой уровень экстренного удаления делает одно и то же, разница только в том, остаётся ли приложение живым. Удаляются: ключ шифрования хранилища (сначала перезаписывается в оперативной памяти, потом уничтожается), ключ личности, все ключи сессий и переписок, включая постквантовые, записи в защищённом хранилище Android (Keystore), все настройки, файлы, кэш, базы данных и вложения приложения. Декой-режим оставляет приложение запущенным, чтобы показать фейковый мессенджер вместо резкого закрытия, Nuclear отдаёт удаление самой системе Android. Чего вайп НЕ удаляет, и об этом важно знать заранее: файл бэкапа, который вы сами сохранили — он лежит вне приложения (в Загрузках, на карте, в облаке), и ни один уровень вайпа до него не дотянется, удалять его нужно самостоятельно. Также вайп не может удалить сообщения, которые уже доставлены на устройства ваших собеседников. Облачный бэкап Android для приложения отключён, поэтому восстановить данные через Google-аккаунт нельзя."
+    override val guideAttachmentsBackupTitle = "Вложения в бэкапе"
+    override val guideAttachmentsBackupDesc = "При экспорте можно включить опцию «Включить вложения» — тогда в файл попадут фото, видео, голосовые и документы, а не только текст. Включайте её, если бэкап нужен как настоящий архив: без неё сообщение с вложением восстановится как пустое, и прочитать документ из переписки потом будет невозможно. Цена: файл становится в десятки раз больше, и его пока не умеет читать настольный клиент — для переноса на компьютер делайте отдельный бэкап без вложений. Вложения внутри файла зашифрованы тем же паролем, что и переписка, и при восстановлении заново зашифровываются ключом нового устройства — то есть восстановленное вложение защищено ровно так же, как полученное обычным путём. Экспорт с вложениями доступен только через «В файлы»: отправка через другие приложения сделала бы вторую копию файла целиком."
 }
 
 val ruStrings = AppStrings("ru", ru1, ru2, ru3, ru4, ru5, ru6, ru7, ru8, ru9, ru10)
@@ -1189,6 +1277,8 @@ private val en3 = object : IStr3 {
     override val profilePanicEnterLabel = "Enter password for emergency deletion:"
     override val profilePanicInstruction = "How it works:\n① In an emergency, enter this password once — all data will be wiped.\n② After restart, log in with your regular password — fake chats will appear."
     override val profilePanicFieldLabel = "Panic password"
+    override val profilePanicErrSameAsLogin = "The panic password must differ from your normal login password — otherwise every login would wipe your data"
+    override val changePasswordErrSameAsPanic = "That matches your panic password — choose a different one"
     override val profileLanguageToggle = "Русский"
     override val profileThemeLabel = "Theme"
     override val profileThemeNavy = "Emerald"
@@ -1216,6 +1306,45 @@ private val en3 = object : IStr3 {
     override val backupErrPasswordLength = "Password must be at least 8 characters"
     override val backupErrTotpRequired = "Enable TOTP protection first (Profile → Two-factor protection) — without it, the backup file and password alone give full access to the identity, there's no second factor"
     override val backupErrEnterForDecrypt = "Enter password for decryption"
+    override val archiveTitle = "Read a backup"
+    override val archiveSubtitle = "Open a backup file read-only — no restore, no server needed"
+    override val archiveNoticeTitle = "What this mode does"
+    override val archiveNoticeText = "The file is decrypted in memory and shown as text. Nothing is written to the device, your current identity is untouched, and no keys are restored from the file — you still can't send messages as that account. No server is involved: decryption is entirely local. Leaving this screen or backgrounding the app discards the decrypted copy, so the password has to be entered again."
+    override val archivePick = "Choose a backup file"
+    override val archiveOpen = "Open read-only"
+    override val archiveOpening = "Decrypting…"
+    override val archiveBadPassword = "Wrong password, or the file is damaged"
+    override val archiveUnreadable: (String) -> String = { d -> "The file decrypted, but its contents couldn't be read: $d" }
+    override val archiveSummary: (Int, Int) -> String = { threads, messages -> "$threads conversations · $messages messages" }
+    override val archiveCreatedAt: (String) -> String = { d -> "Backup from $d" }
+    override val archiveEmpty = "This backup contains no messages"
+    override val archiveAttachmentMissing = "[attachment not included in the backup]"
+    override val archiveNoAttachmentsNote = "Attachments are available only if \"Include attachments\" was enabled during export. Backups made without it store text only, and messages carrying a photo, video, voice note or file will be marked as unavailable."
+    override val archiveClose = "Close and clear"
+    override val archiveGroupTag = "group"
+    override val archiveNotAvailableInDecoy = "Unavailable"
+    override val archiveFileTooLarge = "File is too large to read in memory"
+    override val backupToFiles = "To files"
+    override val backupIncludeAttachments = "Include attachments"
+    override val backupIncludeAttachmentsOn = "Photos, videos, voice notes and files will be in the backup. The file will be much larger, and the desktop client cannot read it (new format)."
+    override val backupIncludeAttachmentsOff = "Message text only, as before. This file can also be read by the desktop client."
+    override val backupShareDisabledWithAttachments = "With attachments, only \"To files\" is available: sharing through another app makes a second copy of the file, which isn't acceptable at this size."
+    override val backupCreatedWithAttachments: (Int, String, Int) -> String = { count, size, missing ->
+        val base = "Backup created. Attachments: $count ($size)."
+        if (missing > 0) "$base Couldn't read $missing — those files were already gone from the device." else base
+    }
+    override val backupExportFailed: (String) -> String = { d ->
+        "Export did not finish: $d. Do NOT use the file that was created — it is incomplete. Delete it and try again."
+    }
+    override val archiveAttachmentImage = "Photo"
+    override val archiveAttachmentVoice = "Voice message"
+    override val archiveAttachmentVideo = "Video"
+    override val archiveAttachmentFile = "File"
+    override val archiveAttachmentOpen = "Show"
+    override val archiveAttachmentSave = "Save"
+    override val archiveAttachmentSaved = "Saved"
+    override val archiveAttachmentUnavailable = "Attachment not available in this file"
+    override val archiveAttachmentLoading = "Extracting…"
 }
 
 private val en4 = object : IStr4 {
@@ -1623,13 +1752,13 @@ private val en10 = object : IStr10 {
     override val guideTotpTitle = "Two-factor protection (TOTP)"
     override val guideTotpDesc = "A mandatory code from an authenticator app (like Google Authenticator), without which this account can't be registered on a new device even if the keys and password are stolen. Save the recovery codes shown during setup somewhere separate from the phone. A recovery code gets you into a new device if you lose the authenticator, but it doesn't turn protection off by itself — set TOTP up again right away on the device you just logged into (that takes one more recovery code)."
     override val guidePanicTitle = "Panic password"
-    override val guidePanicDesc = "A second login password, different from your real one. Entering it instead of the real password shows a convincing fake messenger full of made-up chats, while your real keys and messages are irreversibly wiped in the background — use it if you're being forced to unlock your phone."
+    override val guidePanicDesc = "A second login password, different from your real one. Entering it instead of the real password shows a convincing fake messenger full of made-up chats, while your real keys and messages are irreversibly wiped in the background — use it if you're being forced to unlock your phone. Two details it relies on: the app does not close or restart afterwards (an abrupt exit would give the substitution away by itself), and the login rate limit does not apply to it — it works even if you've just mistyped your real password several times and logins are temporarily locked out. The fake conversations are generated once during setup and never change, so reopening shows the same chats as the first time."
     override val guideEmergencyTitle = "Emergency deletion"
     override val guideEmergencyDesc = "5 presses of Volume Down within 3 seconds — instantly deletes keys and messages with zero confirmation, works even on a locked screen. By default it just deletes; the \"Decoy mode after wipe\" toggle (the same one used by the notification panic button — it's a single shared setting for both) makes it show the fake messenger instead, same as the duress password. Requires enabling through Android's Accessibility settings (see the instructions in Profile)."
     override val guideAutoLockTitle = "Auto-lock"
     override val guideAutoLockDesc = "The app locks with a password/biometric prompt after a set period of inactivity. The shorter the interval, the smaller the window during which someone could pick up an unlocked phone and read your messages."
     override val guideBackupTitle = "Backup"
-    override val guideBackupDesc = "An encrypted file with all your keys and message history. Password-protected, and restoring on a new device also requires the TOTP secret — the file and password alone aren't enough. Store the file, password, and TOTP secret in different places."
+    override val guideBackupDesc = "An encrypted file with all your keys and message history. Password-protected (Argon2id), and restoring on a new device also requires the TOTP secret — the file and password alone aren't enough. Store the file, password, and TOTP secret in different places. Two properties of the file worth knowing: it survives every level of emergency deletion, because it lives outside the app — if you wipe, delete your backup copy separately; and it can be read without a server and without restoring anything, see \"Reading a backup without restoring\". By default a backup carries message text only; attachments are added by a separate export option — see \"Attachments in a backup\"."
     override val guideTorTitle = "Tor"
     override val guideTorDesc = "Routes your connection to the server through the Tor network (requires Orbot installed), hiding your IP address even from the server itself. Off by default — enabling it adds 10-15 seconds to app startup.\n\nImportant: this only covers the connection to the server (login, messages, call signaling — who's calling whom). The actual audio/video of a call does NOT go through Tor: WebRTC can't route through Orbot's SOCKS proxy, and connects directly or via the relay server instead. IP protection specifically during a call is a separate setting, \"Hide IP during calls\" — Tor and it don't conflict, but they don't substitute for each other either: turn both on if you want coverage for both."
     override val guideCoverTitle = "Cover traffic"
@@ -1649,7 +1778,7 @@ private val en10 = object : IStr10 {
     override val guidePanicButtonTitle = "Panic button notification"
     override val guidePanicButtonDesc = "A third, separate emergency-deletion method (besides the duress password and the volume buttons) — a persistent notification with a \"Delete everything\" action, visible right away with no need to expand it, including from the lock screen. Still needs at least one tap on the screen, though — the volume buttons remain the only fully blind option, no need to even look at the screen. Can be set to show the same fake screen instead of just closing the app — configured separately."
     override val guideWipeLevelsTitle = "Destruction levels (Hard / Nuclear)"
-    override val guideWipeLevelsDesc = "Hard deletes all keys, files, and app data, but deliberately keeps a hidden password hash — needed so the app can still recognize its owner via the decoy password afterward. Nuclear does the same with no exceptions at all: it's the Android system's own \"clear data\" call, guaranteed to erase absolutely everything, including the one record Hard keeps — recovering access via the decoy password won't be possible after Nuclear. Different emergency-deletion features default to different levels (the dead man's switch, for example, always goes straight to Nuclear, since it doesn't need the decoy-recovery trade-off)."
+    override val guideWipeLevelsDesc = "Hard deletes all keys, files, and app data. The single exception applies only when decoy mode is on: Hard then keeps a minimal profile (name and password hash) in freshly created encrypted storage, so the app can still recognize its owner afterwards and show the fake messenger. With decoy mode off, nothing is kept. Nuclear makes no exceptions at all: it's the Android system's own \"clear data\" call, which erases the entire app directory including the record Hard might keep — which is why Nuclear and decoy mode are fundamentally incompatible, and why after Nuclear the app can't tell its owner from anyone else. Different emergency-deletion features default to different levels (the dead man's switch, for example, always goes straight to Nuclear, since it doesn't need the decoy trade-off). For the exact list of what gets erased, see \"What a wipe actually erases\"."
     override val guideHideNotifTitle = "Hide text in notifications"
     override val guideHideNotifDesc = "A new-message notification shows only \"New message\", with no sender name or text — so if someone glances at your locked phone's screen, or the notification shows up on a smartwatch or in the shade, the conversation's content stays private. Messages still arrive and get stored normally; only what the notification displays is hidden."
     override val guideHideIpCallsTitle = "Hide IP during calls"
@@ -1665,6 +1794,12 @@ private val en10 = object : IStr10 {
     override val guideWipeOnBreachTitle = "Wipe on breach"
     override val guideWipeOnBreachDesc = "If the intrusion-detection system (IDS) flags a critical threat — for example paranoid mode triggering, or a honey-token being tampered with — the app automatically wipes your data with no further confirmation, at whichever level (Hard or Nuclear) you preselected. This is a last line of defense for when you physically can't reach a panic button yourself."
     override val guideCalcDisguiseTitle = "Calculator disguise"
+    override val guideArchiveTitle = "Reading a backup without restoring"
+    override val guideArchiveDesc = "Opens a backup file read-only: decryption happens locally, in memory, with no server involved — so you can read your history even if the server is shut down permanently. This mode deliberately does less than an import: it writes nothing to the device, leaves your current identity alone, and does not restore keys from the file, so opening an archive never gives you the ability to send messages as that account. Only the backup password is needed; no TOTP code, because nothing is being restored. Backgrounding the app discards the decrypted copy. Attachments are visible only if the backup was made with \"Include attachments\" enabled; otherwise such messages are marked unavailable. Photos open inside the viewer, and any attachment can be saved to a file — the only route out of this screen, and it takes an explicit action."
+    override val guideWipeScopeTitle = "What a wipe actually erases"
+    override val guideWipeScopeDesc = "Every level of emergency deletion does the same thing; the only difference is whether the app stays alive. Erased: the storage encryption key (first overwritten in RAM, then destroyed), the identity key, all session and conversation keys including the post-quantum ones, entries in Android's hardware-backed Keystore, and every setting, file, cache, database and attachment belonging to the app. Decoy mode keeps the app running so it can show the fake messenger instead of closing abruptly; Nuclear hands the deletion to Android itself. What a wipe does NOT erase, and this is worth knowing in advance: a backup file you saved yourself — it lives outside the app (in Downloads, on a card, in the cloud), no wipe level can reach it, and you have to delete it yourself. A wipe also can't delete messages already delivered to your contacts' devices. Android's cloud backup is disabled for this app, so your data can't be restored through a Google account."
+    override val guideAttachmentsBackupTitle = "Attachments in a backup"
+    override val guideAttachmentsBackupDesc = "Export has an \"Include attachments\" option — with it on, photos, videos, voice notes and documents go into the file instead of text alone. Turn it on if you need the backup to be a real archive: without it, a message that carried an attachment is restored empty, and a document from a conversation can never be read again. The cost: the file becomes tens of times larger, and the desktop client can't read it yet — make a separate backup without attachments if you need one on a computer. Attachments inside the file are encrypted with the same password as the conversations, and on restore they are re-encrypted under the new device's key — so a restored attachment is protected exactly like one received normally. Exporting with attachments is only offered through \"To files\": sharing via another app would make a second full copy of the file."
     override val guideCalcDisguiseDesc = "Swaps the app's icon and name for \"Calculator\" — a quick glance at your phone won't reveal the messenger among your other apps. It opens when you enter a numeric expression whose result equals your chosen code; the calculator otherwise keeps working normally for any other calculation."
 }
 

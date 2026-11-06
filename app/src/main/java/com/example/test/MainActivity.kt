@@ -125,7 +125,27 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         CryptoManager.init(this)
         ParanoidMode.init(this)
-        HoneyTokenManager.init(this)
+        // Off the main thread deliberately. HoneyTokenManager.init() now does
+        // real work on first launch (a Tink EncryptedFile write) and, on every
+        // launch, generates the decoy dataset in order to realign the canary's
+        // mtime — hundreds of Calendar/digest operations plus encrypted-prefs
+        // IO. Running that in onCreate is exactly the ANR that
+        // docs/CHANGEL_LOG.md records for this same class's periodic
+        // checkIntegrity() call.
+        //
+        // The anchor refresh has to precede the realign, hence one ordered
+        // block rather than two launches. This is the only place the anchor
+        // moves, which is the point: a decoy entered later in this session
+        // (panic password, stealth, calculator) keeps the "now" of this launch,
+        // so the fake history reads as current as of the last legitimate use
+        // and does not visibly re-age while someone is holding the device. See
+        // UserStorage.getDecoyAnchor().
+        lifecycleScope.launch(Dispatchers.IO) {
+            if (!UserStorage.isDecoyMode(this@MainActivity)) {
+                UserStorage.refreshDecoyAnchor(this@MainActivity)
+            }
+            HoneyTokenManager.init(this@MainActivity)
+        }
 
         // Blocks the system screenshot shortcut, screen-recording apps, and a
         // live Recents-overview thumbnail of the real UI, unconditionally —
@@ -824,6 +844,43 @@ fun AppNavigation() {
     val lockFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
     val lockFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
+    // One submit path for the lock overlay, shared by the keyboard's Done
+    // action and the button. Those used to be two byte-identical copies, and
+    // neither applied any rate limit at all — not even the (inert) one
+    // LoginScreen had. The lock overlay is a second password prompt reachable
+    // without restarting the app, so a gate on LoginScreen alone was bypassable
+    // by backgrounding and returning. Ordering and counters now come from
+    // PasswordGate.
+    fun submitLockPassword() {
+        if (lockPassword.isBlank()) { lockPasswordError = s.loginEnterPassword; return }
+        lockScope.launch {
+            when (val outcome = PasswordGate.evaluate(context, lockPassword)) {
+                is PasswordGate.Outcome.Panic -> {
+                    lockPassword = ""
+                    (context as? MainActivity)?.emergencyWipe(withDecoy = true)
+                }
+                is PasswordGate.Outcome.Correct -> {
+                    val entered = lockPassword
+                    withContext(Dispatchers.IO) {
+                        StorageKeyManager.unlockWithPassword(context, entered)
+                    }
+                    lockPassword = ""; lockPasswordError = ""
+                    (context as? MainActivity)?.isAppLocked?.value = false
+                    (context as? MainActivity)?.lastActiveTimeMs = System.currentTimeMillis()
+                }
+                is PasswordGate.Outcome.LockedOut -> {
+                    lockPasswordError = s.loginTooManyAttempts(
+                        outcome.remainingSeconds / 60,
+                        outcome.remainingSeconds % 60
+                    )
+                }
+                is PasswordGate.Outcome.Wrong -> {
+                    lockPasswordError = s.loginWrongPassword
+                }
+            }
+        }
+    }
+
     val lockVisible = isLocked == true && screen != "login" && screen != "register" && screen != "calculator" &&
         screen != "totp_setup_required" && screen != "servers_from_totp_setup" && screen != "battery_optimization_prompt"
 
@@ -977,7 +1034,15 @@ fun AppNavigation() {
             }
         })
 
-        "backup" -> BackupScreen(onBack = { screen = "general_settings" })
+        "backup" -> BackupScreen(
+            onBack = { screen = "general_settings" },
+            onOpenArchive = { screen = "archive" }
+        )
+        // Read-only backup viewer. Reachable only from inside the authenticated
+        // UI; decoy mode never renders this branch at all (it is routed to
+        // isPanicMode above), so a coerced unlock cannot use the app as a
+        // decryption tool for a real backup file someone is holding.
+        "archive" -> ArchiveScreen(onBack = { screen = "backup" })
         "servers" -> ServersScreen(onBack = { screen = "general_settings" })
         "security_diagnostics" -> SecurityDiagnosticsScreen(onBack = { screen = "security_settings" })
         "security_guide" -> SecurityGuideScreen(onBack = { screen = "security_settings" })
@@ -1125,8 +1190,19 @@ fun AppNavigation() {
 
                 isPanicMode = true
                 if (!UserStorage.isDecoyMode(context)) {
-
-                    lockScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    // Deliberately NOT lockScope (a rememberCoroutineScope tied
+                    // to this composition). The 400ms delay exists only to let
+                    // DecoyScreen draw first, but on a composition-bound scope
+                    // anyone who kills the activity inside that window — a
+                    // swipe from Recents, a force-stop — cancels the duress
+                    // wipe outright and leaves the real data intact with
+                    // decoy_mode never set. A process-scoped SupervisorJob
+                    // makes the wipe unaffected by what happens to the UI.
+                    // Same pattern WipeReceiver already uses for its 600ms
+                    // equivalent.
+                    kotlinx.coroutines.CoroutineScope(
+                        kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob()
+                    ).launch {
                         kotlinx.coroutines.delay(400)
                         WipeManager.wipeForDecoyKeepAlive(context)
                     }
@@ -1258,25 +1334,7 @@ fun AppNavigation() {
                         imeAction = androidx.compose.ui.text.input.ImeAction.Done
                     ),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                        onDone = {
-                            if (lockPassword.isNotBlank()) {
-                                lockScope.launch {
-                                    if (UserStorage.isPanicPassword(context, lockPassword)) {
-                                        lockPassword = ""
-                                        (context as? MainActivity)?.emergencyWipe(withDecoy = true)
-                                    } else if (UserStorage.checkPassword(context, lockPassword)) {
-                                        withContext(Dispatchers.IO) {
-                                            StorageKeyManager.unlockWithPassword(context, lockPassword)
-                                        }
-                                        lockPassword = ""; lockPasswordError = ""
-                                        (context as? MainActivity)?.isAppLocked?.value = false
-                                        (context as? MainActivity)?.lastActiveTimeMs = System.currentTimeMillis()
-                                    } else {
-                                        lockPasswordError = s.loginWrongPassword
-                                    }
-                                }
-                            }
-                        }
+                        onDone = { submitLockPassword() }
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1297,24 +1355,7 @@ fun AppNavigation() {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Button(
-                    onClick = {
-                        if (lockPassword.isBlank()) { lockPasswordError = s.loginEnterPassword; return@Button }
-                        lockScope.launch {
-                            if (UserStorage.isPanicPassword(context, lockPassword)) {
-                                lockPassword = ""
-                                (context as? MainActivity)?.emergencyWipe(withDecoy = true)
-                            } else if (UserStorage.checkPassword(context, lockPassword)) {
-                                withContext(Dispatchers.IO) {
-                                    StorageKeyManager.unlockWithPassword(context, lockPassword)
-                                }
-                                lockPassword = ""; lockPasswordError = ""
-                                (context as? MainActivity)?.isAppLocked?.value = false
-                                (context as? MainActivity)?.lastActiveTimeMs = System.currentTimeMillis()
-                            } else {
-                                lockPasswordError = s.loginWrongPassword
-                            }
-                        }
-                    },
+                    onClick = { submitLockPassword() },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = c.accent,

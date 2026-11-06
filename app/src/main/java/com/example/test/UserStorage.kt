@@ -344,6 +344,74 @@ object UserStorage {
             .edit().putString("honey_mac_key", keyB64).apply()
     }
 
+    /** Per-install seed the whole duress-mode dataset is derived from (see
+     *  DecoyData.kt). Only this 32-byte value is ever persisted — never a
+     *  single line of generated dialogue — so an offline image of the app's
+     *  storage contains no fake conversations to find, and two installs of
+     *  the same APK produce completely different decoy contacts and history
+     *  (before this, `chatPool` was a compile-time literal: identical
+     *  "Sarah"/"Mike" threads on every device, readable in any decompile).
+     *  Residual, deliberately not overclaimed: this is keystore-backed, not
+     *  password-backed, so an attacker with live root on an unlocked device
+     *  can read the seed and — the generator being source-available — replay
+     *  it to prove the dataset is synthetic. It defeats shoulder-level and
+     *  offline-image inspection, not full forensics on a live device. */
+    fun getOrCreateDecoySeed(context: Context): ByteArray {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        prefs.getString("profile_variant_seed", null)?.let {
+            try { return Base64.decode(it, Base64.NO_WRAP) } catch (_: Exception) {}
+        }
+        val seed = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        prefs.edit().putString("profile_variant_seed", Base64.encodeToString(seed, Base64.NO_WRAP)).apply()
+        return seed
+    }
+
+    /** "Now" that the generated timeline is laid out backwards from. Refreshed
+     *  on every *normal* (non-duress) foreground launch and deliberately
+     *  frozen for as long as the decoy is on screen: the fake history must
+     *  look current as of the last time the phone was legitimately used, and
+     *  it must not visibly re-age while someone is holding the device and
+     *  scrolling it. Falls back to first-read time so a decoy shown before any
+     *  normal launch still has a sane timeline. */
+    fun getDecoyAnchor(context: Context): Long {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val stored = prefs.getLong("profile_variant_anchor", 0L)
+        if (stored > 0L) return stored
+        val now = System.currentTimeMillis()
+        prefs.edit().putLong("profile_variant_anchor", now).apply()
+        return now
+    }
+
+    fun refreshDecoyAnchor(context: Context) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putLong("profile_variant_anchor", System.currentTimeMillis()).apply()
+    }
+
+    /** Messages typed into the decoy by whoever is holding the device. Real
+     *  sends survive process death; before this, a decoy "send" lived in a
+     *  `mutableStateListOf` and vanished the moment the activity was
+     *  recreated — kill the app, reopen it, and the message you just watched
+     *  someone send was gone. */
+    fun getDecoySentJson(context: Context): String =
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .getString("profile_variant_sent", "{}") ?: "{}"
+
+    fun setDecoySentJson(context: Context, json: String) {
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .edit().putString("profile_variant_sent", json).apply()
+    }
+
+    /** Threads "deleted" from inside the decoy, by generated thread id. */
+    fun getDecoyDeleted(context: Context): Set<String> =
+        EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            .getStringSet("profile_variant_hidden", emptySet()) ?: emptySet()
+
+    fun addDecoyDeleted(context: Context, threadId: String) {
+        val prefs = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+        val next = (prefs.getStringSet("profile_variant_hidden", emptySet()) ?: emptySet()) + threadId
+        prefs.edit().putStringSet("profile_variant_hidden", next).apply()
+    }
+
     fun getAlertUrl(context: Context): String =
         EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
             .getString("paranoid_alert_url", "") ?: ""
@@ -592,6 +660,62 @@ object UserStorage {
             .edit().putString("cover_traffic_mode", mode.name).apply()
     }
 
+    /**
+     * Re-establishes the decoy profile immediately after a wipe, writing it
+     * straight back into the normal encrypted prefs rather than parking it in a
+     * plaintext hand-off file.
+     *
+     * The old route was `beacon_recovery`, a `MODE_PRIVATE` (i.e. unencrypted)
+     * SharedPreferences file holding `username`, `user_id` and `password_hash`
+     * until the next cold start, when [migrateDecoyState] moved it across and
+     * cleared it. Two problems with that:
+     *
+     *  - It was plaintext. The duress wipe is supposed to leave a device that
+     *    looks like an ordinary install; a file literally named
+     *    `beacon_recovery` containing a `password_hash` is instead direct
+     *    evidence that a real account existed and was wiped under duress.
+     *  - On the panic-password path the process is never killed, so that file
+     *    sat there for the whole time the decoy was being shown — exactly the
+     *    window where someone is holding the phone.
+     *
+     * Writing here instead works because the wipe deletes the Keystore master
+     * key *and* the prefs file, so this call creates a fresh master key and a
+     * fresh encrypted file — indistinguishable from a first-run profile. The
+     * decoy flag is set in the same commit, which also removes the dependency
+     * on [migrateDecoyState] running before anything consults [isDecoyMode].
+     */
+    fun reestablishDecoyProfile(
+        context: Context,
+        username: String?,
+        userId: String?,
+        passwordHash: String?,
+        calcDisguise: Boolean,
+        calcUnlockResult: Float?
+    ) {
+        if (username == null && passwordHash == null && !calcDisguise) return
+        try {
+            val enc = EncryptedStorage.getEncryptedPrefs(context, PREFS_NAME)
+            val ed = enc.edit()
+            if (username != null && passwordHash != null) {
+                ed.putString(KEY_USERNAME, username)
+                    .putString(KEY_USER_ID, userId ?: "")
+                    .putString(KEY_PASSWORD_HASH, passwordHash)
+                    .putBoolean("decoy_mode", true)
+            }
+            if (calcDisguise) {
+                ed.putBoolean("calculator_disguise", true)
+                calcUnlockResult?.let { ed.putFloat("calculator_unlock_result", it.toDouble().toFloat()) }
+            }
+            ed.commit()
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Legacy hand-off from `beacon_recovery`. New wipes no longer write that
+     * file — see [reestablishDecoyProfile] — but an install wiped by an older
+     * build may not have relaunched yet, so this still has to run once and
+     * clear it.
+     */
     fun migrateDecoyState(context: Context) {
         val recovery = context.getSharedPreferences("beacon_recovery", Context.MODE_PRIVATE)
 

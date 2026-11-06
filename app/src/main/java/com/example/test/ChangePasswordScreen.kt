@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import com.subrosa.messenger.ui.theme.LocalSubrosaColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.res.painterResource
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -204,34 +205,51 @@ fun ChangePasswordScreen(onBack: () -> Unit) {
 
                 Button(
                     onClick = {
-                        val totpSecret = if (totpEnabled) TotpManager.getSecret(context) else null
-                        when {
-                            !UserStorage.checkPassword(context, currentPassword) ->
-                                error = s.changePasswordErrCurrentWrong
-                            totpEnabled && (totpSecret == null || !TotpManager.verifyCode(totpSecret, totpCode)) ->
-                                error = s.totpErrInvalidCode
-                            newPassword.length < PasswordPolicy.MIN_LENGTH ->
-                                error = s.registerErrorPasswordLength
-                            PasswordPolicy.isCommonPassword(newPassword) ->
-                                error = s.registerErrorPasswordCommon
-                            newPassword != newPasswordRepeat ->
-                                error = s.registerErrorPasswordMatch
-                            newPassword == currentPassword ->
-                                error = s.changePasswordErrSameAsOld
-                            else -> {
-                                try {
-                                    // Both must change together: UserStorage's hash gates the
-                                    // lock-screen check, StorageKeyManager's is the actual KDF
-                                    // input for the Storage Master Key wrap. Falling out of sync
-                                    // would mean the lock screen accepts a password that can no
-                                    // longer decrypt local data, or vice versa.
+                        // All of this used to run inline on the main thread, and
+                        // it is two PBKDF2 passes at 100k iterations
+                        // (checkPassword + isPanicPassword) plus prefs IO.
+                        scope.launch {
+                            val problem = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                val totpSecret = if (totpEnabled) TotpManager.getSecret(context) else null
+                                when {
+                                    !UserStorage.checkPassword(context, currentPassword) ->
+                                        s.changePasswordErrCurrentWrong
+                                    totpEnabled && (totpSecret == null || !TotpManager.verifyCode(totpSecret, totpCode)) ->
+                                        s.totpErrInvalidCode
+                                    newPassword.length < PasswordPolicy.MIN_LENGTH ->
+                                        s.registerErrorPasswordLength
+                                    PasswordPolicy.isCommonPassword(newPassword) ->
+                                        s.registerErrorPasswordCommon
+                                    newPassword != newPasswordRepeat ->
+                                        s.registerErrorPasswordMatch
+                                    newPassword == currentPassword ->
+                                        s.changePasswordErrSameAsOld
+                                    // The mirror of ProfileScreen's panic-password
+                                    // check: the collision is equally fatal from
+                                    // this side. PasswordGate checks panic first,
+                                    // so changing the login password *into* the
+                                    // existing panic password would make every
+                                    // subsequent login a duress wipe.
+                                    UserStorage.isPanicPassword(context, newPassword) ->
+                                        s.changePasswordErrSameAsPanic
+                                    else -> null
+                                }
+                            }
+                            if (problem != null) { error = problem; return@launch }
+                            try {
+                                // Both must change together: UserStorage's hash gates the
+                                // lock-screen check, StorageKeyManager's is the actual KDF
+                                // input for the Storage Master Key wrap. Falling out of sync
+                                // would mean the lock screen accepts a password that can no
+                                // longer decrypt local data, or vice versa.
+                                withContext(kotlinx.coroutines.Dispatchers.IO) {
                                     UserStorage.updatePassword(context, newPassword)
                                     StorageKeyManager.changePassword(context, newPassword)
-                                    currentPassword = ""; newPassword = ""; newPasswordRepeat = ""; totpCode = ""
-                                    success = true
-                                } catch (e: Exception) {
-                                    error = s.error(e.message ?: "")
                                 }
+                                currentPassword = ""; newPassword = ""; newPasswordRepeat = ""; totpCode = ""
+                                success = true
+                            } catch (e: Exception) {
+                                error = s.error(e.message ?: "")
                             }
                         }
                     },

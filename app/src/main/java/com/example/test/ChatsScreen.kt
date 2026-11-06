@@ -76,34 +76,9 @@ private fun formatChatTimestamp(ts: Long): String {
     }
 }
 
-@Composable
-private fun OptionRow(
-    label: String,
-    labelColor: Color? = null,
-    // Optional leading color-tile icon (see ui/components/IconTile.kt).
-    leadingIcon: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit
-) {
-    val c = LocalSubrosaColors.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 14.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (leadingIcon != null) {
-            leadingIcon()
-            Spacer(modifier = Modifier.width(12.dp))
-        }
-        Text(
-            text = label,
-            fontSize = 18.sp,
-            fontFamily = JetBrainsMono,
-            color = labelColor ?: c.textPrimary
-        )
-    }
-}
+// OptionRow / avatarPalette / the top bar / the action + delete dialogs now
+// live in ChatsUi.kt, shared verbatim with DecoyScreen — see the comment at
+// the top of that file for why the decoy must not keep its own copies.
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -161,15 +136,10 @@ fun ChatsScreen(
     var newChannelDesc             by remember { mutableStateOf("") }
     var newChannelAvatar           by remember { mutableStateOf("📢") }
 
-    val myUserId      = remember { UserStorage.getUserId(context) }
-    val myDisplayName = remember { UserStorage.getUserDisplayName(context) }
-    val myAvatarBitmap = AvatarStore.avatars[myUserId]
-    val myAvatarColor = remember(myDisplayName) {
-        listOf(
-            Color(0xFFC77B4F), Color(0xFFE74C3C), Color(0xFF27AE60),
-            Color(0xFFF39C12), Color(0xFF9B59B6), Color(0xFF1ABC9C)
-        )[myDisplayName.hashCode().absoluteValue % 6]
-    }
+    // The own-avatar chip moved into ChatsTopBar (ChatsUi.kt), which resolves
+    // the user id, display name, bitmap and palette colour itself — so the
+    // decoy gets the same chip, including a real photo avatar if one is set,
+    // without a second copy of this.
 
     fun loadChats() {
         scope.launch(Dispatchers.IO) {
@@ -244,103 +214,16 @@ fun ChatsScreen(
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            TopAppBar(
-                title = {
-                    if (searchMode) {
-                        androidx.compose.foundation.text.BasicTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 18.sp, color = c.textPrimary, fontFamily = JetBrainsMono),
-                            cursorBrush = androidx.compose.ui.graphics.SolidColor(c.accent),
-                            decorationBox = { inner ->
-                                if (searchQuery.isEmpty()) Text(s.chatsSearchPlaceholder, fontSize = 18.sp, color = c.textPrimary.copy(alpha = 0.53f), fontFamily = JetBrainsMono)
-                                inner()
-                            }
-                        )
-                    } else {
-                        val isConnected by MessengerService.connectionState.collectAsState()
-                        val dotTransition = rememberInfiniteTransition(label = "dot")
-                        val dotPulse by dotTransition.animateFloat(
-                            initialValue = 1f,
-                            targetValue = if (isConnected) 1.55f else 1f,
-                            animationSpec = infiniteRepeatable(
-                                animation = tween(900, easing = FastOutSlowInEasing),
-                                repeatMode = RepeatMode.Reverse
-                            ),
-                            label = "dot_pulse"
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "SUBROSA",
-                                color = c.textPrimary,
-                                fontFamily = com.subrosa.messenger.ui.theme.NotoSerifJP,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 24.sp
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .graphicsLayer { scaleX = dotPulse; scaleY = dotPulse }
-                                    .clip(CircleShape)
-                                    .background(if (isConnected) Color(0xFF4CAF50) else Color(0xFF9E9E9E))
-                            )
-                        }
-                    }
+            ChatsTopBar(
+                searchMode = searchMode,
+                searchQuery = searchQuery,
+                onSearchQueryChange = { searchQuery = it },
+                onToggleSearch = {
+                    searchMode = !searchMode
+                    if (!searchMode) searchQuery = ""
                 },
-                actions = {
-                    IconButton(onClick = {
-                        searchMode = !searchMode
-                        if (!searchMode) searchQuery = ""
-                    }) {
-                        Icon(
-                            painter = painterResource(if (searchMode) R.drawable.ic_close else R.drawable.ic_search),
-                            contentDescription = null,
-                            tint = c.textPrimary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    if (!searchMode) {
-                        Box(
-                            modifier = Modifier
-                                .padding(end = 6.dp)
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(myAvatarColor)
-                                .clickable { onOpenProfile() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (myAvatarBitmap != null) {
-                                Image(
-                                    bitmap = myAvatarBitmap.asImageBitmap(),
-                                    contentDescription = myDisplayName,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
-                                )
-                            } else {
-                                Text(
-                                    text = myDisplayName.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White,
-                                    fontFamily = JetBrainsMono
-                                )
-                            }
-                        }
-
-                        IconButton(onClick = { showGroupOptions = true }) {
-                            Icon(
-                                painterResource(R.drawable.ic_plus),
-                                contentDescription = s.chatsCreateTitle,
-                                tint = c.textPrimary
-                            )
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = c.topBar)
+                onOpenProfile = onOpenProfile,
+                onCreate = { showGroupOptions = true }
             )
         }
     ) { padding ->
@@ -351,45 +234,9 @@ fun ChatsScreen(
                 .padding(padding)
         ) {
             if (chatItems.isEmpty()) {
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(40.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = s.chatsEmpty,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = c.textPrimary.copy(alpha = 0.8f),
-                        fontFamily = JetBrainsMono
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = s.chatsEmptyHint,
-                        fontSize = 16.sp,
-                        color = c.textPrimary.copy(alpha = 0.45f),
-                        fontFamily = JetBrainsMono
-                    )
-                }
+                ChatsEmptyState(title = s.chatsEmpty, hint = s.chatsEmptyHint)
             } else if (searchQuery.isNotBlank() && displayedItems.isEmpty()) {
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(40.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = s.chatsSearchNoResults,
-                        fontSize = 18.sp,
-                        color = c.textPrimary.copy(alpha = 0.5f),
-                        fontFamily = JetBrainsMono
-                    )
-                }
+                ChatsEmptyState(title = s.chatsSearchNoResults)
             } else {
 
                 LazyColumn(
@@ -445,45 +292,26 @@ fun ChatsScreen(
     }
 
     chatActionsTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { chatActionsTarget = null },
-            containerColor = c.dialog,
-            title = { Text(s.chatsActionsTitle, color = c.textPrimary, fontFamily = JetBrainsMono) },
-            text = {
-                Column {
-                    OptionRow(
-                        label = s.chatsActionMute,
-                        leadingIcon = { IconTile(iconRes = R.drawable.ic_bell_slash, tileColor = IconTileColors.warningAmber) }
-                    ) {
-                        chatActionsTarget = null
-                        muteDialogTarget = target
-                    }
-                    HorizontalDivider(color = c.textPrimary.copy(alpha = 0.08f), thickness = 0.5.dp)
-                    OptionRow(
-                        label = s.chatsActionInfo,
-                        leadingIcon = { IconTile(iconRes = R.drawable.ic_user_circle, tileColor = IconTileColors.connectivityBlue) }
-                    ) {
-                        chatActionsTarget = null
-                        when (target) {
-                            is ChatItem.Contact -> onOpenContactInfo(target.userId)
-                            is ChatItem.GroupChat -> onOpenGroupInfo(target.group.id)
-                            is ChatItem.ChannelItem -> {}
-                        }
-                    }
-                    if (target is ChatItem.Contact) {
-                        HorizontalDivider(color = c.textPrimary.copy(alpha = 0.08f), thickness = 0.5.dp)
-                        OptionRow(
-                            label = s.chatsActionDelete,
-                            labelColor = Color(0xFFEF5350),
-                            leadingIcon = { IconTile(iconRes = R.drawable.ic_trash, tileColor = IconTileColors.mutedBurgundy) }
-                        ) {
-                            chatActionsTarget = null
-                            deleteTarget = target
-                        }
-                    }
+        ChatActionsDialog(
+            onDismiss = { chatActionsTarget = null },
+            onMute = {
+                chatActionsTarget = null
+                muteDialogTarget = target
+            },
+            onInfo = {
+                chatActionsTarget = null
+                when (target) {
+                    is ChatItem.Contact -> onOpenContactInfo(target.userId)
+                    is ChatItem.GroupChat -> onOpenGroupInfo(target.group.id)
+                    is ChatItem.ChannelItem -> {}
                 }
             },
-            confirmButton = {}
+            onDelete = if (target is ChatItem.Contact) {
+                {
+                    chatActionsTarget = null
+                    deleteTarget = target
+                }
+            } else null
         )
     }
 
@@ -509,53 +337,37 @@ fun ChatsScreen(
     }
 
     deleteTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            containerColor = c.dialog,
-            title = { Text(s.chatsDeleteTitle, color = c.textPrimary, fontFamily = JetBrainsMono) },
-            text = {
-                Text(
-                    s.chatsDeleteText(target.name),
-                    color = c.textPrimary,
-                    fontFamily = JetBrainsMono,
-                    fontSize = 16.sp
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch(Dispatchers.IO) {
-                        val userId = UserStorage.getUserId(context)
-                        val msgs = ChatStorage.loadMessages(context, userId, target.userId)
-                        val mediaPaths = msgs.flatMap { listOfNotNull(it.imagePath, it.voicePath, it.filePath) }
-                        ChatStorage.deleteChat(context, userId, target.userId)
-                        SessionKeyManager.deleteSession(target.userId)
-                        // Clears MessengerService's own in-memory key cache +
-                        // mailbox tag too — ChatStorage.deleteChat() only
-                        // owns on-disk state, and this screen has no bound
-                        // service reference to call forgetContact() directly.
-                        // Found live: without this, routine background
-                        // traffic from a peer unaware they were deleted
-                        // (health-check pings, token refills) still verified
-                        // against the surviving key and silently resurrected
-                        // the contact via ChatStorage.addContact() in the
-                        // message handlers.
-                        context.startService(Intent(context, MessengerService::class.java).apply {
-                            putExtra("forget_contact", target.userId)
-                        })
-                        context.startService(Intent(context, MessengerService::class.java).apply {
-                            putExtra("send_session_reset_to", target.userId)
-                        })
-                        mediaPaths.forEach { path -> java.io.File(path).takeIf { it.exists() }?.delete() }
-                        withContext(Dispatchers.Main) {
-                            chatItems = chatItems.filter { it !is ChatItem.Contact || it.userId != target.userId }
-                            deleteTarget = null
-                        }
+        ChatDeleteDialog(
+            name = target.name,
+            onDismiss = { deleteTarget = null },
+            onConfirm = {
+                scope.launch(Dispatchers.IO) {
+                    val userId = UserStorage.getUserId(context)
+                    val msgs = ChatStorage.loadMessages(context, userId, target.userId)
+                    val mediaPaths = msgs.flatMap { listOfNotNull(it.imagePath, it.voicePath, it.filePath) }
+                    ChatStorage.deleteChat(context, userId, target.userId)
+                    SessionKeyManager.deleteSession(target.userId)
+                    // Clears MessengerService's own in-memory key cache +
+                    // mailbox tag too — ChatStorage.deleteChat() only
+                    // owns on-disk state, and this screen has no bound
+                    // service reference to call forgetContact() directly.
+                    // Found live: without this, routine background
+                    // traffic from a peer unaware they were deleted
+                    // (health-check pings, token refills) still verified
+                    // against the surviving key and silently resurrected
+                    // the contact via ChatStorage.addContact() in the
+                    // message handlers.
+                    context.startService(Intent(context, MessengerService::class.java).apply {
+                        putExtra("forget_contact", target.userId)
+                    })
+                    context.startService(Intent(context, MessengerService::class.java).apply {
+                        putExtra("send_session_reset_to", target.userId)
+                    })
+                    mediaPaths.forEach { path -> java.io.File(path).takeIf { it.exists() }?.delete() }
+                    withContext(Dispatchers.Main) {
+                        chatItems = chatItems.filter { it !is ChatItem.Contact || it.userId != target.userId }
+                        deleteTarget = null
                     }
-                }) { Text(s.delete, color = Color(0xFFEF5350), fontFamily = JetBrainsMono) }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) {
-                    Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = JetBrainsMono)
                 }
             }
         )
@@ -816,11 +628,6 @@ fun ChatsScreen(
         )
     }
 }
-
-private val avatarPalette = listOf(
-    Color(0xFFC77B4F), Color(0xFFE74C3C), Color(0xFF27AE60),
-    Color(0xFFF39C12), Color(0xFF9B59B6), Color(0xFF1ABC9C)
-)
 
 @Composable
 private fun AvatarCircle(
