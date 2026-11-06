@@ -250,8 +250,18 @@ No rebuild required. In the app:
 > none of which can build the current toolchain.)
 >
 > **Windows note:** AGP refuses to apply its plugin when the project path contains non-ASCII
-> characters, and even with `android.overridePathCheck=true` in `gradle.properties` the JVM unit-test
-> worker still fails to start. Keep the checkout on an ASCII-only path.
+> characters; `android.overridePathCheck=true` in `gradle.properties` gets past that.
+>
+> The JVM unit-test worker used to fail on such a path too — every test class died with
+> `ClassNotFoundException` before running, because Gradle writes the worker's classpath into a JVM
+> `@argfile` as UTF-8 while the launcher expands it using the platform encoding (`Cp1251` on a
+> Russian-locale Windows), mangling every path under the project directory. `app/build.gradle.kts`
+> now detects a non-ASCII project path and redirects the module's build directory to
+> `<drive>:\.subrosa-build\app-<hash>`, which keeps all build outputs — and therefore the worker
+> classpath — ASCII. An ASCII checkout is unaffected and keeps the standard `app/build/` layout.
+>
+> On a non-ASCII checkout, substitute that redirected directory for `app/build/` in the output paths
+> below; the build logs the location on every invocation.
 
 ### Steps
 
@@ -339,7 +349,11 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system design and module ref
 
 ## License
 
-Subrosa Messenger is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0) — see [LICENSE](LICENSE) for the full text.
+Copyright (C) 2025–2026 MoRoKonst.
+
+Subrosa Messenger is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0) — see [LICENSE](LICENSE) for the full text. `SPDX-License-Identifier: AGPL-3.0-or-later`.
+
+> **Licensing history, stated plainly because the repository was briefly inconsistent.** Commit `cb491fc` replaced the `LICENSE` file with the Elastic License 2.0 while this section continued to describe AGPL-3.0 and to point readers at `LICENSE` for its text. The two disagreed from that commit until 2026-11-06, when `LICENSE` was restored to the verbatim AGPL-3.0 text and the project's intent — the one documented here throughout — was confirmed as AGPL-3.0. If you obtained a copy during that window and relied on either reading, AGPL-3.0 applies; no attempt is made to retroactively narrow anyone's rights.
 
 In short: you're free to run, study, modify, and redistribute this software, including commercially. If you run a modified version as a network service that others interact with remotely (for example, hosting Subrosa for clients), AGPL-3.0 §13 requires you to make the corresponding source of your modified version available to those users, free of charge. Every official Subrosa client offers this by default via an in-app "Source code" link (Profile → About) pointing to this repository.
 
