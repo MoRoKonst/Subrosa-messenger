@@ -27,8 +27,11 @@ class BackupArchiveTest {
         put("timestamp", 1_762_000_000_000L)
         put("username", "ABCD1234")
         put("display_name", "Alice")
-        // Key material that MUST be ignored by the parser.
-        put("ec_private_key", "c2VjcmV0LXByaXZhdGUta2V5")
+        // Key material that MUST be ignored by the parser. The values are not
+        // keys: they are base64 of the words "secret-private-key",
+        // "spk-private" and "pq-private". Gitleaks flags the first on entropy
+        // alone, hence the marker.
+        put("ec_private_key", "c2VjcmV0LXByaXZhdGUta2V5") // gitleaks:allow
         put("spk_private", "c3BrLXByaXZhdGU=")
         put("pq_private", "cHEtcHJpdmF0ZQ==")
         put("contacts", JSONArray().apply {
