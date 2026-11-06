@@ -125,6 +125,7 @@ Navigation is managed entirely in `MainActivity` via a single Compose `mutableSt
 "incoming_call"  → IncomingCallScreen
 "profile"        → ProfileScreen
 "backup"         → BackupScreen
+"archive"        → ArchiveScreen      (read-only backup viewer)
 "wipe_settings"  → WipeSettingsScreen
 "verify_key"     → VerifyKeyScreen
 "servers"        → ServersScreen
@@ -236,7 +237,12 @@ Two-level data destruction (a third, `SOFT`, existed briefly but was removed —
 | `HARD` | Delete all keys, prefs, files, WebView data, databases; optional decoy state creation |
 | `NUCLEAR` | `HARD` + `ActivityManager.clearApplicationUserData()` (atomic system wipe, process killed) |
 
-Decoy mode: before HARD wipe, saves `username`, `password_hash`, `user_id` to a temporary plaintext file. On next launch, the app appears to have a legitimate account with fake chats — deniability of what's on screen against a coercing party, not undetectability of the wipe itself against a forensic device examination (see `SECURITY.md`, Known Limitations item 7).
+Decoy mode: `eraseEverything()` reads `username`, `password_hash` and `user_id` out of encrypted prefs *before* destroying them, and `UserStorage.reestablishDecoyProfile()` writes them back into freshly created encrypted prefs afterwards. On next launch the app appears to have a legitimate account with fake chats — deniability of what's on screen against a coercing party, not undetectability of the wipe itself against a forensic device examination (see `SECURITY.md`, Known Limitations item 7).
+
+**Corrected 2026-11-06**: this paragraph previously described the hand-off as "a temporary plaintext file" (`beacon_recovery`), which was accurate for an older build and is the thing that got replaced — a plaintext file holding the login password hash, written by a security wipe, was the weakest artefact the wipe produced. `migrateDecoyState` remains only to drain such a file if an older build left one. For the full, ordered list of what each level erases — and what no level erases, notably an exported backup file — see `SECURITY.md`, "Wipe Levels".
+
+#### `SecureMemory.kt`
+Overwrites key buffers before the reference is dropped: random → `0xFF` → zeros, then a byte of the buffer is stored into a `@Volatile` field. The volatile store is the load-bearing part (it stops the overwrite being elided as a dead store); the random pass exists so a use-after-wipe bug does not run under an all-zero key an attacker can precompute. The pass count is *not* a disk-wipe analogy and buys nothing on its own. `String` cannot be reliably wiped — the reflection attempt is expected to fail on ART and is documented as best-effort in both the source and `SECURITY.md`, "Key Material in Memory", which also lists the JCA-internal copies that are out of reach.
 
 #### `IntrusionDetector.kt`
 Scans for active interception at runtime. Called on `onResume()` in Paranoid Mode (off-Main-Thread via `Dispatchers.IO`).
@@ -260,7 +266,16 @@ Anti-forensics mode toggle. When enabled:
 HTTP alerts run in `CoroutineScope(Dispatchers.IO + SupervisorJob())` — fire-and-forget, structured concurrency.
 
 #### `HoneyTokenManager.kt`
-Tamper detection via canary values. A HMAC of a known set of values is stored at setup time. On each `checkIntegrity()` call, the HMAC is recomputed. A mismatch indicates that underlying storage was modified outside the application.
+Tamper detection via a canary blob. One file under `blobs/<uuid>.enc` is written at setup time and HMAC'd with a per-install key held only in Keystore-backed `EncryptedStorage`. On each `checkIntegrity()` call the HMAC over the on-disk bytes is recomputed; a mismatch means the blob was modified outside the application. Fails open — if the MAC or its key is missing (e.g. the Keystore write failed), `checkIntegrity()` reports "fine" rather than tripping a wipe on our own failure.
+
+The canary is written through `SecureFileStorage.write()`, exactly like a real attachment, so it carries a genuine Tink `AES256_GCM_HKDF_4KB` header; it holds a real, openable PDF of plausible size; its mtime is realigned on every normal launch to the timestamp of the decoy message that carries it; and it is referenced as a document attachment from a generated decoy thread (`DecoyData`) rather than sitting in `blobs/` unaccounted for. Before this it was 256 bytes of raw `SecureRandom` written with a bare `File.writeBytes()`, which made it identifiable from a directory listing alone — wrong first byte, impossible size, oldest mtime, referenced by nothing.
+
+**Residual:** the reference lives in the decoy dataset, which is Keystore-derived, not in the password-wrapped real chat store. An attacker who obtains the user's real password and cross-references the real history against `blobs/` still finds one unreferenced blob. See [KNOWN_SECURITY_ISSUES.md](KNOWN_SECURITY_ISSUES.md).
+
+#### `DecoyData.kt`
+The dataset behind duress mode. Generates a commercial-law-firm inbox (matters, clients, opposing counsel, deadlines, disclosure, billing) deterministically from a per-install 32-byte seed in `user_prefs`. Nothing generated is persisted — only the seed — so an offline image of app storage contains no fake conversations. Timestamps derive from seed + `UserStorage.getDecoyAnchor()`, which advances only on a normal (non-duress) launch, so the fake history reads as current as of the last legitimate use and does not visibly re-age while someone is holding the device. Messages typed into the decoy and threads deleted from it are persisted separately so they survive process death.
+
+`DecoyScreen.kt` contains no UI of its own: it renders the same `ContactCard` / `MessageBubble` / `ChatsTopBar` / `ChatsEmptyState` / `ChatActionsDialog` / `MuteDurationDialog` composables the real screens use, with the shared chrome factored into `ChatsUi.kt`. The previous parallel implementation had drifted into something identifiable without opening a conversation (no row timestamps or unread badges, no bubble clock, a permanently "delivered" tick, the wrong title typeface, no connection dot, no search, and hardcoded English in a Russian-default UI).
 
 #### `DeadMansSwitchManager.kt`
 Scheduled wipe if the user fails to check in within a configured interval. Uses `AlarmManager.setExactAndAllowWhileIdle`. On alarm fire, `WipeReceiver` triggers `WipeManager.wipe()`.
@@ -272,8 +287,26 @@ Generates and verifies ECDSA-signed contact invitations as a binary blob, prefix
 Exports all user data to an encrypted binary blob:
 - Key derivation: **Argon2id** (BouncyCastle `Argon2BytesGenerator`) — 64 MB memory, 3 iterations, parallelism 1
 - Encryption: AES-256-GCM
-- Current format is version 7. Includes, precisely: the EC identity keypair (export **throws** rather than silently omitting it if absent — see [SECURITY_INVARIANTS.md](SECURITY_INVARIANTS.md)); the current SPK+PQ prekey snapshot and OPK issuance counter (v7+, see `SessionKeyManager.kt` above — **not** the OPK pool itself); configured servers including `path`/`accessCode` (a pre-v7 bug omitted these, breaking the WebSocket URL after restore); anon token pool; messages, contacts, group keys, channel subscriptions, settings. The TOTP secret is deliberately **excluded** — only the `totp_enabled` flag is — so a stolen backup can't also defeat the TOTP gate that restoring it depends on.
+- Two formats: **version 7** (default) is the single Base64 string described below and is what the Desktop client imports; **version 8** adds attachment bytes and is produced only when the export option is checked — see `BackupContainer.kt`. `exportToStream(includeAttachments = false)` is byte-identical to `exportBackup()`, so the metadata path has exactly one implementation.
+- Version 8 message entries additionally carry `blob` (the attachment's blob id), `blobKind` (`image`/`voice`/`video`/`file`), `fileName` and the voice/video duration, plus a top-level `attachments` array giving the authoritative blob order. On import each blob is streamed out of the container and re-encrypted under *this* device's Keystore key; paths are recomputed locally and never read from the file.
+- Version 7 includes, precisely: the EC identity keypair (export **throws** rather than silently omitting it if absent — see [SECURITY_INVARIANTS.md](SECURITY_INVARIANTS.md)); the current SPK+PQ prekey snapshot and OPK issuance counter (v7+, see `SessionKeyManager.kt` above — **not** the OPK pool itself); configured servers including `path`/`accessCode` (a pre-v7 bug omitted these, breaking the WebSocket URL after restore); anon token pool; messages, contacts, group keys, channel subscriptions, settings. The TOTP secret is deliberately **excluded** — only the `totp_enabled` flag is — so a stolen backup can't also defeat the TOTP gate that restoring it depends on.
 - **Known limitation**: a *first* restore of a given backup file reliably resumes live messaging with no further action. Restoring the *same* file a second time (e.g. testing, or recovering twice from one export) is only guaranteed to recover message history — anon-token spent-history isn't preserved across the file, so live delivery after a repeat restore of the same file is not guaranteed. Exporting a fresh backup after each successful restore avoids this; it is not a data-loss risk, only a delivery-continuity one.
+
+#### `BackupArchive.kt` / `ArchiveScreen.kt`
+Read-only viewer for a backup file, added 2026-11-06 so history stays reachable with the server permanently gone. Deliberately weaker than import, and the restrictions are the feature:
+- `BackupArchive` takes **no `Context` anywhere in the file** — that is the structural reason it cannot write to prefs, the Keystore, `filesDir` or the live identity, rather than a convention someone has to remember.
+- `parse()` reads only `username`, `display_name`, contacts, groups and message text. The identity private key, SPK/ML-KEM privates, group keys and anon tokens are all present in the decrypted JSON and dropped; `BackupArchiveTest` asserts none of them reach the rendered model.
+- No server, and no TOTP (nothing is restored, so there is no identity to second-factor). Backup password only.
+- `ArchiveScreen` drops the decrypted archive and the password on `Lifecycle.ON_STOP` as well as on dispose. The file is read from its `content://` URI into memory with a 64 MiB cap and never copied into app storage. Renders its own minimal bubble rather than reusing `MessageBubble`, whose taps, reactions, reply and delete paths all reach live storage.
+- Not reachable in decoy mode: that state routes to the fake inbox and never renders the `"archive"` branch.
+- Reuses `BackupManager.decryptBackup`/`ungzip` (both `internal`) so there is one copy of the file format.
+
+Reads both containers, detected from the first bytes. For a v8 file it keeps the derived container key (wiped by `close()`) and the stream factory, and extracts attachments lazily — one per tap, never a whole thread's media at once. A v7 file has no attachments, and an attachment-only message renders as an explicit placeholder rather than a blank bubble.
+
+#### `BackupContainer.kt`
+Format version 8 — the framed, streamed container used when an export includes attachments. Full format and the reasoning behind each design point are in [SECURITY.md](SECURITY.md), "Version 8 Container". In short: `"SRBK8\n" ‖ salt(32)` then `iv(12) ‖ len(4) ‖ GCM(type ‖ body)` frames, one Argon2id-derived key for the file, AAD `"SRBK8|<frameIndex>|<label>"` binding each frame's position and identity, 1 MiB chunks so peak memory does not scale with attachment size, and a per-blob trailer declaring total length so truncation fails instead of half-restoring.
+
+Not readable by the Desktop client yet — which is why the attachments option is opt-in and the UI says so, rather than silently changing the format everyone's backups are written in.
 
 > Not to be confused with `UserStorage`'s login password hash (PBKDF2-SHA256, 100 000 iterations) or `StorageKeyManager`'s SMK wrapping (PBKDF2-SHA256, 300 000 iterations) below — three different KDFs for three different purposes. Backup export specifically uses Argon2id, chosen for its memory-hardness against GPU/ASIC brute-force on a file an attacker could copy and attack offline indefinitely.
 
@@ -701,7 +734,8 @@ All persistent data is stored in `EncryptedSharedPreferences` instances backed b
 | `ch_posts_*` | `ChannelManager` | Per-channel post history |
 | `smk_config` | `StorageKeyManager` | Encrypted SMK copies |
 | `dms_prefs` | `DeadMansSwitchManager` | DMS interval and last check-in |
-| `honey_prefs` | `HoneyTokenManager` | Canary HMAC |
+| `user_prefs` | `HoneyTokenManager` | Canary blob id, HMAC and MAC key (`honey_*`) |
+| `user_prefs` | `DecoyData` | Duress-mode seed, timeline anchor, sent/hidden state (`profile_variant_*`) |
 
 Backup files are binary blobs (AES-256-GCM) shared via the system file picker. They are not stored in any cloud.
 

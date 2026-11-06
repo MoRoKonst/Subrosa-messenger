@@ -100,7 +100,7 @@ identity key material is suspected compromised:
    verification) with no other symptom.
 3. Notify affected customers per the Critical-severity embargo timeline above — they need to
    know their pinned key changed, or client builds with the old pin will hard-fail (pinning is
-   deliberately fail-closed, see `CertificatePinner`/`SenderCertManager` scope notes in
+   deliberately fail-closed, see `NetworkConfig.CERT_PINS`/`SenderCertManager` scope notes in
    `SECURITY.md`).
 
 ---

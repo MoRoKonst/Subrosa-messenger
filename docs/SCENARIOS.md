@@ -837,16 +837,29 @@ Android 13+/TIRAMISU): переключатель "Экстренное стир
      600 мс** → `WipeManager.wipeForDecoyKeepAlive()`.
   └─ **Обычный режим** → сразу `WipeManager.wipe(context, Level.HARD)`.
 
-**Что реально стирается — три разных функции, не просто "уровни"**:
-  - **`wipe(HARD)`**: `SessionKeyManager.deleteAllSessions()`,
+**Что реально стирается — одна функция, два режима выхода** (обновлено
+2026-11-05: раньше это были три рукописные копии стирания —
+`hardWipe()`, `wipeForDecoyKeepAlive()` и
+`MessengerService.performEmergencyWipe()` — и они успели разойтись:
+третья не удаляла keystore-алиас `beacon_smk_wrap`, не вызывала
+`StorageKeyManager.lock()` и не снимала panic-уведомление. Теперь
+стирание одно, `WipeManager.eraseEverything()`, а вызывающие
+отличаются только тем, убивают ли процесс. См. S8-6 в
+[KNOWN_SECURITY_ISSUES.md](KNOWN_SECURITY_ISSUES.md)):
+  - **`eraseEverything()`**: `StorageKeyManager.lock()` первым делом,
+    снятие panic-уведомления (оно переживает смерть процесса),
+    `SessionKeyManager.deleteAllSessions()`,
     `CryptoManager.deleteKeys()`, AndroidKeyStore-алиасы SMK, весь
     `shared_prefs`/`filesDir`/`cacheDir`/`databases`/`app_webview`/
-    `no_backup`/внешние файлы приложения — затем **убивает процесс**
-    (`Process.killProcess`). Опционально (`withDecoy=true`) сохраняет
-    ДО стирания username/password_hash/calc_disguise в отдельный
-    `beacon_recovery` prefs, чтобы после перезапуска показать
-    правдоподобный "чистый" вход.
-  - **`wipeForDecoyKeepAlive()`**: делает **то же самое стирание**, но
+    `no_backup`/внешние файлы приложения. При `withDecoy=true`
+    username/password_hash/calc_disguise вычитываются ДО стирания и
+    сразу после него записываются обратно в заново созданные
+    `EncryptedSharedPreferences` вместе с `decoy_mode=true`
+    (`UserStorage.reestablishDecoyProfile()`). Раньше это шёл через
+    **открытый** файл `beacon_recovery` — см. S8-8.
+  - **`hardWipe()`**: `eraseEverything()` + **убивает процесс**
+    (`Process.killProcess`).
+  - **`wipeForDecoyKeepAlive()`**: то же стирание, но
     **не убивает процесс** — приложение продолжает работать (иначе
     Activity, которая уже открыта в момент срабатывания, вылетела бы,
     выдав тревогу вместо тихого перехода в decoy). Это то, чем

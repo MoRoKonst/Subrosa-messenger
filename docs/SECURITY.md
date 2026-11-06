@@ -363,6 +363,75 @@ payload = AES-256-GCM(serialized_data, key, iv)   // 128-bit tag
 file    = base64(salt[32] || iv[12] || payload)
 ```
 
+Two properties of the resulting file that are easy to get wrong, so they are stated explicitly:
+
+- **It survives every wipe level.** The file is written through SAF to a location the user chooses, outside app storage; `WipeManager` cannot reach it and does not try. A panic wipe therefore does not remove a backup, and a user who wipes should delete their backup copy separately. The user-facing guide says this.
+- **Contents are text only unless attachments were requested.** A v7 export stores `text`/`isOwn`/`timestamp` per message and nothing else. Attachments require the export option described next.
+
+### Version 8 Container (attachments)
+
+Added 2026-11-06. Selecting "include attachments" at export switches to `BackupContainer`, a framed, streamed format. Leaving it off produces the unchanged v7 string, which is the format the Desktop client can import.
+
+```
+"SRBK8\n"                    6 bytes, ASCII magic
+salt                        32 bytes
+frame*                       repeated to EOF
+
+frame := iv(12) ‖ len(4, big-endian) ‖ GCM(type(1) ‖ body, key, iv, aad)
+aad   := "SRBK8|<frameIndex>|<label>"
+label := "meta"  |  "blob:<blobId>"
+type  := 0x00 metadata (gzipped JSON)  |  0x01 attachment chunk  |  0x02 attachment trailer
+```
+
+Design points and the reasoning behind each:
+
+- **Streamed, 1 MiB chunks.** Peak memory is one chunk and its ciphertext regardless of total size. Base64-ing attachments into the v7 JSON would have held four copies of an already 4/3×-inflated payload — an `OutOfMemoryError` on the one feature whose purpose is not losing data. For the same reason, the destination URI is chosen *before* the export runs, and "share via another app" is not offered with attachments on (it would require a second full copy in the cache directory).
+- **One key for the file.** `Argon2id(password, salt, 64 MiB, t=3, p=1)` — identical parameters to v7, so offline brute-force cost is unchanged. Deriving per frame would allocate 64 MiB hundreds of times.
+- **AAD binds position and identity.** An attacker holding the file cannot reorder frames, delete one from the middle, or move attachment A's bytes onto attachment B's id — each changes the frame index or the label, and GCM rejects it. Regression tests cover all three separately (`BackupContainerTest`).
+- **Truncation is the one authentic-looking edit**, because every surviving frame is still individually valid. Hence the `0x02` trailer declaring the blob's total plaintext length; a cut file fails instead of restoring half an attachment.
+- **The frame length is the only value read before it can be authenticated.** It is bounded to `CHUNK_SIZE + 4096` so a hostile file cannot drive an arbitrary allocation.
+- **Fresh 96-bit IV per frame** from `SecureRandom`, under one key — a test asserts no IV repeats across a file, since reuse under GCM is catastrophic rather than cosmetic.
+- **Attachments are re-encrypted on restore.** The bytes travel protected by the backup password and land under the importing device's Keystore key via `SecureFileStorage`. That is what makes them portable at all — the on-disk `.enc` files are bound to the Keystore of the device that wrote them. It also means a restored attachment is exactly as protected as one received normally.
+- **Paths are never carried.** Only the blob id (the filename stem) travels; the importing device recomputes its own path with `SecureFileStorage.blobFile`. A path out of a backup file is an attacker-controlled string, and ids are rejected if they contain `/`, `\` or `.`.
+- **Blob order is declared in the metadata**, and import walks that list rather than re-deriving the order from the message arrays. An attachment whose source file was already gone is written as a zero-length blob rather than skipped, so the frame sequence stays aligned with the list — skipping it would shift every later attachment onto the wrong id.
+
+What leaks to anyone holding the file: the frame sizes, hence the number of attachments and their approximate sizes. v7 leaks total size already, and padding multi-gigabyte media to a fixed size is not a real option. Someone holding the file already knows they hold a messenger backup.
+
+### Read-Only Archive (offline history)
+
+Added 2026-11-06. `importBackup()` is the only other way into a backup's contents and it is identity-level and destructive: it wipes the identity currently on the device and requires the TOTP secret or a recovery code. That is the wrong tool for "the server is gone and I need to read one conversation", so `BackupArchive` + `ArchiveScreen` provide a strictly weaker path:
+
+| Property | How it is enforced |
+|---|---|
+| Writes nothing | `BackupArchive` takes no `Context` anywhere in the file — structurally unable to touch prefs, the Keystore, `filesDir` or the live identity |
+| Restores no keys | `parse()` reads `username`, `display_name`, contacts, groups and message text. `ec_private_key`, `spk_private`, `pq_private`, `groupKey`, `anon_tokens` are present in the decrypted JSON and deliberately dropped; a regression test asserts none of them reach the rendered model |
+| Needs no server | Decryption is local; this is the point of the feature |
+| Needs no TOTP | Nothing is being restored, so there is no identity to second-factor. The backup password alone gates it, exactly as it gates offline brute force of the same file |
+| Plaintext lifetime is bounded | Dropped on `Lifecycle.ON_STOP` as well as on dispose, along with the password field and the container key. Nothing is ever read whole — the file is streamed from its `content://` URI and never copied into app storage |
+| Attachments are extracted one at a time | `Archive.extract()` re-walks the container per attachment. That is O(file) rather than a seek *by design*: decrypting frame *n* requires having counted every frame before it, and an offset index would let a tampered file redirect a read to a frame that authenticates at a different position. Images are capped at 24 MiB for inline display; "save" hands the bytes to the SAF picker, which is the only route out of the screen and requires an explicit action. There is deliberately no "open with", which would hand a decrypted file to an arbitrary third-party app |
+| Unavailable under duress | Decoy mode routes to the fake inbox and never renders this branch, so a coerced unlock cannot use the app as a decryption oracle for a backup file the adversary is holding |
+
+A wrong password and a damaged/foreign file return the same result (`BadPasswordOrCorrupt`) — the GCM tag failure cannot distinguish them, and the UI does not guess.
+
+### Key Material in Memory
+
+`SecureMemory.wipe()` overwrites a buffer with random bytes, then `0xFF`, then zeros, and finally stores a byte of it into a `@Volatile` field.
+
+The pass count is not the point and is not a disk-wipe analogy — DRAM has no residual state to recover a previous value from, and one overwrite destroys the secret as completely as thirty. Two things in that sequence do real work:
+
+- **The volatile store.** `fill(0)` on a buffer that is never read again is a dead store, and both HotSpot and ART are permitted to delete it. A volatile write has observable effects under the JMM and cannot be elided, so it is what makes the overwrite actually happen.
+- **The random pass.** An all-zero 32-byte buffer is a valid AES key, a valid HMAC key and a valid chain key, so a use-after-wipe bug keeps producing output under a key an attacker can guess. Passing through random bytes means such output does not match anything precomputable. The zero pass runs last so a leaked buffer does not read as fresh entropy.
+
+What is wiped: the SMK (on `lock()`, the first operation of any wipe), PBKDF2 inputs and outputs in `StorageKeyManager.deriveKey()`, every intermediate in `BackupManager` (JSON, gzip stream, derived key, password chars), session chain keys, skipped-message keys, root and ratchet keys, and the ML-KEM-768 private key.
+
+What cannot be wiped in process, stated rather than glossed:
+
+- `SecretKeySpec` clones its input and AOSP does not implement its `destroy()`; the provider may clone again inside `Cipher.init`. Those copies are unreachable and wait for GC.
+- EC `KeyPair`s (`currentSpk`, the OPK pool) hold provider-owned private key objects with no working `destroy()`. Dropping the reference is all that is available.
+- `String` cannot be reliably wiped. `SecureMemory.wipe(String)` attempts reflection on `String.value` and is expected to fail silently on ART (blocked non-SDK member since API 28); even on success, mutating a `String` can corrupt a shared backing array, and the string is rarely the only copy. The real fix is for passwords never to be `String` — `CharArray` from the text field down — which is an outstanding UI-layer change, not a solved problem.
+
+Because of the above, the primary defence against in-memory key recovery remains `Process.killProcess()` at the end of `WipeManager.hardWipe()`, which releases the entire heap. Scrubbing is what carries `wipeForDecoyKeepAlive()`, the duress path, where the process deliberately stays alive to keep the decoy on screen.
+
 ---
 
 ## Authentication
@@ -541,11 +610,21 @@ In Paranoid Mode, a critical-severity scan result triggers `handleThreat()`.
 
 ### Certificate Pinning
 
-`CertificatePinner` (OkHttp3) pins the server's TLS certificate or public key. A connection that presents an unexpected certificate is rejected even if it is signed by a trusted CA. This mitigates attacks that install a custom root CA.
+OkHttp's `CertificatePinner` pins the server's SPKI. A connection presenting an unexpected key is rejected even if its certificate is signed by a trusted CA.
 
-**Scope, stated explicitly (external review 2026-08-28):** the pin (`NetworkConfig.CERT_PIN`) is
+**Corrected 2026-11-06 — it was inert until this date.** `NetworkConfig.CERT_PIN` was an empty `const val`, nothing assigned it, and the pinning branch in `MessengerService.buildHttpClient()` was guarded by `CERT_PIN.isNotEmpty()`. So the branch never executed and every release fell back to the system CA store, while the code read as though pinning were in force. Compounding it, a second complete pinning implementation (`CertificatePinner.kt`) held a real-looking SPKI pin and was called from nowhere, so a reader could not tell which of the two was live. The dead file has been deleted. Recorded as S9-1 / S12-1 in [KNOWN_SECURITY_ISSUES.md](KNOWN_SECURITY_ISSUES.md).
+
+Current design, shaped so that "configured but inert" cannot ship:
+
+- Pins come from the `SUBROSA_CERT_PINS` build property (`local.properties` or environment), comma-separated, in OkHttp's `sha256/BASE64` form — same handling as the signing credentials, and for the same reason: per-deployment, not repository content.
+- **A release build with an empty pin list fails.** A `gradle.taskGraph.whenReady` check throws before any release task runs, with the `openssl` invocations needed to compute a pin in the message. Debug builds are unaffected, because they legitimately talk to localhost, the emulator host and a test server. Override is `-PsubrosaAllowUnpinnedRelease=true`, deliberately verbose.
+- Malformed pins fail at configuration time (`require(startsWith("sha256/"))`), rather than at the first connection attempt on a user's phone.
+- A single configured pin logs a warning. **Pin the key, not the certificate**: generate the server keypair once, renew with `certbot --reuse-key`, and the SPKI hash survives every renewal. Ship a second pin from an offline backup keypair — with one pin, losing that key is a permanent outage for every installed copy, which is the failure mode that makes people disable pinning entirely.
+- Belt-and-braces: a release build that somehow has no pins logs an error at client construction, so the state is visible in logcat rather than silent.
+
+**Scope, stated explicitly (external review 2026-08-28):** the pin set is
 tied to exactly one hardcoded hostname (`NetworkConfig.SERVER_HOSTNAME` — the project's own official
-server) and is applied conditionally, only when both are non-empty at build time. **A self-hosted
+server). **A self-hosted
 server a user adds at runtime is a different hostname and receives no pinning at all** — it's
 validated through the normal system CA trust store instead. Deliberate scope, not a gap: there's no
 mechanism today to pre-pin an arbitrary self-hosted deployment's certificate (would need some
@@ -562,17 +641,52 @@ out-of-band provisioning step — TOFU, QR-code-carried pin, etc. — none of wh
 | `HARD` | Delete all prefs, files, databases, WebView data, AndroidKeyStore keys | Threat detected, border crossing |
 | `NUCLEAR` | `HARD` + `ActivityManager.clearApplicationUserData()` | Maximum urgency; process is killed by system |
 
+Exact scope of `eraseEverything()`, the single implementation all levels funnel through, in execution order:
+
+1. `StorageKeyManager.lock()` — SMK overwritten in RAM via `SecureMemory` (see "Key Material in Memory" above), before anything else.
+2. `PanicNotificationManager.dismiss()` — the notification outlives the process, and its DESTROY action stays functional if left behind.
+3. Read out the decoy profile fields (only when `keepDecoyProfile`), before the storage holding them is destroyed. The calculator disguise is carried forward only if its unlock code survives alongside it — restoring `disguise=true` with no code would lock the user out of their own restored profile.
+4. `SessionKeyManager.deleteAllSessions()` (chain keys, skipped-message keys, root/ratchet keys, ML-KEM private key) and `CryptoManager.deleteKeys()`.
+5. AndroidKeyStore aliases: `_androidx_security_master_key`, `_androidx_security_crypto_master_key_`, `beacon_smk_wrap`.
+6. Filesystem: `shared_prefs`, `filesDir`, `cacheDir`, `externalCacheDir`, `databases`, `app_webview`, `no_backup`, and the app-scoped external directory.
+7. Stop `MessengerService`.
+8. `UserStorage.reestablishDecoyProfile()` — into freshly created encrypted prefs, when a decoy profile was captured in step 3.
+
+`hardWipe` = the above + `Process.killProcess()`. `wipeForDecoyKeepAlive` = the above, process left alive so the decoy stays on screen. `NUCLEAR` hands steps 5–7 to the framework via `clearApplicationUserData()`, which erases the whole data directory — so `NUCLEAR` and decoy survival are mutually exclusive by construction, and its `withDecoy` parameter governs only the fallback used when the framework call is unavailable.
+
+**Not erased by any level**, documented because the opposite is a natural assumption:
+
+- An exported backup file. It lives outside app storage, by design — see "Backup Encryption".
+- Messages already delivered to contacts' devices.
+- Nothing is recoverable through Android cloud backup: `allowBackup="false"`.
+
+Deletion is `unlink`, not overwrite. The guarantee rests on the keys being destroyed, not on the blocks being unreadable — every file deleted above was encrypted under the SMK or the Keystore master key, both of which are gone by step 5.
+
 A `SOFT` level existed briefly but was removed (`WipeManager.kt`) — it was never wired to any trigger, yet was shown to the user in `WipeSettingsScreen.kt` as if it were a working option ("Мягкий (SOFT)" / "Очищает кеш и оперативную память"), which was misleading in a security-critical settings screen rather than merely dead code. `HARD`/`NUCLEAR` were not affected by the removal.
 
 `StorageKeyManager.lock()` is called as the very first operation of any wipe, ensuring the SMK is zeroed from memory before any other destructive step.
 
+**Corrected 2026-11-05**: that was true of `WipeManager`'s paths but not of `MessengerService.performEmergencyWipe()` (the 5-volume-press trigger), which was a third hand-written copy of the wipe and called neither `lock()` nor `PanicNotificationManager.dismiss()`, and did not delete the `beacon_smk_wrap` Keystore alias the other paths delete. All three copies have since been collapsed into one implementation (`WipeManager.eraseEverything()`); `performEmergencyWipe()` now delegates to `hardWipe()`. The invariant holds on every path because there is only one path.
+
 ### Panic Password
 
-The user can configure a secondary "panic password" in settings. If this password is entered in the login screen instead of the real password, the app:
-1. Begins `WipeManager.wipe(HARD)` in the background.
-2. May display a fake loading screen to buy time.
+The user can configure a secondary "panic password" in settings. Entering it instead of the real password shows the decoy immediately and destroys the real data behind it.
 
-This allows inconspicuous triggering of wipe while appearing to log in normally.
+**Corrected 2026-11-05**: this section previously claimed the app "begins `WipeManager.wipe(HARD)` in the background" and "may display a fake loading screen to buy time". Neither was accurate — there is no fake loading screen, and the function called is a different one with deliberately different behaviour. What actually happens:
+
+1. `PasswordGate.evaluate()` checks the panic password **before** the rate limiter and before the real password. That ordering is deliberate: under coercion the wipe must stay reachable even for an account currently locked out after failed attempts.
+2. The screen switches to `DecoyScreen` straight away.
+3. 400 ms later — just enough for the decoy to draw — `WipeManager.wipeForDecoyKeepAlive()` runs. Same erasure as `hardWipe()` but **without** killing the process, so the decoy stays on screen instead of the app dying in front of whoever triggered it. The job runs on a process-scoped `SupervisorJob`, not the composition's scope: on the latter, killing the activity inside that 400 ms window cancelled the wipe outright and left the real data intact.
+
+The same password is also accepted on the app-lock overlay, which routes through `emergencyWipe(withDecoy = true)` → `hardWipe()` and *does* kill the process.
+
+The panic password must differ from the login password, and is rejected at configuration time if it does not (`ProfileScreen`), with the mirror check when the login password is changed (`ChangePasswordScreen`). Because the gate checks panic first, an identical pair would silently turn every normal login into an irreversible wipe.
+
+### Login Rate Limiting
+
+`LoginAttemptManager` allows 3 attempts at the real password, then blocks for 5 / 15 / 30 / 60 minutes and finally indefinitely, escalating per block.
+
+**Corrected 2026-11-05**: until this date none of that was in effect. `recordFailedAttempt()` and `recordSuccessfulLogin()` were not called from anywhere in the app, so the counter stayed at 0, `block_until` stayed at 0 and `canAttemptLogin()` always answered "yes" — login was unlimited-attempt, and `getRemainingAttempts()`/`isPermanentlyLocked()` were dead code. The app-lock overlay, a second password prompt reachable without restarting the app, did not call even the inert check. Both now go through `PasswordGate`, which owns the ordering (panic → lockout → real password), records outcomes, and runs both PBKDF2 passes on `Dispatchers.IO` instead of the main thread. Regression tests: `PasswordGateTest.kt`.
 
 ### Dead Man's Switch
 
@@ -588,19 +702,21 @@ Normal check-in: user opens the app (automatic) or taps the manual check-in butt
 
 When `HARD` wipe is triggered with "post-wipe decoy" enabled:
 
-1. Before deletion, saves to `beacon_recovery` (plaintext file):
+1. Before deletion, the wipe reads out of `user_prefs`:
    - `username`
    - `password_hash` (the hash, not the password)
    - `user_id`
+   - the calculator-disguise flag and its unlock code, when that disguise is active
 
-   **Corrected 2026-11-03**: this list previously also claimed "a random selection of contact names". No contact names are saved — all three write sites (`WipeManager.hardWipe()`, `WipeManager.wipeForDecoyKeepAlive()`, `MessengerService.performEmergencyWipe()`) store only the three fields above plus the calculator-disguise flag and its unlock code when that disguise is active, and `UserStorage.migrateDecoyState()` reads nothing else. The decoy conversations come from a **static, hardcoded** pool in `DecoyScreen.kt` (a persisted random selection of 6 templates out of ~15, so the fake chat list stays stable across launches rather than reshuffling suspiciously). The stale wording appears to describe an earlier design in which real contact names were carried across the wipe. Worth correcting in this direction too: the old text overstated what survives a wipe, i.e. it described a privacy weakness that does not exist.
+   **Corrected 2026-11-03**: this list previously also claimed "a random selection of contact names". No contact names are saved, and `UserStorage.migrateDecoyState()` reads nothing else. The stale wording appears to describe an earlier design in which real contact names were carried across the wipe — worth correcting in this direction too, since the old text described a privacy weakness that does not exist.
 
-2. Performs full HARD wipe.
+2. Performs the full erasure.
 
-3. On next app launch, `beacon_recovery` is detected:
-   - A fake account is created using the saved credentials.
-   - Fake chat entries are populated.
-   - The app appears normal to a cursory inspection.
+3. Immediately afterwards, those fields are written back into freshly created `EncryptedSharedPreferences` together with `decoy_mode = true` (`UserStorage.reestablishDecoyProfile()`). The wipe destroyed both the Keystore master key and the prefs file, so this creates a new master key and a new file — indistinguishable from a first-run profile.
+
+   **Changed 2026-11-05**: the hand-off used to go through `beacon_recovery`, a `MODE_PRIVATE` (i.e. **unencrypted**) SharedPreferences file holding `username`/`user_id`/`password_hash` until the next cold start, when `migrateDecoyState()` moved them across and cleared it. That file was itself the problem the decoy exists to avoid: a plaintext artefact named `beacon_recovery` containing a `password_hash` is direct evidence that a real account existed and was wiped. It was worst on the panic-password path, which never kills the process — the file sat there for the entire time the decoy was on screen, which is exactly the window in which someone else is holding the phone. Nothing writes it any more; `migrateDecoyState()` is kept only to drain a file left by an older build.
+
+4. The decoy conversations are generated per install from a 32-byte seed (`DecoyData.kt`), not drawn from a hardcoded pool. See [ARCHITECTURE.md](ARCHITECTURE.md#decoydatakt). The dataset is pinned in memory for the life of the process, because the panic-password wipe deletes the seed from under a decoy that is already on screen — re-reading it would regenerate every contact and conversation in front of the person looking at them.
 
 The decoy account cannot decrypt any real messages (all keys were destroyed). It provides plausible deniability against a cursory inspection or a coercing party demanding to see the device's *contents* — not against a forensic examination of the *device itself*: a sophisticated examiner may still find filesystem timestamps, journal entries, or flash wear-leveling patterns indicating a prior wipe occurred (see Known Limitations item 7). Deniability of what's on screen, not undetectability of the wipe.
 
