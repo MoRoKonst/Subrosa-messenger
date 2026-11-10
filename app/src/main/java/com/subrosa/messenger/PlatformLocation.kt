@@ -1,10 +1,13 @@
 package com.subrosa.messenger
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Looper
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -26,11 +29,6 @@ import kotlinx.coroutines.withTimeoutOrNull
  * usually faster and more accurate indoors. The platform API picks a single
  * provider. For attaching a location to a message that is an acceptable loss;
  * for turn-by-turn navigation it would not be.
- *
- * Every call is wrapped in runCatching because the caller may lack
- * ACCESS_FINE_LOCATION / ACCESS_COARSE_LOCATION, in which case the platform
- * throws SecurityException. A missing permission yields null rather than a
- * crash, matching how the fused client's failure listener was handled.
  */
 object PlatformLocation {
 
@@ -42,32 +40,76 @@ object PlatformLocation {
         LocationManager.PASSIVE_PROVIDER,
     )
 
+    /**
+     * True when either location permission is granted.
+     *
+     * Checked explicitly rather than relying on catching SecurityException.
+     * The first version of this file wrapped every platform call in
+     * runCatching, which silently turned "the user denied location" into the
+     * same null as "no fix available yet" -- and lint was right to reject it
+     * (MissingPermission): a caught exception is not a permission check, and
+     * the two cases deserve different handling by the caller if it ever wants
+     * to prompt.
+     */
+    fun hasPermission(context: Context): Boolean =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /**
+     * A cached fix if one exists, otherwise one live fix, otherwise null.
+     *
+     * Returns null without touching the platform when permission is missing.
+     * SecurityException is still caught around the calls themselves: a
+     * permission can be revoked between the check and the call, and on some
+     * OEM builds a provider can refuse even with permission granted.
+     */
     suspend fun lastOrFresh(context: Context, timeoutMs: Long = 30_000L): Location? {
+        if (!hasPermission(context)) return null
+
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             ?: return null
 
         for (provider in PROVIDERS) {
-            runCatching { lm.getLastKnownLocation(provider) }.getOrNull()?.let { return it }
+            val cached = try {
+                lm.getLastKnownLocation(provider)
+            } catch (_: SecurityException) {
+                return null
+            } catch (_: IllegalArgumentException) {
+                // Provider not present on this device (common for GPS on
+                // tablets and emulators) -- try the next one.
+                null
+            }
+            if (cached != null) return cached
         }
 
         val live = PROVIDERS.firstOrNull { p ->
             // PASSIVE is excluded here: requesting updates from it can wait
             // forever, since it never activates any hardware of its own.
             p != LocationManager.PASSIVE_PROVIDER &&
-                runCatching { lm.isProviderEnabled(p) }.getOrDefault(false)
+                try {
+                    lm.isProviderEnabled(p)
+                } catch (_: IllegalArgumentException) {
+                    false
+                }
         } ?: return null
 
         return withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { cont ->
                 val listener = object : LocationListener {
                     override fun onLocationChanged(location: Location) {
-                        runCatching { lm.removeUpdates(this) }
+                        try {
+                            lm.removeUpdates(this)
+                        } catch (_: SecurityException) {
+                            // Nothing useful to do; the fix is already in hand.
+                        }
                         if (cont.isActive) cont.resume(location, null)
                     }
 
                     // Required on API < 30; no-ops here. A provider going away
                     // mid-request is covered by the timeout rather than by
-                    // resuming null, so a second provider still has a chance.
+                    // resuming null, so the caller still gets its 30s.
                     override fun onProviderEnabled(provider: String) {}
                     override fun onProviderDisabled(provider: String) {}
 
@@ -75,13 +117,21 @@ object PlatformLocation {
                     override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
                 }
 
-                cont.invokeOnCancellation { runCatching { lm.removeUpdates(listener) } }
+                cont.invokeOnCancellation {
+                    try {
+                        lm.removeUpdates(listener)
+                    } catch (_: SecurityException) {
+                        // Permission revoked while waiting; nothing to clean up.
+                    }
+                }
 
-                val requested = runCatching {
+                try {
                     lm.requestLocationUpdates(live, 0L, 0f, listener, Looper.getMainLooper())
-                }.isSuccess
-
-                if (!requested && cont.isActive) cont.resume(null, null)
+                } catch (_: SecurityException) {
+                    if (cont.isActive) cont.resume(null, null)
+                } catch (_: IllegalArgumentException) {
+                    if (cont.isActive) cont.resume(null, null)
+                }
             }
         }
     }
