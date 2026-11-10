@@ -7,7 +7,18 @@ Wants=network-online.target
 Type=simple
 User=beacon
 WorkingDirectory=/opt/beacon
-ExecStart=/opt/beacon/venv/bin/python /opt/beacon/server.py
+# --dev означает "без собственного TLS", а НЕ "режим разработки": TLS
+# терминирует nginx, который затем проксирует на 127.0.0.1:9000 (см.
+# README и docs/DEPLOY.md). Это корректно ТОЛЬКО вместе с привязкой к
+# loopback ниже — иначе сырой протокол оказывается в сети (KL-25).
+#
+# Без --dev сервер ищет secrets/key_encrypted.pem и, не найдя пароль ни в
+# BEACON_KEY_PASSWORD, ни в файле .key, уходит в интерактивный input() —
+# под systemd это означает, что сервис не поднимется вообще. Именно так
+# этот юнит и был написан до 2026-11-10, то есть для документированной
+# схемы с nginx он не работал; на нашем собственном сервере сервис поэтому
+# запускали не из него.
+ExecStart=/opt/beacon/venv/bin/python /opt/beacon/server.py --dev
 Restart=always
 RestartSec=5
 
