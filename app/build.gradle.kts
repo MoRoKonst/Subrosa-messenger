@@ -59,6 +59,17 @@ run {
 // plugin unconditionally makes any build without that file (CI, or a fresh
 // no-FCM checkout) fail outright even though FCM push is optional
 // everywhere else in this codebase.
+//
+// This also happens to be what makes a third-party reproducible build clean:
+// on a builder that has no google-services.json -- F-Droid's, or anyone
+// verifying a release from source -- the plugin is never applied, so not even
+// the Firebase resource strings land in the APK. On a machine that does have
+// the file the plugin processes both flavours, so a locally built foss APK
+// carries those strings. They are inert configuration, not code: the
+// proprietary library is excluded by the gmsImplementation scoping below,
+// which is what actually matters. Stated precisely rather than claimed as
+// "zero Google code in foss", because that is only strictly true of a build
+// made without the config file present.
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
@@ -131,6 +142,42 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+        }
+    }
+
+    // Two product flavours, differing only in whether Google's proprietary
+    // Firebase Cloud Messaging library is linked in at all.
+    //
+    // foss is the default and the one meant for public distribution. F-Droid
+    // will not accept a build that links a non-free library, and FCM also means
+    // Google learns which devices run this app and when they receive a push --
+    // a metadata exposure that sits badly with an app whose stated purpose is
+    // protecting the social graph. Without an F-Droid-style channel the only
+    // distribution route is "download an APK and trust the publisher", which is
+    // exactly what a verifiable build is supposed to replace.
+    //
+    // What foss actually gives up is small, and was measured rather than
+    // assumed: the server never persists an FCM token (RAM only, dropped on
+    // disconnect) and only attempts a wake-up for a client it has already
+    // established is disconnected -- at which point the token is gone. So the
+    // "wake an offline device" path is unreachable by construction, documented
+    // as S6-52 in docs/KNOWN_SECURITY_ISSUES.md. The one genuinely live push is
+    // the session-conflict notice, which a foss build does without. Message
+    // delivery itself does not depend on FCM; it runs over the foreground
+    // service's own connection.
+    // .add(), not `flavorDimensions += "push"`. Both build, but with `+=` the
+    // IDE resolves the operator against an enclosing lambda's Iterable receiver
+    // and reports "Suspicious receiver type ... ApplicationExtension". An
+    // explicit method call on the list leaves nothing to infer.
+    flavorDimensions.add("push")
+    productFlavors {
+        create("foss") {
+            dimension = "push"
+            isDefault = true
+        }
+        create("gms") {
+            dimension = "push"
+            versionNameSuffix = "-gms"
         }
     }
 
@@ -240,8 +287,12 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.appcompat:appcompat:1.8.0")
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
-    implementation(platform("com.google.firebase:firebase-bom:33.0.0"))
-    implementation("com.google.firebase:firebase-messaging-ktx")
+    // gms flavour only -- the foss APK must not link Google's proprietary
+    // messaging library. This is the line that decides F-Droid eligibility;
+    // the presence or absence of google-services.json does not, since a
+    // missing config file leaves the library linked and merely unconfigured.
+    "gmsImplementation"(platform("com.google.firebase:firebase-bom:33.0.0"))
+    "gmsImplementation"("com.google.firebase:firebase-messaging-ktx")
 
     // QR сканирование
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
@@ -265,6 +316,9 @@ dependencies {
     testImplementation("androidx.test:core:1.6.1")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    // GrantPermissionRule, used by PlatformLocationTest. Not pulled in
+    // transitively by espresso-core, which only brings androidx.test:runner.
+    androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
 
@@ -272,7 +326,14 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     // Геолокация (Fused Location Provider)
-    implementation("com.google.android.gms:play-services-location:21.4.0")
+    // play-services-location removed 2026-11-10. It was the app's last
+    // dependency on com.google.android.gms, used in exactly one place
+    // (ChatScreen's "send my location"), and it pulled play-services-basement
+    // into every flavour -- which is why the foss APK still contained Firebase
+    // classes after FCM itself had been excluded. Replaced by
+    // PlatformLocation.kt on the platform LocationManager; GroupChatScreen was
+    // already using the platform API directly, so this makes the two consistent.
+    //   implementation("com.google.android.gms:play-services-location:21.4.0")
     // OpenStreetMap
     implementation("org.osmdroid:osmdroid-android:6.1.18")
     // WebRTC (P2P звонки)

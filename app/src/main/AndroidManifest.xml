@@ -123,13 +123,8 @@
             android:foregroundServiceType="phoneCall|microphone|camera"
             android:exported="false" />
 
-        <service
-            android:name=".MyFirebaseMessagingService"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT"/>
-            </intent-filter>
-        </service>
+        <!-- MyFirebaseMessagingService is declared in src/gms/AndroidManifest.xml
+             so the foss flavour contains no Firebase component at all. -->
 
         <receiver
             android:name=".WipeReceiver"

@@ -37,8 +37,12 @@ jobs:
       # see GroupManagerTest.kt) -- first Kotlin-side security regression
       # tests, covering docs/THREAT_MODEL.md threats B and C (GroupManager
       # authorization, removed-member-loses-group-key invariant).
+      # testDebugUnitTest stopped existing when the foss/gms product flavours
+      # were introduced -- AGP generates one task per variant instead. Both are
+      # run: foss is what gets published, gms must still compile and pass so it
+      # does not quietly rot.
       - name: Unit tests
-        run: ./gradlew testDebugUnitTest --no-daemon
+        run: ./gradlew testFossDebugUnitTest testGmsDebugUnitTest --no-daemon
 
   # The desktop client is a separate Gradle build (desktop/settings.gradle.kts,
   # deliberately NOT included from the root settings.gradle.kts, which holds

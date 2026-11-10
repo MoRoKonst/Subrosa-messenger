@@ -359,29 +359,12 @@ fun ChatScreen(
     val sendGeo: () -> Unit = {
         scope.launch {
             try {
-                val fusedClient = com.google.android.gms.location.LocationServices
-                    .getFusedLocationProviderClient(context)
-
-                var loc: android.location.Location? = suspendCancellableCoroutine { cont ->
-                    fusedClient.lastLocation
-                        .addOnSuccessListener { cont.resume(it, null) }
-                        .addOnFailureListener { cont.resume(null, null) }
-                }
-
-                if (loc == null) {
-                    loc = withTimeoutOrNull(30_000L) {
-                        suspendCancellableCoroutine { cont ->
-                            val cts = com.google.android.gms.tasks.CancellationTokenSource()
-                            fusedClient.getCurrentLocation(
-                                com.google.android.gms.location.Priority.PRIORITY_BALANCED_POWER_ACCURACY,
-                                cts.token
-                            )
-                                .addOnSuccessListener { cont.resume(it, null) }
-                                .addOnFailureListener { cont.resume(null, null) }
-                            cont.invokeOnCancellation { cts.cancel() }
-                        }
-                    }
-                }
+                // Platform LocationManager, not FusedLocationProviderClient --
+                // see PlatformLocation for the trade-off and for why dropping
+                // play-services-location is what actually unblocks F-Droid.
+                // Same two-step behaviour as before: cached fix, else one live
+                // fix with the same 30s ceiling.
+                val loc = PlatformLocation.lastOrFresh(context, timeoutMs = 30_000L)
 
                 if (loc != null) {
                     val coordsText = "${loc.latitude},${loc.longitude}"
