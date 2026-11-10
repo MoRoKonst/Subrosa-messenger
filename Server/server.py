@@ -12744,6 +12744,57 @@ SUBROSA_BIND_HOST = os.environ.get("SUBROSA_BIND_HOST", "0.0.0.0")
 SUBROSA_BIND_PORT = int(os.environ.get("SUBROSA_BIND_PORT", "9000") or "9000")
 
 
+def _print_at_rest_posture():
+    """Report, at every start, which optional protections are OFF.
+
+    All three are opt-in and default to off for backwards compatibility with
+    deployments that predate them. That is a defensible default, but it made
+    the state invisible: the operator had no way to tell a hardened deployment
+    from a bare one short of reading their own .env, and the repository's
+    recommended Docker quick start used to point at a root .env.example that
+    did not mention these keys at all -- so the configuration a new operator
+    actually ran was the least protected one available, silently.
+
+    Deliberately NOT fatal. Making an unencrypted database refuse to start
+    would break every existing deployment on upgrade, and a personal server
+    with open registration is a legitimate configuration. The goal is that
+    nobody ends up in this state without having been told.
+
+    Wording is English on purpose, unlike most output here: this message is
+    read together with .env.example and the README by operators deploying
+    their own instance, who are not necessarily Russian-speaking.
+    """
+    off = []
+    if not DB_ENCRYPTION_KEY_HEX:
+        off.append(
+            "  - Database at-rest encryption is OFF (DB_ENCRYPTION_KEY_HEX unset).\n"
+            "    The offline message queue, registration records and routing tokens\n"
+            "    are plaintext on disk. End-to-end encrypted message CONTENT is not\n"
+            "    affected. Cannot be enabled later without an empty database."
+        )
+    if _totp_fernet is None:
+        off.append(
+            "  - TOTP secrets are stored unencrypted (TOTP_SECRET_ENCRYPTION_KEY unset).\n"
+            "    Can be enabled later; existing rows migrate on next save."
+        )
+    if not SERVER_ACCESS_PROTECTED:
+        off.append(
+            "  - Registration is OPEN (SERVER_ACCESS_PROTECTED unset).\n"
+            "    Anyone who can reach this server can create an account on it.\n"
+            "    Correct for a personal server; wrong for a firm deployment."
+        )
+
+    if not off:
+        print("[*] At-rest protection: database encrypted, TOTP secrets encrypted, "
+              "registration gated by access code.")
+        return
+
+    print("[!] Optional protections not enabled on this deployment:")
+    for item in off:
+        print(item)
+    print("[!] See .env.example for what each one covers and how to generate keys.")
+
+
 async def main(ssl_context=None):
     global _fed_ssl_ctx
     # Start outgoing federation connections
@@ -12811,6 +12862,7 @@ async def main(ssl_context=None):
     ):
         print("[*] WebSocket сервер запущен")
         print(f"[*] Режим: {'TLS' if ssl_context else 'DEV (без TLS)'}")
+        _print_at_rest_posture()
         await asyncio.Future()
 
 

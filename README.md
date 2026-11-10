@@ -169,16 +169,36 @@ cd Subrosa-messenger
 # 2. Configure environment (template lives at repo root)
 cp .env.example .env
 
-# 3. All deployment files (Dockerfile, compose, nginx, certs) live in deploy/
+# 3. Generate the at-rest encryption keys and put them in .env.
+#    Do this BEFORE the first start: the database key cannot be added later
+#    without starting from an empty database. Read the "At-rest protection"
+#    section of .env.example — it explains what each key does and does not
+#    cover. Skipping this step leaves the server's own database (offline
+#    message queue, registration records, routing tokens) unencrypted on disk.
+python3 -c "import secrets; print('DB_ENCRYPTION_KEY_HEX=' + secrets.token_hex(32))"
+python3 -c "from cryptography.fernet import Fernet; print('TOTP_SECRET_ENCRYPTION_KEY=' + Fernet.generate_key().decode())"
+
+#    For a firm or any shared deployment, also set SERVER_ACCESS_PROTECTED=true
+#    and SERVER_ACCESS_CODE_COUNT=<number of users>. Without it, anyone who can
+#    reach the server can register on it.
+
+# 4. All deployment files (Dockerfile, compose, nginx, certs) live in deploy/
 cd deploy
 
-# 4. Generate TLS certificates (development)
+# 5. Generate TLS certificates (development)
 ./generate-certs.sh
 
-# 5. Start server
+# 6. Start server
 docker compose up -d
 
-# 6. Access at wss://your-domain/ws
+# 7. Access at wss://your-domain/ws
+```
+
+On every start the server prints which of these protections are enabled, so
+you can verify what a running deployment is actually doing:
+
+```bash
+docker compose logs subrosa-server | head -20
 ```
 
 **Features:**
