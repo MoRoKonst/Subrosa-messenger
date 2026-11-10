@@ -44,11 +44,26 @@ jobs:
       # pointed at temurin-17). Build explicitly instead, same command as
       # build.yml's android-build job. Python needs no build step at all
       # (interpreted, nothing to compile).
-      - name: Build (java-kotlin only)
+      # Both Kotlin codebases must be built inside the CodeQL tracer: for a
+      # compiled language CodeQL only analyses what it observes being compiled,
+      # so anything not built here is silently absent from the results. The
+      # desktop client is a SEPARATE Gradle build (its own settings.gradle.kts,
+      # not included from the root one), so `./gradlew assembleDebug` covers
+      # :app only. Until this step was added, ~24.6k lines of desktop client --
+      # identity keys, the X3DH/ML-KEM handshake, the whole WebSocket protocol
+      # handler -- were outside CodeQL entirely while the workflow still
+      # reported "java-kotlin" as analysed.
+      - name: Build Android (java-kotlin only)
         if: matrix.language == 'java-kotlin'
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
+
+      - name: Build desktop (java-kotlin only)
+        if: matrix.language == 'java-kotlin'
+        run: |
+          chmod +x desktop/gradlew
+          cd desktop && ./gradlew assemble --no-daemon
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
