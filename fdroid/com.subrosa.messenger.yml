@@ -1,0 +1,59 @@
+Categories:
+  - Internet
+  - Security
+License: AGPL-3.0-only
+AuthorName: MoRoKonst
+SourceCode: https://github.com/MoRoKonst/Subrosa-messenger
+IssueTracker: https://github.com/MoRoKonst/Subrosa-messenger/issues
+Changelog: https://github.com/MoRoKonst/Subrosa-messenger/releases
+
+AutoName: Subrosa
+
+RepoType: git
+Repo: https://github.com/MoRoKonst/Subrosa-messenger.git
+
+Builds:
+  - versionName: 1.1.0
+    versionCode: 4
+    commit: v1.1.0
+    subdir: app
+    gradle:
+      - foss
+    # Release signing is optional in this project: with no keystore and no
+    # local.properties present, app/build.gradle.kts produces an unsigned APK,
+    # which is what this pipeline needs.
+    #
+    # -PsubrosaAllowUnpinnedRelease=true is required and deliberate. The build
+    # refuses to produce a release with an empty certificate-pin list, to stop
+    # "pinning configured but inert" from ever shipping. Pinning cannot
+    # currently be used for the project's own server, whose TLS is terminated
+    # by a CDN that rotates keys roughly every 90 days without reuse -- pinning
+    # that key would disconnect every install within months. This is documented
+    # in docs/SECURITY.md under "Certificate Pinning", and the upstream
+    # releases are built with the same flag.
+    gradleprops:
+      - subrosaAllowUnpinnedRelease=true
+
+MaintainerNotes: |-
+  The `foss` product flavour is the one to build. It links no Google code at
+  all: no Firebase, no Play Services. Verified upstream by inspecting the
+  APK's own dex for `com/google/firebase` and `com/google/android/gms`
+  references -- zero in foss, several hundred in the `gms` flavour.
+
+  There is also a `gms` flavour which does link Firebase messaging. It must not
+  be built for this repository.
+
+  Two files the build deliberately tolerates being absent, so that a
+  third-party build works: `local.properties` (signing credentials and
+  certificate pins) and `app/google-services.json` (Firebase config -- the
+  google-services plugin is applied only if that file exists, so on a builder
+  without it not even Firebase resource strings enter the APK).
+
+  Upstream is explicit that the project has had no external security audit and
+  that its cryptographic composition is its own work; see the limits section of
+  the full description and docs/KNOWN_SECURITY_ISSUES.md.
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9.]+$
+CurrentVersion: 1.1.0
+CurrentVersionCode: 4
