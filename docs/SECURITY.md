@@ -48,7 +48,7 @@ Subrosa is designed to protect against the following adversaries:
 
 | Adversary | Capability | Mitigation |
 |---|---|---|
-| Network attacker | Intercept and modify traffic | TLS + certificate pinning + E2EE |
+| Network attacker | Intercept and modify traffic | TLS + E2EE (certificate pinning is implemented but **not active for the official server** — see [Certificate Pinning](#certificate-pinning)) |
 | MITM with forged CA | Install user CA, proxy TLS | Intrusion detection (USER_CA + PROXY) |
 | Server compromise | Server operator reads DB | E2EE; server stores no plaintext |
 | Physical device theft | Offline extraction of filesystem | EncryptedSharedPreferences + SMK layer |
@@ -621,6 +621,20 @@ Current design, shaped so that "configured but inert" cannot ship:
 - Malformed pins fail at configuration time (`require(startsWith("sha256/"))`), rather than at the first connection attempt on a user's phone.
 - A single configured pin logs a warning. **Pin the key, not the certificate**: generate the server keypair once, renew with `certbot --reuse-key`, and the SPKI hash survives every renewal. Ship a second pin from an offline backup keypair — with one pin, losing that key is a permanent outage for every installed copy, which is the failure mode that makes people disable pinning entirely.
 - Belt-and-braces: a release build that somehow has no pins logs an error at client construction, so the state is visible in logcat rather than silent.
+
+**Unavailable for the official server while it is CDN-fronted (found 2026-11-11).** Everything above describes a design that cannot currently be used for `api.subrosamessenger.com`, and the releases shipped so far are built with `-PsubrosaAllowUnpinnedRelease=true` because of it.
+
+The reason is architectural, not an oversight in the pinning code. TLS for the official hostname is terminated by **Cloudflare**, so the key a client sees is Cloudflare's, not this project's. Checked against the live endpoint on both 443 and 8443: `issuer=C=US, O=Google Trust Services, CN=WE1`, `subject=CN=subrosamessenger.com`, 90-day validity, wildcard SAN — Cloudflare Universal SSL. Cloudflare rotates those certificates automatically and does **not** reuse the key, so the SPKI hash changes on every renewal.
+
+The advice two bullets above — pin the key, renew with `certbot --reuse-key`, the hash survives — is correct only for a client that reaches this project's own nginx. No shipped client does. Pinning the key observed today would therefore break every installed copy within about three months: precisely the permanent-outage failure mode that bullet warns about.
+
+Consequences, stated plainly rather than left implied:
+
+- The threat-model row above listing "TLS + certificate pinning + E2EE" against a network attacker currently delivers TLS + E2EE. Pinning contributes nothing today.
+- A network attacker who can obtain a certificate for `subrosamessenger.com` from any CA the device trusts is not stopped by pinning, because there is none. They are still stopped from reading message content, which is end-to-end encrypted with keys the transport never sees; what they gain is metadata and the ability to disrupt.
+- Cloudflare itself terminates TLS and can therefore see all transport metadata. That is already recorded as an accepted trade-off for reaching users in networks where the origin IP is blocked — pinning would not have changed it.
+
+The intended fix is a second hostname with Cloudflare proxying **disabled**, so clients reach nginx directly and present this project's own certbot certificate, pinned with `--reuse-key` for a stable hash; the CDN hostname stays as an unpinned fallback for networks that block the origin. That splits the two properties instead of trading one for the other, and fits the two-entrance arrangement the deployment already uses. Not implemented yet.
 
 **Scope, stated explicitly (external review 2026-08-28):** the pin set is
 tied to exactly one hardcoded hostname (`NetworkConfig.SERVER_HOSTNAME` — the project's own official

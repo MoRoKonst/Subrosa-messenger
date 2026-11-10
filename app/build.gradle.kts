@@ -80,27 +80,81 @@ if (localPropertiesFile.exists()) {
     localProperties.load(localPropertiesFile.inputStream())
 }
 
+/**
+ * Reads a value from local.properties VERBATIM, bypassing
+ * java.util.Properties' escape handling.
+ *
+ * Properties.load() treats a backslash as an escape character, so a keystore
+ * password containing a single `\` is silently delivered one character short.
+ * The resulting build failure is
+ *
+ *   KeytoolException: Failed to read key messenger from store ...:
+ *   Get Key failed: Given final block not properly padded
+ *
+ * which points at the key, not at the file format, and cost real time to
+ * diagnose (2026-11-11). The alternative -- telling every maintainer to double
+ * the backslashes in their own password -- means keeping a deliberately
+ * corrupted copy of a credential and getting it right by hand. Reading the raw
+ * line instead removes the class of bug.
+ *
+ * Deliberately NOT used for ordinary settings, which keep standard Properties
+ * semantics -- only for credentials, where every byte is literal. The cert
+ * pins stay on Properties: they are base64 SPKI hashes and cannot contain a
+ * backslash, so the escape rule never bites them.
+ */
+fun rawLocalProperty(name: String): String? {
+    if (!localPropertiesFile.exists()) return null
+    return localPropertiesFile.readLines()
+        .firstOrNull { it.startsWith("$name=") }
+        ?.substringAfter('=')
+        // Trailing CR from a CRLF checkout, and trailing spaces, are not part
+        // of a password. A leading space would be, so only the end is trimmed.
+        ?.trimEnd('\r', ' ', '\t')
+        ?.takeIf { it.isNotEmpty() }
+}
+
 android {
     namespace = "com.subrosa.messenger"
     compileSdk = 37
 
 
+    // Release signing is OPTIONAL by design, so a third party can build this
+    // project without the maintainer's keystore. F-Droid in particular builds
+    // from source on its own servers and signs with its own key: with an
+    // unconditional signingConfig the build died there on a null password,
+    // which would have made the app ineligible no matter how free its
+    // dependencies were.
+    //
+    // Passwords are read with rawLocalProperty(), not Properties.getProperty():
+    // a backslash in a password must reach the keystore intact. See that
+    // function for what went wrong when it did not.
+    val keystoreFile = rootProject.file("beacon-release.jks")
+    val storePass = rawLocalProperty("KEYSTORE_PASSWORD")
+        ?: System.getenv("KEYSTORE_PASSWORD")
+    val keyPass = rawLocalProperty("KEY_PASSWORD")
+        ?: System.getenv("KEY_PASSWORD")
+    val canSignRelease = keystoreFile.exists() && !storePass.isNullOrBlank() && !keyPass.isNullOrBlank()
+
     signingConfigs {
-        create("release") {
-            storeFile = file("../beacon-release.jks")
-            storePassword = localProperties.getProperty("KEYSTORE_PASSWORD")
-                ?: System.getenv("KEYSTORE_PASSWORD")
-            keyAlias = "messenger"
-            keyPassword = localProperties.getProperty("KEY_PASSWORD")
-                ?: System.getenv("KEY_PASSWORD")
+        if (canSignRelease) {
+            create("release") {
+                storeFile = keystoreFile
+                storePassword = storePass
+                keyAlias = "messenger"
+                keyPassword = keyPass
+            }
         }
     }
 
     defaultConfig {
         applicationId = "com.subrosa.messenger"
         minSdk = 26
-        versionCode = 3
-        versionName = "1.0"
+        // Bumped for the foss/gms split. versionCode must increase for F-Droid
+        // and for Android's own upgrade check; versionName is what users see.
+        // 1.1.0 rather than 1.0.1 because dropping Firebase and Play Services
+        // changes what the app is, not just how it behaves.
+        versionCode = 4
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures {
@@ -189,7 +243,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            // Null when no keystore/passwords are available: the APK is then
+            // produced unsigned, which is exactly what a third-party or
+            // F-Droid build wants. Signing is not silently skipped for the
+            // maintainer, because canSignRelease is true whenever the keystore
+            // and both passwords are present.
+            signingConfig = if (canSignRelease) signingConfigs.getByName("release") else null
             buildConfigField("String", "CERT_PINS", "\"${certPins.joinToString(",")}\"")
         }
         debug {
