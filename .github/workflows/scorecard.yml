@@ -1,0 +1,68 @@
+name: OpenSSF Scorecard
+
+# A free, automated, third-party assessment of this repository's supply-chain
+# and release practices (branch protection, pinned actions, CI tests, SAST,
+# dangerous workflow patterns, dependency update tooling, signed releases...).
+#
+# Why this is here: an independent security audit of the codebase costs tens of
+# thousands and is not currently funded, but a buyer doing due diligence still
+# needs something they can check themselves rather than taking the maintainer's
+# word. Scorecard is not an audit and must never be presented as one -- it says
+# nothing about whether the cryptography is correct. What it does give is a
+# verifiable, externally-computed signal about engineering process, published by
+# the OpenSSF rather than asserted here.
+#
+# The score is expected to be imperfect: there is no reproducible-build or
+# signed-release story yet, and this is a single-maintainer project so the
+# code-review checks cannot pass. That is fine. A real number with known gaps
+# is worth more to a cautious buyer than a page of self-description.
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '0 6 * * 2'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Upload the result to the repository's code-scanning dashboard.
+      security-events: write
+      # Needed by the action to request the OIDC token that lets the public
+      # Scorecard API attest the result came from this repository.
+      id-token: write
+      contents: read
+      actions: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publishing makes the score retrievable from the public Scorecard
+          # API, which is what lets a prospective user or buyer look it up
+          # independently instead of trusting a badge image served from here.
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: results.sarif
