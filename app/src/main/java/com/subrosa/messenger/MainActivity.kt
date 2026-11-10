@@ -45,7 +45,16 @@ import androidx.appcompat.app.AppCompatDelegate
 import android.net.Uri
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.subrosa.messenger.GroupInfoScreen
-import com.google.android.datatransport.BuildConfig
+// No BuildConfig import on purpose: this file is in com.subrosa.messenger, so
+// the app's own generated BuildConfig resolves without one. There used to be an
+// `import com.google.android.datatransport.BuildConfig` here -- almost
+// certainly an IDE auto-import accident -- which silently pointed the
+// BuildConfig.DEBUG check on line ~241 at a Firebase transitive library's
+// BuildConfig instead of this app's. That library ships from Maven built in
+// release mode, so its DEBUG is always false: the signature-tamper check it
+// guards therefore ran in release exactly as intended, but also ran in debug
+// builds, where the code plainly says it should be skipped. Found when the foss
+// flavour stopped linking Firebase and the import no longer resolved.
 import com.subrosa.messenger.ui.components.IconTileColors
 
 class MainActivity : FragmentActivity() {

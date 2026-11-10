@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Google-services-only additions, merged into the main manifest for the `gms`
+    product flavour and absent entirely from `foss`.
+
+    MyFirebaseMessagingService is the only place in this app that touches a
+    Firebase API, and the only producer of the token MessengerService forwards
+    to the server as "register_fcm". In a foss build nothing sends that intent,
+    so the registration simply never happens: no stub and no reflection needed.
+
+    (Note for editors: XML forbids a double hyphen inside a comment. Writing one
+    here makes the manifest merger fail with a bare "Error parsing" and no line
+    number, which is a slow thing to diagnose.)
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <service
+            android:name=".MyFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT"/>
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>
