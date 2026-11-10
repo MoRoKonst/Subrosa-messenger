@@ -174,12 +174,17 @@ object WebSocketClient {
 
     // S6-53 (external review 2026-09-06) -- client-side defense-in-depth for
     // message_delete/group_message_delete (mirrors server.py's
-    // CHAT_CONTROL_ID_MAX_LEN). Desktop's sendDelete()/sendGroupDeleteMessage()
-    // never produce a signature at all (unlike Android) -- see this patch's
-    // own report of that as a SEPARATE authorization gap, not fixed here --
-    // so this length bound is the only check standing between a compromised
-    // server (or a malicious contact, given the missing signature) and an
-    // oversized id reaching GroupManager/ChatStorage.
+    // CHAT_CONTROL_ID_MAX_LEN). This bound is deliberately checked BEFORE the
+    // signature verification in each handler, so an oversized id never reaches
+    // GroupManager/ChatStorage even on a frame handed to this device directly
+    // by a compromised server.
+    //
+    // S6-53 originally recorded that Desktop produced no signature at all for
+    // these types, making this length bound the ONLY check on the path. That is
+    // no longer true: S6-54 added signing in sendDelete()/sendGroupDeleteMessage()
+    // and verification plus an author/isOwn authorization check in both receive
+    // handlers, identical to Android's scheme. The bound is now one layer of
+    // several, not the last line of defence.
     private val CHAT_CONTROL_ID_MAX_LEN = 128
     // Mirrors Android's MessengerService.CHAT_CONTROL_DISAPPEAR_TIMER_ALLOWED
     // and server.py's CHAT_CONTROL_DISAPPEAR_TIMER_ALLOWED exactly: off / 1h /
@@ -2157,7 +2162,7 @@ object WebSocketClient {
         // has the same shape as group_message_delete's own transcript, for
         // example) -- ported identically from Android's MessengerService.kt.
         if (!handshakeDone) return
-        val signature = CryptoManager.sign("SUBROSA_MESSAGE_DELETE_V1:$msgId")
+        val signature = CryptoManager.sign(ChatControlTranscripts.messageDelete(msgId))
         sendAnonOrDirect(to, JSONObject().apply {
             put("type", "message_delete")
             put("from", myFingerprint)
@@ -2212,7 +2217,7 @@ object WebSocketClient {
             put("from",      myFingerprint)
             put("to",        to)
             put("seconds",   seconds)
-            put("signature", CryptoManager.sign(seconds.toString()))
+            put("signature", CryptoManager.sign(ChatControlTranscripts.disappearTimer(seconds)))
         })
     }
 
@@ -2796,7 +2801,7 @@ object WebSocketClient {
         if (!handshakeDone) return
         val group = GroupManager.getGroup(groupId) ?: return
         val myFp = myFingerprint
-        val signature = CryptoManager.sign("SUBROSA_GROUP_MESSAGE_DELETE_V1:$groupId:$messageId")
+        val signature = CryptoManager.sign(ChatControlTranscripts.groupMessageDelete(groupId, messageId))
         group.members.filter { it != myFp }.forEach { memberId ->
             sendAnonOrDirect(memberId, JSONObject().apply {
                 put("type", "group_message_delete")
@@ -4535,7 +4540,7 @@ object WebSocketClient {
                 val signature = json.optString("signature", null)
                 val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
                 if (signature == null || senderKey == null ||
-                    !CryptoManager.verify("SUBROSA_GROUP_MESSAGE_DELETE_V1:$groupId:$messageId", signature, senderKey)) {
+                    !CryptoManager.verify(ChatControlTranscripts.groupMessageDelete(groupId, messageId), signature, senderKey)) {
                     System.err.println("WebSocketClient: group_message_delete: invalid or missing signature from $from")
                     return
                 }
@@ -4730,7 +4735,7 @@ object WebSocketClient {
                 val signature = json.optString("signature", null)
                 val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
                 if (signature == null || senderKey == null ||
-                    !CryptoManager.verify("SUBROSA_MESSAGE_DELETE_V1:$msgId", signature, senderKey)) {
+                    !CryptoManager.verify(ChatControlTranscripts.messageDelete(msgId), signature, senderKey)) {
                     System.err.println("WebSocketClient: message_delete: invalid or missing signature from $from")
                     return
                 }
@@ -4789,7 +4794,7 @@ object WebSocketClient {
                 val signature = json.optString("signature", null)
                 val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
                 if (signature == null || senderKey == null ||
-                    !CryptoManager.verify(seconds.toString(), signature, senderKey)) {
+                    !CryptoManager.verify(ChatControlTranscripts.disappearTimer(seconds), signature, senderKey)) {
                     System.err.println("WebSocketClient: disappear_timer: invalid or missing signature from $from")
                     throw SecurityException("disappear_timer: bad or missing signature from $from")
                 }

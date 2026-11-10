@@ -3316,7 +3316,7 @@ class MessengerService : Service() {
                 // separator -- see sendDeleteMessage()'s own comment for why
                 // that risks cross-operation signature reuse.
                 if (signature == null || senderKey == null ||
-                    !CryptoManager.verify("SUBROSA_MESSAGE_DELETE_V1:$messageId", signature, senderKey)) {
+                    !CryptoManager.verify(ChatControlTranscripts.messageDelete(messageId), signature, senderKey)) {
                     Log.e(TAG, "message_delete: неверная или отсутствующая подпись от $from")
                     throw SecurityException("message_delete: неверная или отсутствующая подпись от $from")
                 }
@@ -3359,7 +3359,8 @@ class MessengerService : Service() {
                 val signature = json.optString("signature", null)
                 val senderKey = publicKeys[from]
                     ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also { publicKeys[from] = it }
-                if (signature == null || senderKey == null || !CryptoManager.verify(seconds.toString(), signature, senderKey)) {
+                if (signature == null || senderKey == null ||
+                    !CryptoManager.verify(ChatControlTranscripts.disappearTimer(seconds), signature, senderKey)) {
                     Log.e(TAG, "disappear_timer: неверная или отсутствующая подпись от $from")
                     throw SecurityException("disappear_timer: неверная или отсутствующая подпись от $from")
                 }
@@ -3403,7 +3404,7 @@ class MessengerService : Service() {
                 val senderKey = publicKeys[from]
                     ?: ChatStorage.getContactPublicKey(this@MessengerService, from)?.also { publicKeys[from] = it }
                 if (signature == null || senderKey == null ||
-                    !CryptoManager.verify("SUBROSA_GROUP_MESSAGE_DELETE_V1:$groupId:$messageId", signature, senderKey)) {
+                    !CryptoManager.verify(ChatControlTranscripts.groupMessageDelete(groupId, messageId), signature, senderKey)) {
                     Log.e(TAG, "group_message_delete: неверная или отсутствующая подпись от $from")
                     throw SecurityException("group_message_delete: неверная или отсутствующая подпись от $from")
                 }
@@ -6237,7 +6238,7 @@ class MessengerService : Service() {
                 put("from", username)
                 put("to", to)
                 put("message_id", messageId)
-                put("signature", CryptoManager.sign("SUBROSA_MESSAGE_DELETE_V1:$messageId"))
+                put("signature", CryptoManager.sign(ChatControlTranscripts.messageDelete(messageId)))
             })
         }
     }
@@ -6252,7 +6253,7 @@ class MessengerService : Service() {
         // separator, distinct from direct message_delete's -- binds BOTH
         // groupId and messageId so a signature can't be replayed against a
         // different group referencing the same message id.
-        val signature = CryptoManager.sign("SUBROSA_GROUP_MESSAGE_DELETE_V1:$groupId:$messageId")
+        val signature = CryptoManager.sign(ChatControlTranscripts.groupMessageDelete(groupId, messageId))
         scope.launch(Dispatchers.IO) {
             members.filter { it != username }.forEach { memberId ->
                 sendAnonOrDirect(memberId, JSONObject().apply {
@@ -6275,7 +6276,7 @@ class MessengerService : Service() {
                 put("from", username)
                 put("to", to)
                 put("seconds", seconds)
-                put("signature", CryptoManager.sign(seconds.toString()))
+                put("signature", CryptoManager.sign(ChatControlTranscripts.disappearTimer(seconds)))
             })
         }
     }
