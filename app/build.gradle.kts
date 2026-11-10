@@ -165,7 +165,11 @@ android {
     // the session-conflict notice, which a foss build does without. Message
     // delivery itself does not depend on FCM; it runs over the foreground
     // service's own connection.
-    flavorDimensions += "push"
+    // .add(), not `flavorDimensions += "push"`. Both build, but with `+=` the
+    // IDE resolves the operator against an enclosing lambda's Iterable receiver
+    // and reports "Suspicious receiver type ... ApplicationExtension". An
+    // explicit method call on the list leaves nothing to infer.
+    flavorDimensions.add("push")
     productFlavors {
         create("foss") {
             dimension = "push"
@@ -312,6 +316,9 @@ dependencies {
     testImplementation("androidx.test:core:1.6.1")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    // GrantPermissionRule, used by PlatformLocationTest. Not pulled in
+    // transitively by espresso-core, which only brings androidx.test:runner.
+    androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
 
