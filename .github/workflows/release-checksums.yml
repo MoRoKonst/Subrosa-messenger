@@ -1,0 +1,89 @@
+name: Release checksums
+
+# Publishing a release used to be entirely manual, and the manual step was
+# skipped in exactly the way manual steps are: GitHub Release v1.0.0 shipped a
+# SHA-256 for Subrosa.apk but none for Subrosa-1.0.2.exe, so half of what users
+# downloaded could not be verified at all.
+#
+# This does NOT build or sign the binaries. The release signing keystore stays
+# on the maintainer's machine and deliberately never becomes a GitHub secret --
+# for a product whose whole proposition is that you do not have to trust the
+# publisher's infrastructure, handing the signing key to a CI runner is a bad
+# trade. Artifacts are built and signed locally, uploaded by hand, and this
+# workflow then makes them verifiable.
+
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to (re)generate checksums for'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  checksums:
+    name: Attach checksums.txt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve tag
+        id: tag
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: echo "tag=${EVENT_TAG:-$INPUT_TAG}" >> "$GITHUB_OUTPUT"
+
+      # GitHub records a SHA-256 for every asset at upload time and exposes it
+      # as the `digest` field. Reading that is both cheaper and more honest than
+      # downloading several hundred megabytes to re-hash it: the digest is what
+      # GitHub will serve, so it is the right thing for a user to compare
+      # against. Assets uploaded before this field existed report null and are
+      # downloaded and hashed instead.
+      - name: Build checksums.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          api="repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}"
+          gh api "$api" --jq '.assets[] | [.name, .digest, .url] | @tsv' > assets.tsv
+
+          if [ ! -s assets.tsv ]; then
+            echo "No assets attached to ${TAG} yet — nothing to checksum."
+            exit 0
+          fi
+
+          : > checksums.txt
+          while IFS=$'\t' read -r name digest url; do
+            if [ "$digest" = "null" ] || [ -z "$digest" ]; then
+              echo "::notice::$name has no recorded digest; downloading to hash it"
+              gh api "$url" -H 'Accept: application/octet-stream' > "$name"
+              sum=$(sha256sum "$name" | cut -d' ' -f1)
+              rm -f "$name"
+            else
+              sum=${digest#sha256:}
+            fi
+            # sha256sum -c compatible, so users can verify the whole set at once
+            printf '%s  %s\n' "$sum" "$name" >> checksums.txt
+          done < assets.tsv
+
+          # checksums.txt must not list itself from a previous run
+          grep -v '  checksums.txt$' checksums.txt > tmp && mv tmp checksums.txt
+          cat checksums.txt
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ ! -s checksums.txt ]; then
+            echo "Nothing to upload."
+            exit 0
+          fi
+          gh release upload "$TAG" checksums.txt --clobber
