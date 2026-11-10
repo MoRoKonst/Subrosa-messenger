@@ -12744,6 +12744,93 @@ SUBROSA_BIND_HOST = os.environ.get("SUBROSA_BIND_HOST", "0.0.0.0")
 SUBROSA_BIND_PORT = int(os.environ.get("SUBROSA_BIND_PORT", "9000") or "9000")
 
 
+def _warn_if_plaintext_on_public_interface(ssl_context):
+    """Warn when the no-TLS listener is bound to something other than loopback.
+
+    In --dev mode the server speaks its protocol in the clear and nginx is meant
+    to be the only thing facing the network. Bound to 0.0.0.0 without a
+    firewall, the raw protocol is on the public internet instead, and every
+    control in front of it -- TLS, the SNI demultiplexer, nginx rate limits --
+    applies to nobody, because a client can simply connect to this port.
+
+    This is KL-25 in docs/KNOWN_SECURITY_ISSUES.md, and it is not hypothetical:
+    on 2026-11-10 the project's own production host answered a websockets
+    handshake banner on port 9000 from an external network, six days after a
+    rebuild left ufw disabled. The row had been marked Fixed, because the fix
+    had been a firewall rule rather than anything the server would notice.
+    A process that knows it is listening in the clear can say so itself.
+
+    Not fatal: a loopback-only operator, a container with a published-on-
+    127.0.0.1 port, and a deliberately open LAN test rig are all legitimate,
+    and refusing to start would break them. Message only, every start.
+    """
+    if ssl_context is not None:
+        return
+    if SUBROSA_BIND_HOST in ("127.0.0.1", "::1", "localhost"):
+        return
+
+    print(f"[!] NO TLS and bound to {SUBROSA_BIND_HOST}:{SUBROSA_BIND_PORT} "
+          "-- the raw protocol is reachable on every interface this host has.")
+    print("[!] Intended setup: bind 127.0.0.1 and let nginx terminate TLS in "
+          "front (SUBROSA_BIND_HOST=127.0.0.1).")
+    print("[!] If this port must stay open, confirm a firewall actually blocks "
+          "it from outside -- check from another network, not from this host.")
+    print("[!] Message content stays end-to-end encrypted either way. What is "
+          "exposed is the transport: connection timing, client addresses, and "
+          "the routing metadata this project exists to protect.")
+
+
+def _print_at_rest_posture():
+    """Report, at every start, which optional protections are OFF.
+
+    All three are opt-in and default to off for backwards compatibility with
+    deployments that predate them. That is a defensible default, but it made
+    the state invisible: the operator had no way to tell a hardened deployment
+    from a bare one short of reading their own .env, and the repository's
+    recommended Docker quick start used to point at a root .env.example that
+    did not mention these keys at all -- so the configuration a new operator
+    actually ran was the least protected one available, silently.
+
+    Deliberately NOT fatal. Making an unencrypted database refuse to start
+    would break every existing deployment on upgrade, and a personal server
+    with open registration is a legitimate configuration. The goal is that
+    nobody ends up in this state without having been told.
+
+    Wording is English on purpose, unlike most output here: this message is
+    read together with .env.example and the README by operators deploying
+    their own instance, who are not necessarily Russian-speaking.
+    """
+    off = []
+    if not DB_ENCRYPTION_KEY_HEX:
+        off.append(
+            "  - Database at-rest encryption is OFF (DB_ENCRYPTION_KEY_HEX unset).\n"
+            "    The offline message queue, registration records and routing tokens\n"
+            "    are plaintext on disk. End-to-end encrypted message CONTENT is not\n"
+            "    affected. Cannot be enabled later without an empty database."
+        )
+    if _totp_fernet is None:
+        off.append(
+            "  - TOTP secrets are stored unencrypted (TOTP_SECRET_ENCRYPTION_KEY unset).\n"
+            "    Can be enabled later; existing rows migrate on next save."
+        )
+    if not SERVER_ACCESS_PROTECTED:
+        off.append(
+            "  - Registration is OPEN (SERVER_ACCESS_PROTECTED unset).\n"
+            "    Anyone who can reach this server can create an account on it.\n"
+            "    Correct for a personal server; wrong for a firm deployment."
+        )
+
+    if not off:
+        print("[*] At-rest protection: database encrypted, TOTP secrets encrypted, "
+              "registration gated by access code.")
+        return
+
+    print("[!] Optional protections not enabled on this deployment:")
+    for item in off:
+        print(item)
+    print("[!] See .env.example for what each one covers and how to generate keys.")
+
+
 async def main(ssl_context=None):
     global _fed_ssl_ctx
     # Start outgoing federation connections
@@ -12811,6 +12898,8 @@ async def main(ssl_context=None):
     ):
         print("[*] WebSocket сервер запущен")
         print(f"[*] Режим: {'TLS' if ssl_context else 'DEV (без TLS)'}")
+        _warn_if_plaintext_on_public_interface(ssl_context)
+        _print_at_rest_posture()
         await asyncio.Future()
 
 

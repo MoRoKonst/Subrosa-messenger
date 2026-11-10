@@ -7,7 +7,18 @@ Wants=network-online.target
 Type=simple
 User=beacon
 WorkingDirectory=/opt/beacon
-ExecStart=/opt/beacon/venv/bin/python /opt/beacon/server.py
+# --dev означает "без собственного TLS", а НЕ "режим разработки": TLS
+# терминирует nginx, который затем проксирует на 127.0.0.1:9000 (см.
+# README и docs/DEPLOY.md). Это корректно ТОЛЬКО вместе с привязкой к
+# loopback ниже — иначе сырой протокол оказывается в сети (KL-25).
+#
+# Без --dev сервер ищет secrets/key_encrypted.pem и, не найдя пароль ни в
+# BEACON_KEY_PASSWORD, ни в файле .key, уходит в интерактивный input() —
+# под systemd это означает, что сервис не поднимется вообще. Именно так
+# этот юнит и был написан до 2026-11-10, то есть для документированной
+# схемы с nginx он не работал; на нашем собственном сервере сервис поэтому
+# запускали не из него.
+ExecStart=/opt/beacon/venv/bin/python /opt/beacon/server.py --dev
 Restart=always
 RestartSec=5
 
@@ -18,15 +29,31 @@ RestartSec=5
 # приходят с задержкой (иногда пачками в минуту и больше) вместо реального
 # времени — найдено и подтверждено живьём 2026-08-28.
 Environment=PYTHONUNBUFFERED=1
-# Скопируй файл сервисного аккаунта Firebase и укажи путь:
-Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/beacon/firebase-adminsdk.json
-# При необходимости добавь другие переменные:
-# Environment=BEACON_PORT=8765
 #
-# Остальные секреты (DB_ENCRYPTION_KEY_HEX, TOTP_SECRET_ENCRYPTION_KEY и т.д.) —
-# держи в отдельном файле вне git (например /opt/beacon/.env, права 600) и
-# подключай так, а не через Environment= в этом юните:
-# EnvironmentFile=/opt/beacon/.env
+# ВАЖНО: привязка к loopback. Без этой строки server.py слушает 0.0.0.0:9000
+# (его значение по умолчанию), и тогда сырой протокол без TLS оказывается
+# доступен из интернета напрямую — мимо nginx, мимо TLS, мимо всех лимитов
+# перед ним. Это KL-25 (Critical) в docs/KNOWN_SECURITY_ISSUES.md, и именно так
+# это и случилось на нашем собственном продакшене: 2026-11-10 порт 9000
+# отвечал баннером websockets из внешней сети, потому что ufw был выключен.
+# nginx ходит к серверу через 127.0.0.1, так что снаружи порт не нужен.
+#
+# Имя переменной важно: server.py читает SUBROSA_BIND_HOST, а не SUBROSA_HOST.
+Environment=SUBROSA_BIND_HOST=127.0.0.1
+Environment=SUBROSA_BIND_PORT=9000
+#
+# Firebase (опционально, только если нужны push-уведомления) — скопируй файл
+# сервисного аккаунта и укажи путь. Без него сервер работает нормально.
+# Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/beacon/firebase-adminsdk.json
+#
+# Секреты (DB_ENCRYPTION_KEY_HEX, TOTP_SECRET_ENCRYPTION_KEY,
+# SERVER_ACCESS_PROTECTED и т.д.) — в отдельном файле вне git, права 600.
+# Строка раскомментирована намеренно: пока она была закомментирована, типовая
+# установка поднимала сервер вообще без этих переменных, то есть с
+# незашифрованной БД, TOTP-секретами открытым текстом и открытой регистрацией.
+# Шаблон — .env.example в корне репозитория; он же объясняет, что каждая
+# переменная защищает, а что нет.
+EnvironmentFile=-/opt/beacon/.env
 
 # Логи
 StandardOutput=journal

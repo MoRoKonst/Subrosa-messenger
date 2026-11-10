@@ -18,8 +18,14 @@ services:
     env_file:
       - ../.env
     environment:
-      SUBROSA_HOST: "0.0.0.0"
-      SUBROSA_PORT: 9000
+      # SUBROSA_BIND_HOST/SUBROSA_BIND_PORT, not SUBROSA_HOST/SUBROSA_PORT:
+      # those were the names here (and in .env.example) for a long time, and
+      # server.py has never read them -- it reads SUBROSA_BIND_HOST and
+      # SUBROSA_BIND_PORT. Nothing visibly broke only because the values set
+      # here happened to match the code's own defaults. Anyone who edited them
+      # to move the bind address got silence.
+      SUBROSA_BIND_HOST: "0.0.0.0"
+      SUBROSA_BIND_PORT: 9000
       # Without this, DB_PATH defaults to the relative "messages.db", which
       # resolves against WORKDIR /app -- outside the subrosa-data volume
       # mounted below at /app/data. The DB would live in the container's

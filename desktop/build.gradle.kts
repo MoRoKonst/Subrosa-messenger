@@ -4,7 +4,14 @@ import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 // contains non-ASCII characters because it writes the output path into an args
 // file as UTF-8 but reads it back as the system ANSI codepage (Windows-1252),
 // producing mojibake. Redirect the build directory to an ASCII path to avoid this.
-layout.buildDirectory.set(file("C:/subrosa_desktop_build"))
+//
+// Windows-only: the dev checkout lives under "E:\Диск Д\...", which triggers the
+// bug. On Linux CI the path is ASCII already and the absolute "C:/..." form would
+// be taken as a RELATIVE directory literally named "C:" inside the project — so
+// the override is applied only where it is actually needed.
+if (System.getProperty("os.name").lowercase().contains("win")) {
+    layout.buildDirectory.set(file("C:/subrosa_desktop_build"))
+}
 
 plugins {
     kotlin("jvm")
@@ -14,7 +21,13 @@ plugins {
 }
 
 group = "com.subrosa.desktop"
-version = "1.0.0"
+
+// Single source of truth for the shipped version. Previously `version` said
+// "1.0.0" while nativeDistributions.packageVersion said "1.0.2" independently,
+// which is how GitHub Release v1.0.0 ended up carrying an asset named
+// Subrosa-1.0.2.exe — a visible version mismatch for anyone verifying a
+// download against the tag. packageVersion now derives from this value.
+version = "1.0.2"
 
 kotlin {
     jvmToolchain(21)
@@ -76,6 +89,19 @@ dependencies {
     // for decoding a BufferedImage straight from a loaded file.
     implementation("com.google.zxing:core:3.5.4")
     implementation("com.google.zxing:javase:3.5.4")
+
+    // Test source set. This module had NO src/test at all until now: its only
+    // verification was IntegrationSmokeTest.kt sitting in src/main, which meant
+    // the harness was COMPILED INTO the shipped distribution and never ran as
+    // part of `build`. The file now lives in src/test (not packaged, still
+    // launchable via the smokeTest task below).
+    testImplementation(kotlin("test"))
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 // Headless smoke test for the crypto/network path (IntegrationSmokeTest.kt) —
@@ -87,7 +113,10 @@ tasks.register<JavaExec>("smokeTest") {
     group = "verification"
     description = "Headless two-process smoke test of connect/X3DH-PQ-hybrid/message round-trip."
     mainClass.set("com.subrosa.desktop.IntegrationSmokeTestKt")
-    classpath = sourceSets["main"].runtimeClasspath
+    // test, not main: the harness moved to src/test so it stops being packaged
+    // into the distributed binary. The test runtime classpath includes main's
+    // output, so the harness still sees the whole client exactly as before.
+    classpath = sourceSets["test"].runtimeClasspath
     if (project.hasProperty("args")) {
         args((project.property("args") as String).split(" "))
     }
@@ -163,7 +192,9 @@ compose.desktop {
             //   java.naming      — BouncyCastle / SSL (JNDI-провайдер)
             //   jdk.crypto.ec    — нативные EC-операции (TLS ECDH, ECDSA)
             modules("java.management", "jdk.unsupported", "java.naming", "jdk.crypto.ec")
-            packageVersion = "1.0.2"
+            // Derived from the project version above — never hardcode a second
+            // version string here (see that declaration's own comment).
+            packageVersion = project.version.toString()
             description = "Subrosa Messenger — secure desktop client"
             copyright = "© 2025 Subrosa"
             vendor = "Subrosa"
