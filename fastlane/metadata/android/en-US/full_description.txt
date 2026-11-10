@@ -1,0 +1,21 @@
+Subrosa is an end-to-end encrypted messenger you host yourself. Its distinguishing goal is not encrypting message content — most messengers do that — but hiding the social graph: which accounts talk to which, and when.
+
+Messages are encrypted with X3DH and a Double Ratchet, combined with post-quantum ML-KEM-768 in a hybrid handshake, so a recorded conversation is not decryptable later by an adversary who acquires a quantum computer. Delivery uses anonymous routing tokens and a blind mailbox for first contact, so the relay forwards traffic without learning who the correspondents are.
+
+The server is a single Python process you run on your own machine. It is a relay and WebRTC signaller; it never holds a key that can decrypt message content. Its own database can be encrypted at rest, and the project documents exactly what that does and does not protect.
+
+Features include voice and video calls over WebRTC, group chats and channels, disappearing messages, encrypted backups with Argon2id key derivation, a Tor hidden-service transport via Orbot, and anti-forensic measures for device seizure: a panic password, an emergency wipe, and a calculator decoy screen.
+
+WHAT THIS BUILD IS
+
+This is the "foss" build. It contains no Google Firebase and no Google Play Services; the only cost is that there is no push wake-up for a disconnected device, which was never functional anyway, and no notification when the same account signs in elsewhere. Message delivery runs over the app's own foreground connection and does not depend on Google.
+
+HONEST LIMITS
+
+The project has not had an external security audit. The cryptographic composition — the hybrid X3DH handshake, the ratchet, and the anonymous routing — is this project's own work; the ML-KEM-768 primitive itself comes from BouncyCastle. Treat the security claims as unreviewed engineering, not as audited guarantees.
+
+Certificate pinning is implemented but is not active for the project's own official server, because that endpoint is behind a CDN which terminates TLS. Content stays end-to-end encrypted regardless; transport metadata is visible to the CDN.
+
+Root and tamper detection raise the cost of physical device seizure. They are not a defence against a targeted zero-click exploit, and the documentation does not claim otherwise.
+
+Full threat model, known issues and residual risks are in the repository under docs/ — including the issues that are still open.
