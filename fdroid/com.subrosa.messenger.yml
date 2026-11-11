@@ -13,9 +13,11 @@ RepoType: git
 Repo: https://github.com/MoRoKonst/Subrosa-messenger.git
 
 Builds:
-  - versionName: 1.1.0
-    versionCode: 4
-    commit: v1.1.0
+  - versionName: 1.1.1
+    versionCode: 5
+    # Full commit hash, not a tag -- fdroiddata requires it, and a tag can be
+    # moved after review while a hash cannot.
+    commit: 7e053067117f243c057ec32687a94af31530e696
     subdir: app
     gradle:
       - foss
@@ -55,5 +57,5 @@ MaintainerNotes: |-
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 1.1.0
-CurrentVersionCode: 4
+CurrentVersion: 1.1.1
+CurrentVersionCode: 5
