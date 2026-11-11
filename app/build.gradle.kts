@@ -400,7 +400,12 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:1.4.2")
     // WebSocket
     implementation("com.squareup.okhttp3:okhttp:5.5.0")
-    implementation("org.bouncycastle:bcprov-jdk18on:1.79") // 1.79+ required for org.bouncycastle.pqc.crypto.mlkem (ML-KEM)
+    // 1.86. ML-KEM lives in org.bouncycastle.crypto.{generators,kems,params}
+    // here; up to 1.79 it was under org.bouncycastle.pqc.crypto.mlkem. Only
+    // the packages moved -- class names, behaviour and encodings are the same,
+    // and cross-version interop was verified in both directions before the
+    // bump (see PqCrypto.kt).
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
 
     // Тесты
     testImplementation(libs.junit)
