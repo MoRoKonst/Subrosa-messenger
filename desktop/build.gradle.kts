@@ -57,9 +57,9 @@ dependencies {
 
     // Bouncy Castle — EC key generation & ECDSA (same algorithms as Android, different provider)
     // 1.79+ required for org.bouncycastle.pqc.crypto.mlkem (ML-KEM, used in the hybrid PQ X3DH handshake)
-    implementation("org.bouncycastle:bcprov-jdk18on:1.79")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
     // bcpkix — X.509 certificate builder (JcaX509v3CertificateBuilder, JcaContentSignerBuilder)
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.79")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
 
     // org.json for compatibility with adapted Android code
     implementation("org.json:json:20240303")

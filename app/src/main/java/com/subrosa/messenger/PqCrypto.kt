@@ -1,12 +1,25 @@
 package com.subrosa.messenger
 
-import org.bouncycastle.pqc.crypto.mlkem.MLKEMExtractor
-import org.bouncycastle.pqc.crypto.mlkem.MLKEMGenerator
-import org.bouncycastle.pqc.crypto.mlkem.MLKEMKeyGenerationParameters
-import org.bouncycastle.pqc.crypto.mlkem.MLKEMKeyPairGenerator
-import org.bouncycastle.pqc.crypto.mlkem.MLKEMParameters
-import org.bouncycastle.pqc.crypto.mlkem.MLKEMPrivateKeyParameters
-import org.bouncycastle.pqc.crypto.mlkem.MLKEMPublicKeyParameters
+// BouncyCastle 1.86 moved ML-KEM out of org.bouncycastle.pqc.crypto.mlkem into
+// the main crypto packages -- it is a standardised algorithm now, not a
+// post-quantum candidate. Class names are unchanged, so this is an import
+// rewrite and nothing more.
+//
+// The WIRE FORMAT did not change, which is the part that mattered. Verified
+// before upgrading rather than assumed: both versions were run in separate
+// JVMs and raw encoded blobs exchanged in both directions. A 1.79 public key
+// encapsulated by 1.86 and decapsulated by 1.79 yields the same 32-byte
+// secret, and the reverse holds too; sizes are identical as well (public 1184,
+// private 2400, ciphertext 1088). Had that not held, every installed client
+// would have failed to handshake with an updated one -- silently, and only at
+// runtime.
+import org.bouncycastle.crypto.generators.MLKEMKeyPairGenerator
+import org.bouncycastle.crypto.kems.MLKEMExtractor
+import org.bouncycastle.crypto.kems.MLKEMGenerator
+import org.bouncycastle.crypto.params.MLKEMKeyGenerationParameters
+import org.bouncycastle.crypto.params.MLKEMParameters
+import org.bouncycastle.crypto.params.MLKEMPrivateKeyParameters
+import org.bouncycastle.crypto.params.MLKEMPublicKeyParameters
 import java.security.SecureRandom
 
 /**
