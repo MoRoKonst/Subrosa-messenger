@@ -421,6 +421,19 @@ fun ChatScreen(
             id = msg.id,
             text = displayText,
             isOwn = msg.isOwn,
+            // Must be carried over explicitly: Message.timestamp defaults to
+            // System.currentTimeMillis(), so omitting it silently restamped
+            // every message in history with the moment the chat was opened.
+            // Two visible consequences, found 2026-11-11 while taking store
+            // screenshots -- every message in a conversation showed the same
+            // time, while the chat list (which reads storage directly) showed
+            // the real ones. The second one matters more: the disappearing-
+            // message sweep below filters on exactly this field, so the
+            // auto-delete timer restarted on every open and a message set to
+            // vanish after an hour survived indefinitely as long as the chat
+            // was reopened more often than that. Desktop's equivalent load
+            // path already passed it.
+            timestamp = msg.timestamp,
             reactions = msg.reactions,
             voiceFile = if (msg.voicePath != null) File(msg.voicePath) else null,
             voiceDuration = msg.voiceDuration,

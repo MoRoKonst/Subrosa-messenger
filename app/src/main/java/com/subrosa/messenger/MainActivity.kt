@@ -157,10 +157,19 @@ class MainActivity : FragmentActivity() {
         }
 
         // Blocks the system screenshot shortcut, screen-recording apps, and a
-        // live Recents-overview thumbnail of the real UI, unconditionally —
-        // not just under calculator disguise (see docs/SECURITY.md's Screen
-        // Protection section and docs/THREAT_MODEL.md § I).
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        // live Recents-overview thumbnail of the real UI (see docs/SECURITY.md's
+        // Screen Protection section and docs/THREAT_MODEL.md § I).
+        //
+        // BuildConfig.ALLOW_SCREENSHOTS is hardcoded false for the release build
+        // type, so this is unconditional in anything shipped. It can only be
+        // true in a debug build explicitly assembled with
+        // -PsubrosaAllowScreenshots=true, which exists solely to produce store
+        // screenshots: with FLAG_SECURE applied, `adb shell screencap` returns a
+        // zero-byte file and no screenshot of a running screen can be taken by
+        // anyone, including the maintainer.
+        if (!BuildConfig.ALLOW_SCREENSHOTS) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
 
         // Calculator disguise must also hold up in the Recents/app-switcher
         // overview, not just on the home screen — the activity-alias swap in

@@ -159,6 +159,19 @@ interface IStr4 {
     val serversAccessCodeRequired: String
     val serversRegistrationFull: String
     val serversDeviceAuthFailed: String
+    // Federation mode + cover traffic. These were hardcoded Russian literals
+    // in ServersScreen.kt, so the English build showed Russian on that screen
+    // -- found 2026-11-11 while taking store screenshots.
+    val serversBuiltInMain: String
+    val serversModeFixed: String; val serversModeAuto: String
+    val serversModeFixedDesc: String; val serversModeAutoDesc: String
+    val serversCoverTitle: String
+    val serversCoverOff: String; val serversCoverModerate: String
+    val serversCoverAggressive: String
+    val serversCoverActionEnable: String; val serversCoverActionAggressive: String
+    val serversCoverActionDisable: String
+    val serversCoverDialogText: (String) -> String
+    val serversCoverEnable: String
     val groupInfoTitle: String; val groupInfoNotFound: String
     val groupInfoMembersCount: (Int) -> String; val groupInfoDescription: String
     val groupInfoAddDescription: String; val groupInfoNoDescription: String
@@ -671,6 +684,25 @@ private val ru4 = object : IStr4 {
     override val serversAccessCodeRequired = "Этот сервер требует код доступа для регистрации — попроси у оператора QR-код или ссылку"
     override val serversRegistrationFull = "Этот сервер достиг лимита аккаунтов и сейчас не принимает новые регистрации"
     override val serversDeviceAuthFailed = "Не удалось подтвердить это устройство. Попробуй перезайти или обратись в поддержку"
+    override val serversBuiltInMain = "Основной сервер"
+    override val serversModeFixed = "Фиксированный сервер"
+    override val serversModeAuto = "Авто (федерация)"
+    override val serversModeFixedDesc = "Закреплено — нажми на сервер в списке, чтобы выбрать"
+    override val serversModeAutoDesc = "Автопереключение между пирами"
+    override val serversCoverTitle = "Постоянный трафик"
+    override val serversCoverOff = "Выключен"
+    override val serversCoverModerate = "Умеренный (пакет каждые 5 сек)"
+    override val serversCoverAggressive = "Агрессивный (пакет каждую сек)"
+    override val serversCoverActionEnable = "Вкл"
+    override val serversCoverActionAggressive = "Агресс."
+    override val serversCoverActionDisable = "Выкл"
+    override val serversCoverDialogText = { mode: String ->
+        "Режим \"$mode\" создаёт непрерывный поток пакетов.\n\n" +
+        "• Умеренный: ~1 пакет / 5 сек ≈ 2–3 МБ/час\n" +
+        "• Агрессивный: ~1 пакет / сек ≈ 20–30 МБ/час\n\n" +
+        "Это повысит расход трафика и батареи даже когда вы не отправляете сообщений. Включать рекомендуется только при высоком уровне угрозы."
+    }
+    override val serversCoverEnable = "Включить"
     override val serversPort = "Порт"
     override val groupInfoTitle = "Информация о группе"
     override val groupInfoNotFound = "Группа не найдена"
@@ -1366,6 +1398,25 @@ private val en4 = object : IStr4 {
     override val serversAccessCodeRequired = "This server requires an access code to register — ask the operator for a QR code or link"
     override val serversRegistrationFull = "This server has reached its account limit and isn't accepting new registrations right now"
     override val serversDeviceAuthFailed = "Couldn't verify this device. Try reconnecting or contact support"
+    override val serversBuiltInMain = "Main server"
+    override val serversModeFixed = "Fixed server"
+    override val serversModeAuto = "Auto (federation)"
+    override val serversModeFixedDesc = "Pinned — tap a server in the list to choose it"
+    override val serversModeAutoDesc = "Switches between peers automatically"
+    override val serversCoverTitle = "Cover traffic"
+    override val serversCoverOff = "Off"
+    override val serversCoverModerate = "Moderate (one packet every 5s)"
+    override val serversCoverAggressive = "Aggressive (one packet per second)"
+    override val serversCoverActionEnable = "On"
+    override val serversCoverActionAggressive = "Aggr."
+    override val serversCoverActionDisable = "Off"
+    override val serversCoverDialogText = { mode: String ->
+        "\"$mode\" mode produces a continuous stream of packets.\n\n" +
+        "• Moderate: ~1 packet / 5s ≈ 2–3 MB per hour\n" +
+        "• Aggressive: ~1 packet / s ≈ 20–30 MB per hour\n\n" +
+        "This increases data and battery use even when you are sending nothing. Recommended only under a high threat level."
+    }
+    override val serversCoverEnable = "Enable"
     override val serversPort = "Port"
     override val groupInfoTitle = "Group info"
     override val groupInfoNotFound = "Group not found"

@@ -250,11 +250,33 @@ android {
             // and both passwords are present.
             signingConfig = if (canSignRelease) signingConfigs.getByName("release") else null
             buildConfigField("String", "CERT_PINS", "\"${certPins.joinToString(",")}\"")
+            // Hardcoded false, never derived from a property: screen capture
+            // stays blocked in every shipped build. See the debug type's own
+            // comment for why the flag exists at all.
+            buildConfigField("boolean", "ALLOW_SCREENSHOTS", "false")
         }
         debug {
             // Empty on purpose: debug builds talk to localhost, the emulator
             // host and a test server whose certificate is not the pinned one.
             buildConfigField("String", "CERT_PINS", "\"\"")
+
+            // Lets FLAG_SECURE be lifted so the screen can be captured, for
+            // producing store screenshots. The app blocks screen capture
+            // unconditionally -- correct for the product, and it means neither
+            // the maintainer nor any tool can photograph a running screen:
+            // `screencap` returns a zero-byte file.
+            //
+            // OFF unless explicitly requested:
+            //   ./gradlew assembleFossDebug -PsubrosaAllowScreenshots=true
+            //
+            // A release build cannot reach this at all -- the release type
+            // hardcodes false below, so FLAG_SECURE is always applied in
+            // anything shipped, whatever properties are passed.
+            buildConfigField(
+                "boolean",
+                "ALLOW_SCREENSHOTS",
+                if (project.findProperty("subrosaAllowScreenshots") == "true") "true" else "false"
+            )
         }
     }
 
