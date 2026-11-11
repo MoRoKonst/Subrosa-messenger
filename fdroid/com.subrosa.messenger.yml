@@ -1,5 +1,5 @@
 Categories:
-  - Internet
+  - Messaging
   - Security
 License: AGPL-3.0-only
 AuthorName: MoRoKonst
@@ -13,11 +13,11 @@ RepoType: git
 Repo: https://github.com/MoRoKonst/Subrosa-messenger.git
 
 Builds:
-  - versionName: 1.1.1
-    versionCode: 5
+  - versionName: 1.1.2
+    versionCode: 6
     # Full commit hash, not a tag -- fdroiddata requires it, and a tag can be
     # moved after review while a hash cannot.
-    commit: 7e053067117f243c057ec32687a94af31530e696
+    commit: f2fd0fef695eaf27d174e91d23cc8d6e1a694db4
     subdir: app
     gradle:
       - foss
@@ -51,11 +51,18 @@ MaintainerNotes: |-
   google-services plugin is applied only if that file exists, so on a builder
   without it not even Firebase resource strings enter the APK).
 
+  The scanner errors on the first submission attempt were all genuine and are
+  fixed in this commit, not worked around: a 33 MB prebuilt tor-android AAR
+  that no code referenced has been deleted outright, the foojay toolchain
+  resolver is gone from both settings.gradle.kts files, and two unused
+  dependency repositories (a JetBrains development channel and jitpack.io)
+  have been removed. No scanignore or scandelete is used anywhere.
+
   Upstream is explicit that the project has had no external security audit and
   that its cryptographic composition is its own work; see the limits section of
   the full description and docs/KNOWN_SECURITY_ISSUES.md.
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 1.1.1
-CurrentVersionCode: 5
+CurrentVersion: 1.1.2
+CurrentVersionCode: 6
