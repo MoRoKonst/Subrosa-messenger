@@ -154,14 +154,14 @@ fun ServersScreen(onBack: () -> Unit) {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            if (fixedMode) "Фиксированный сервер" else "Авто (федерация)",
+                            if (fixedMode) s.serversModeFixed else s.serversModeAuto,
                             color = c.textPrimary,
                             fontFamily = AppFont,
                             fontWeight = FontWeight.Bold,
                             fontSize = 17.sp
                         )
                         Text(
-                            if (fixedMode) "Закреплено — нажми на сервер в списке, чтобы выбрать" else "Автопереключение между пирами",
+                            if (fixedMode) s.serversModeFixedDesc else s.serversModeAutoDesc,
                             color = c.textPrimary.copy(alpha = 0.6f),
                             fontFamily = AppFont,
                             fontSize = 14.sp
@@ -187,7 +187,7 @@ fun ServersScreen(onBack: () -> Unit) {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Постоянный трафик",
+                            s.serversCoverTitle,
                             color = c.textPrimary,
                             fontFamily = AppFont,
                             fontWeight = FontWeight.Bold,
@@ -195,9 +195,9 @@ fun ServersScreen(onBack: () -> Unit) {
                         )
                         Text(
                             when (coverMode) {
-                                UserStorage.CoverTrafficMode.OFF -> "Выключен"
-                                UserStorage.CoverTrafficMode.MODERATE -> "Умеренный (пакет каждые 5 сек)"
-                                UserStorage.CoverTrafficMode.AGGRESSIVE -> "Агрессивный (пакет каждую сек)"
+                                UserStorage.CoverTrafficMode.OFF -> s.serversCoverOff
+                                UserStorage.CoverTrafficMode.MODERATE -> s.serversCoverModerate
+                                UserStorage.CoverTrafficMode.AGGRESSIVE -> s.serversCoverAggressive
                             },
                             color = c.textPrimary.copy(alpha = 0.6f),
                             fontFamily = AppFont,
@@ -224,9 +224,9 @@ fun ServersScreen(onBack: () -> Unit) {
                     }) {
                         Text(
                             when (coverMode) {
-                                UserStorage.CoverTrafficMode.OFF -> "Вкл"
-                                UserStorage.CoverTrafficMode.MODERATE -> "Агресс."
-                                UserStorage.CoverTrafficMode.AGGRESSIVE -> "Выкл"
+                                UserStorage.CoverTrafficMode.OFF -> s.serversCoverActionEnable
+                                UserStorage.CoverTrafficMode.MODERATE -> s.serversCoverActionAggressive
+                                UserStorage.CoverTrafficMode.AGGRESSIVE -> s.serversCoverActionDisable
                             },
                             color = c.accent,
                             fontFamily = AppFont,
@@ -323,7 +323,13 @@ fun ServersScreen(onBack: () -> Unit) {
 
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        server.name.ifEmpty { s.serversDefault(index + 1) },
+                                        // Built-in server carries no stored name on purpose, so its
+                                        // label follows the current language instead of whichever
+                                        // one happened to be active at first launch.
+                                        server.name.ifEmpty {
+                                            if (server.host == ServerManager.MAIN_SERVER_HOST) s.serversBuiltInMain
+                                            else s.serversDefault(index + 1)
+                                        },
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 18.sp,
                                         color = c.textPrimary,
@@ -369,15 +375,15 @@ fun ServersScreen(onBack: () -> Unit) {
                     Icon(painterResource(R.drawable.ic_warning), contentDescription = null,
                         tint = c.textPrimary, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Постоянный трафик", color = c.textPrimary, fontFamily = AppFont)
+                    Text(s.serversCoverTitle, color = c.textPrimary, fontFamily = AppFont)
                 }
             },
             text = {
                 Text(
-                    "Режим \"${if (mode == UserStorage.CoverTrafficMode.MODERATE) "Умеренный" else "Агрессивный"}\" создаёт непрерывный поток пакетов.\n\n" +
-                    "• Умеренный: ~1 пакет / 5 сек ≈ 2–3 МБ/час\n" +
-                    "• Агрессивный: ~1 пакет / сек ≈ 20–30 МБ/час\n\n" +
-                    "Это повысит расход трафика и батареи даже когда вы не отправляете сообщений. Включать рекомендуется только при высоком уровне угрозы.",
+                    s.serversCoverDialogText(
+                        if (mode == UserStorage.CoverTrafficMode.MODERATE) s.serversCoverModerate
+                        else s.serversCoverAggressive
+                    ),
                     color = c.textPrimary.copy(alpha = 0.85f),
                     fontFamily = AppFont,
                     fontSize = 16.sp
@@ -391,11 +397,11 @@ fun ServersScreen(onBack: () -> Unit) {
                     context.startService(android.content.Intent(context, MessengerService::class.java)
                         .putExtra("reload_cover_traffic", true))
                     showCoverWarning = false
-                }) { Text("Включить", color = c.accent, fontFamily = AppFont, fontWeight = FontWeight.Bold) }
+                }) { Text(s.serversCoverEnable, color = c.accent, fontFamily = AppFont, fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
                 TextButton(onClick = { showCoverWarning = false }) {
-                    Text("Отмена", color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
+                    Text(s.cancel, color = c.textPrimary.copy(alpha = 0.6f), fontFamily = AppFont)
                 }
             }
         )

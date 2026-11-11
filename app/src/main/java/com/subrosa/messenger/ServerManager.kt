@@ -149,8 +149,16 @@ object ServerManager {
         return servers[next]
     }
 
+    /** Host of the project's own server. Its display name is deliberately left
+     *  empty here and resolved through AppStrings at render time: a name baked
+     *  in at construction gets PERSISTED into encrypted prefs in whatever
+     *  language was current, and then survives every later language switch.
+     *  That is exactly what happened — "Основной сервер" showed up in the
+     *  English build (found 2026-11-11 while taking store screenshots). */
+    const val MAIN_SERVER_HOST = "api.subrosamessenger.com"
+
     private fun getDefaultServers() = listOf(
-        Server("api.subrosamessenger.com", 8443, "Основной сервер", true, "ws"), // 8443, не 443 — это тот порт, под который реально настроен nginx (sites-available/api) и который Cloudflare поддерживает для проксируемого HTTPS-трафика; более раннее переключение на 443 было по старому комментарию, не по факту инфраструктуры.
+        Server(MAIN_SERVER_HOST, 8443, "", true, "ws"), // 8443, не 443 — это тот порт, под который реально настроен nginx (sites-available/api) и который Cloudflare поддерживает для проксируемого HTTPS-трафика; более раннее переключение на 443 было по старому комментарию, не по факту инфраструктуры.
         Server("ws://amqvpheooju3fg7tafxkmf73c3vg4xg7nycelepiie6jdjzbsqrvrcqd.onion", 80, "Onion (Tor)", true, "")
     )
 
