@@ -15,24 +15,10 @@ Repo: https://github.com/MoRoKonst/Subrosa-messenger.git
 Builds:
   - versionName: 1.1.2
     versionCode: 6
-    # Full commit hash, not a tag -- fdroiddata requires it, and a tag can be
-    # moved after review while a hash cannot.
     commit: f2fd0fef695eaf27d174e91d23cc8d6e1a694db4
     subdir: app
     gradle:
       - foss
-    # Release signing is optional in this project: with no keystore and no
-    # local.properties present, app/build.gradle.kts produces an unsigned APK,
-    # which is what this pipeline needs.
-    #
-    # -PsubrosaAllowUnpinnedRelease=true is required and deliberate. The build
-    # refuses to produce a release with an empty certificate-pin list, to stop
-    # "pinning configured but inert" from ever shipping. Pinning cannot
-    # currently be used for the project's own server, whose TLS is terminated
-    # by a CDN that rotates keys roughly every 90 days without reuse -- pinning
-    # that key would disconnect every install within months. This is documented
-    # in docs/SECURITY.md under "Certificate Pinning", and the upstream
-    # releases are built with the same flag.
     gradleprops:
       - subrosaAllowUnpinnedRelease=true
 
@@ -45,18 +31,32 @@ MaintainerNotes: |-
   There is also a `gms` flavour which does link Firebase messaging. It must not
   be built for this repository.
 
-  Two files the build deliberately tolerates being absent, so that a
-  third-party build works: `local.properties` (signing credentials and
-  certificate pins) and `app/google-services.json` (Firebase config -- the
-  google-services plugin is applied only if that file exists, so on a builder
-  without it not even Firebase resource strings enter the APK).
+  On `gradleprops: subrosaAllowUnpinnedRelease=true`, which looks like it is
+  disabling a security check and is not. Upstream refuses to produce a release
+  build with an empty certificate-pin list, specifically so that "pinning
+  configured but inert" cannot ship unnoticed. Pinning cannot currently be used
+  for that project's own server at all: its TLS is terminated by a CDN whose
+  certificate key rotates roughly every 90 days without reuse, so a pin would
+  disconnect every installed copy within months. The flag records that accepted
+  limitation, upstream's own GitHub releases are built with it, and the whole
+  situation is written up in docs/SECURITY.md under "Certificate Pinning".
+
+  Release signing is optional by design: with no keystore and no
+  `local.properties` present, `app/build.gradle.kts` installs no signing config
+  and the build produces an unsigned APK. Verified in a clean `git worktree`
+  with no `local.properties`, no keystore and no `app/google-services.json` --
+  the same conditions as these builders.
+
+  `app/google-services.json` is gitignored and the google-services plugin is
+  applied only if that file exists, so on a builder without it not even
+  Firebase resource strings enter the APK.
 
   The scanner errors on the first submission attempt were all genuine and are
-  fixed in this commit, not worked around: a 33 MB prebuilt tor-android AAR
-  that no code referenced has been deleted outright, the foojay toolchain
+  fixed in the pinned commit, not worked around: a 33 MB prebuilt tor-android
+  AAR that no code referenced has been deleted outright, the foojay toolchain
   resolver is gone from both settings.gradle.kts files, and two unused
-  dependency repositories (a JetBrains development channel and jitpack.io)
-  have been removed. No scanignore or scandelete is used anywhere.
+  dependency repositories (a JetBrains development channel and jitpack.io) have
+  been removed. No scanignore or scandelete is used anywhere.
 
   Upstream is explicit that the project has had no external security audit and
   that its cryptographic composition is its own work; see the limits section of
