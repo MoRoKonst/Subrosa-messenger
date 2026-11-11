@@ -1,7 +1,6 @@
 pluginManagement {
     repositories {
         gradlePluginPortal()
-        maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
         google()
         mavenCentral()
     }
@@ -13,20 +12,21 @@ pluginManagement {
     }
 }
 
-// Resolves the jvmToolchain(21) that build.gradle.kts asks for on any machine --
-// locating an already-installed JDK 21 or provisioning one. The root build has
-// used this all along; without it here, JDK selection fell back to a hardcoded
-// absolute path in desktop/gradle.properties (see that file's own comment for
-// how that failed).
-plugins {
-    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
-}
-
+// No foojay-resolver here, deliberately. It would let Gradle DOWNLOAD a JDK
+// from an external service when none is installed, and F-Droid's scanner
+// rejects that outright ("Found usual suspect 'org.gradle.toolchains.foojay-
+// resolver'") because a toolchain fetched at build time cannot be verified
+// against source. JDK 21 is instead located among already-installed ones, via
+// gradle/gradle-daemon-jvm.properties; a machine without one gets a clear
+// error rather than a silent download.
 dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
+        // maven.pkg.jetbrains.space/public/p/compose/dev removed 2026-11-11:
+        // it is a development channel, not on F-Droid's list of known
+        // repositories, and the scanner flags it. Compose Multiplatform 1.7.3
+        // is a released version and resolves from mavenCentral.
     }
 }
 

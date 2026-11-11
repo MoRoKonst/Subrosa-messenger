@@ -367,7 +367,20 @@ dependencies {
     // artifacts here).
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.appcompat:appcompat:1.8.0")
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+    // No local .aar dependencies. app/libs/ held tor-android-0.4.9.5.aar until
+    // 2026-11-11: 14 MB in the repository and 33 MB of libtor.so across four
+    // ABIs in every shipped APK, for a library nothing ever called. The app's
+    // entire Tor integration is TorManager talking to Orbot over Intents
+    // ("org.torproject.android.intent.action.START"); there is not a single
+    // reference to org.torproject.jni.TorService in the sources or the
+    // manifest. F-Droid's scanner is what surfaced it -- "Found Android AAR
+    // library" is a hard error there, since a prebuilt binary cannot be
+    // verified against source.
+    //
+    // If an embedded Tor is ever wanted, take it from Maven rather than
+    // committing a blob: org.briarproject:tor-android and
+    // info.guardianproject:tor-android are both published, though at the time
+    // of writing both lag the version that was vendored here.
     // gms flavour only -- the foss APK must not link Google's proprietary
     // messaging library. This is the line that decides F-Droid eligibility;
     // the presence or absence of google-services.json does not, since a
