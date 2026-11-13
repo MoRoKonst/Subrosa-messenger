@@ -411,13 +411,13 @@ dependencies {
     testImplementation(libs.junit)
     // Robolectric -- lets Android-dependent unit tests (Context, SharedPreferences)
     // run on the plain JVM instead of needing a real device/emulator.
-    testImplementation("org.robolectric:robolectric:4.16.1")
-    testImplementation("androidx.test:core:1.6.1")
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("androidx.test:core:1.7.0")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     // GrantPermissionRule, used by PlatformLocationTest. Not pulled in
     // transitively by espresso-core, which only brings androidx.test:runner.
-    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
 
@@ -434,7 +434,7 @@ dependencies {
     // already using the platform API directly, so this makes the two consistent.
     //   implementation("com.google.android.gms:play-services-location:21.4.0")
     // OpenStreetMap
-    implementation("org.osmdroid:osmdroid-android:6.1.18")
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
     // WebRTC (P2P звонки)
     implementation("io.getstream:stream-webrtc-android:1.3.10")
     // CameraX (видеокружки)
