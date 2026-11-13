@@ -16,6 +16,7 @@ A self-hosted end-to-end encrypted messenger for Android with metadata protectio
 - [Quick Start](#quick-start)
 - [Security Overview](#security-overview)
 - [Documentation](#documentation)
+- [Consulting](#consulting)
 - [License](#license)
 
 ---
@@ -364,6 +365,19 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system design and module ref
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Developers | System design, module reference, data flows |
 | [SECURITY.md](docs/SECURITY.md) | Security analysts | Threat model, cryptographic design, anti-forensics |
 | [CHANGEL_LOG.md](docs/CHANGEL_LOG.md) | Developers | Engineering change log |
+
+---
+
+## Consulting
+
+I take paid work on Android application security review, open-source release
+and supply-chain hygiene, and self-hosted communications deployment. The
+clearest sample of how I work is this repository itself — in particular
+[docs/KNOWN_SECURITY_ISSUES.md](docs/KNOWN_SECURITY_ISSUES.md), which records
+every defect found here with its real severity and how it was verified,
+including the ones I introduced myself.
+
+Scope and terms: [docs/CONSULTING.md](docs/CONSULTING.md).
 
 ---
 
