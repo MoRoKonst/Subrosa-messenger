@@ -108,4 +108,7 @@ Write with a short description of what you have and what you are worried
 about. If it is not something I can do well, I will say so rather than take the
 work.
 
-📧 **[fill in a working address before publishing this file]**
+📧 **developer@beacon-app.org**
+
+(Beacon was this project's earlier name. The address is current and monitored;
+the domain simply predates the rename.)
