@@ -273,10 +273,10 @@ rollback commands if it fails):
 bash deploy/upgrade.sh
 ```
 
-> **Status: draft, not yet run end to end.** It has only been syntax-checked
-> (`bash -n`) because the machine it was written on has no Docker; the backup
-> script it calls is tested. Treat the manual steps below as the reference until
-> it has been run on a throwaway host, including the failure branch.
+> **Status:** run on a clean Ubuntu 24.04 host (2026-11-19): a successful update
+> (about 4 s with a cached build), and a deliberately broken release, where the
+> script stopped, printed the rollback commands, and running them verbatim
+> brought the server back healthy. Not tested: pulling real new upstream commits.
 
 Manual equivalent:
 
@@ -313,7 +313,7 @@ On a plain (non-docker) install, tested:
 python3 deploy/db_backup.py /opt/beacon/messages.db /opt/beacon/backups
 ```
 
-In the docker-compose stack (**not yet tested** against a real container; the
+In the docker-compose stack (tested, including an encrypted database; the
 script is streamed in because the image contains only `server.py`):
 
 ```bash

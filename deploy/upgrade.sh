@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # deploy/upgrade.sh — update a docker-compose Subrosa server, backup first.
 #
-# STATUS: DRAFT. NOT YET RUN against a real compose install — the machine it was
-# written on has no Docker (see _scratch/reports/R5.md). `bash -n` passes; the
-# database-backup part it calls (deploy/db_backup.py) IS tested
-# (Server/tests/test_db_backup.py). Do not rely on this script until it has been
-# run end to end on a throwaway host, including the failure branch.
-#
+# STATUS: run on 2026-11-19 on a clean Ubuntu 24.04 host with docker compose v5: a success run
+# (encrypted DB backed up, 4 s), and a deliberately broken release (SyntaxError in server.py) whose
+# failure branch printed the rollback commands; running them verbatim restored a healthy server.
+# Not tested: a real `git pull` from GitHub with new upstream commits (a local bare repo was the origin).
+
 # What it does, stopping at the first problem:
 #   1. records the current commit and image (what to roll back to)
 #   2. takes a CONSISTENT backup of the live database (SQLite online-backup API,
