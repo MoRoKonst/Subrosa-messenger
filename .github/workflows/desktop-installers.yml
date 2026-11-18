@@ -1,0 +1,93 @@
+name: Desktop installers
+
+# Builds the native desktop installers (Windows .exe/.msi, Linux .deb, macOS .dmg)
+# on runners other than the maintainer's machine, so the installer a customer
+# puts on ten laptops is not something only one PC can produce.
+#
+# UNSIGNED, on purpose. The release signing keystore never becomes a GitHub
+# secret (see the header of release-checksums.yml), so nothing here signs
+# anything and no secret is used. The goal is reproducibility of the *build*,
+# not publication: artifacts are uploaded as workflow artifacts only, each with
+# a SHA256SUMS file. A Windows installer without a code-signing certificate
+# triggers SmartScreen warnings -- see docs/RELEASE_CHECKLIST.md.
+#
+# Not part of the per-commit gate (build.yml's desktop-build does compile +
+# tests). Manual, or on a version tag.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # A runner that cannot package (missing jpackage prerequisites, WiX, ...) must
+    # be visible, not silently dropped: it stays in the matrix and is allowed to
+    # fail without hiding the others. Check the job list for red entries.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Compose's packageExe/packageMsi need the WiX 3 toolset (candle/light).
+      # Hosted Windows images have carried it on some versions and not others,
+      # so check instead of assuming.
+      - name: Ensure WiX 3 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Get-Command candle.exe -ErrorAction SilentlyContinue) { Write-Host "WiX already on PATH"; exit 0 }
+          choco install wixtoolset --no-progress -y
+          $wix = Get-ChildItem "C:\Program Files (x86)\WiX Toolset*\bin" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $wix) { $wix = Get-Item "C:\Program Files (x86)\WiX Toolset*\bin" | Select-Object -First 1 }
+          Add-Content $env:GITHUB_PATH $wix.FullName
+
+      - name: Make gradlew executable
+        if: runner.os != 'Windows'
+        run: chmod +x desktop/gradlew
+
+      - name: Package installers for this OS
+        working-directory: desktop
+        run: ./gradlew packageDistributionForCurrentOS --no-daemon
+
+      - name: Collect installers, check version, write SHA256SUMS
+        shell: bash
+        run: |
+          set -u
+          ver="$(grep -E '^version = ' desktop/build.gradle.kts | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "project.version = $ver"
+          mkdir -p out
+          # build dir is desktop/build on Linux/macOS and C:/subrosa_desktop_build on Windows
+          find desktop/build /c/subrosa_desktop_build -path '*compose/binaries*' -type f \
+            \( -name '*.exe' -o -name '*.msi' -o -name '*.deb' -o -name '*.dmg' \) 2>/dev/null \
+            | while read -r f; do cp "$f" out/; done
+          ls -l out
+          [ -n "$(ls -A out)" ] || { echo "ERROR: no installer was produced"; exit 1; }
+          bad=0
+          for f in out/*; do
+            case "$f" in *"$ver"*) ;; *) echo "ERROR: $f does not carry project.version $ver"; bad=1 ;; esac
+          done
+          [ "$bad" = 0 ] || exit 1
+          (cd out && (sha256sum * 2>/dev/null || shasum -a 256 *) > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Upload installers
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: subrosa-desktop-${{ runner.os }}-unsigned
+          path: out/
+          if-no-files-found: error
