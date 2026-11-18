@@ -13064,7 +13064,6 @@ def start_server():
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.backends import default_backend
 
-    import os
     # 1. Из переменной окружения
     key_password = os.environ.get("BEACON_KEY_PASSWORD", "").strip()
     # 2. Из файла .key рядом со скриптом (просто сырой пароль, без кавычек и синтаксиса)
