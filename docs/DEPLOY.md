@@ -287,6 +287,40 @@ docker run --rm \
 
 ---
 
+## Seats: who is on the server, and cutting someone off
+
+`Server/admin_users.py` works directly on the SQLite file `server.py` uses
+(`DB_PATH`), without a restart, like `admin_gen_codes.py`.
+
+```bash
+python3 Server/admin_users.py list                       # read-only
+python3 Server/admin_users.py revoke 1A2B3C4D5E6F7A8B    # dry run: prints what it would do
+python3 Server/admin_users.py revoke 1A2B3C4D5E6F7A8B --yes
+```
+
+`list` shows, per identity, a shortened fingerprint, the date it first
+registered, how many devices are bound, whether TOTP is on and whether it was
+revoked, plus the totals. Use `--full-fingerprints` to print them whole.
+
+What `revoke` is, and is not (read from `server.py`, not yet tested against a
+live client): it is the same one-row insert a client makes with "I have been
+compromised". From then on every connection attempt by that identity is refused
+(`identity_revoked`). It does **not** disconnect a session that is open at that
+moment (the check happens at connect time), does **not** free the seat
+(`MAX_REGISTERED_USERS` counts every fingerprint ever registered), does **not**
+delete queued messages or device keys, and does **not** cancel unused access
+codes that person may still hold: with one they could register a *new* identity.
+When someone leaves, also restart the server to drop live sessions, and do not
+hand out access codes you cannot account for.
+
+By design this tool cannot show who talks to whom or what anyone sent: the
+server does not know, and that is the property the product exists to provide.
+
+The tool was tested on a copy of a database in a plain Python install. The
+docker image copies only `server.py`, so the tool is not inside the container;
+running it against the `subrosa-data` volume of the compose stack has not been
+tested.
+
 ## Troubleshooting
 
 ### Port Already in Use
