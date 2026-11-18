@@ -124,7 +124,7 @@ Use this checklist before deploying Subrosa to production.
 - Technical questions: See [ARCHITECTURE.md](ARCHITECTURE.md)
 - Security & threat model: See [SECURITY.md](SECURITY.md)
 - Deployment issues: See [DEPLOY.md](DEPLOY.md) and [DOCKER.md](DOCKER.md)
-- Quick reference: See [README.md](README.md)
+- Quick reference: See [README.md](../README.md)
 
 ---
 
