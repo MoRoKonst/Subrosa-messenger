@@ -19,8 +19,6 @@ on:
   push:
     tags:
       - 'v*'
-    branches:
-      - 'ci/desktop-installers'   # TEMPORARY: first run before this workflow exists on main
 
 permissions:
   contents: read
@@ -29,14 +27,18 @@ jobs:
   package:
     name: Package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # A runner that cannot package (missing jpackage prerequisites, WiX, ...) must
-    # be visible, not silently dropped: it stays in the matrix and is allowed to
-    # fail without hiding the others. Check the job list for red entries.
-    continue-on-error: true
+    # Only an entry marked experimental may fail without turning the run red. Job-level
+    # `continue-on-error: true` on every entry (the first version) made the whole run report
+    # "success" even when all three jobs failed. Windows and Linux are proven (first real run,
+    # 2026-11-19); macOS had not completed when this was written, so it stays experimental.
+    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - { os: windows-latest, experimental: false }
+          - { os: ubuntu-latest,  experimental: false }
+          - { os: macos-latest,   experimental: true }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
