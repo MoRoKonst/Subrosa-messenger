@@ -109,6 +109,16 @@ tasks.test {
 // each run gets an independent identity. Example (PowerShell, two terminals):
 //   $env:APPDATA = "C:\temp\beacon_alice"
 //   ./gradlew.bat smokeTest -Pargs="alice C:\temp\alice.json C:\temp\bob.json"
+tasks.register<JavaExec>("inviteLiveRun") {
+    group = "verification"
+    description = "KL-13 live run, desktop side (headless): see InviteLiveRun.kt."
+    mainClass.set("com.subrosa.desktop.InviteLiveRunKt")
+    classpath = sourceSets["test"].runtimeClasspath
+    if (project.hasProperty("args")) {
+        args((project.property("args") as String).split(" "))
+    }
+}
+
 tasks.register<JavaExec>("smokeTest") {
     group = "verification"
     description = "Headless two-process smoke test of connect/X3DH-PQ-hybrid/message round-trip."
