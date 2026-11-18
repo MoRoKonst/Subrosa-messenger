@@ -192,7 +192,7 @@ The same hybrid treatment is applied everywhere else a shared secret is derived 
 
 **Known limitations:**
 - Sessions established *before* this upgrade have a purely classical root key that cannot be hardened retroactively — only a fresh handshake protects a conversation going forward. See the migration note in `SessionKeyManager`.
-- The anonymous-mailbox first-contact bootstrap message (see [README.md](README.md#privacy-architecture)) stays classical-only — an invite code carrying a ~1.2 KB ML-KEM key would make invite links/QR codes impractically large. The Double Ratchet session established immediately after it is full PQ-hybrid.
+- The anonymous-mailbox first-contact bootstrap message (see [README.md](../README.md#privacy-architecture)) stays classical-only — an invite code carrying a ~1.2 KB ML-KEM key would make invite links/QR codes impractically large. The Double Ratchet session established immediately after it is full PQ-hybrid.
 
 ### Group Key Exchange
 
