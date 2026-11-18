@@ -1673,6 +1673,16 @@ mailbox: dict      = {}              # tag (str) → list[{blob: str, ts: float}
 MAILBOX_MAX_TOTAL_BYTES = int(os.environ.get("MAILBOX_MAX_TOTAL_BYTES", str(64 * 1024 * 1024)))
 MAILBOX_MAX_TOTAL_BLOBS = int(os.environ.get("MAILBOX_MAX_TOTAL_BLOBS", "10000"))
 MAILBOX_CLEANUP_INTERVAL_SEC = 300
+
+# How often live sessions of REVOKED identities are cut. One cheap SELECT over
+# revoked_fingerprints per pass (a table that only ever holds the handful of
+# fingerprints an operator or owner revoked) intersected with the in-memory
+# `clients` dict — nothing per connection, nothing per message. 30 s because
+# that is the longest an ex-employee's already-open session can outlive the
+# revocation, and a pass this small costs nothing; going to minutes would
+# make "revoked" visibly lag, going to 1-5 s buys nothing a person can use.
+# Env-overridable only so tests can run it quickly.
+REVOKED_SESSION_SWEEP_INTERVAL_SEC = max(1, int(os.environ.get("REVOKED_SESSION_SWEEP_INTERVAL_SEC", "30") or "30"))
 if MAILBOX_MAX_TOTAL_BYTES <= 0 or MAILBOX_MAX_TOTAL_BLOBS <= 0:
     print("[FATAL] MAILBOX_MAX_TOTAL_BYTES и MAILBOX_MAX_TOTAL_BLOBS должны быть > 0 "
           "(это обязательная защита процесса от OOM, а не отключаемая опция) — "
@@ -12645,6 +12655,48 @@ async def mailbox_watchdog():
             _mailbox_cleanup_expired_locked(now)
 
 
+# ─── Watchdog: cut live sessions of revoked identities ───────────────────────
+# register() refuses a revoked fingerprint, but only when it CONNECTS. A session
+# that was already open when the revocation was written (by the owner's
+# "I have been compromised", or by the operator's admin_users.py revoke, which
+# writes the same row straight into SQLite and cannot talk to this process)
+# kept working until the connection happened to end. This closes that gap.
+def _db_load_revoked_fingerprints_sync() -> set:
+    with db_connect() as conn:
+        return {r[0] for r in conn.execute("SELECT fingerprint FROM revoked_fingerprints").fetchall()}
+
+
+async def _revoked_sessions_tick() -> int:
+    """One pass: read the revoked set ONCE, intersect with the connected
+    usernames, tell each victim `identity_revoked` (an existing message type,
+    the same one register() answers with) and close the socket. Returns how
+    many sessions were cut. Factored out of the loop like the other
+    watchdogs so tests can drive exactly one pass."""
+    loop = asyncio.get_event_loop()
+    revoked = await loop.run_in_executor(None, _db_load_revoked_fingerprints_sync)
+    if not revoked:
+        return 0
+    async with lock:
+        victims = [(u, c["ws"]) for u, c in clients.items() if u in revoked]
+    for u, ws in victims:
+        await send_safe(ws, json.dumps({"type": "identity_revoked"}))
+        try:
+            await ws.close()
+        except Exception:
+            pass
+        print(f"[SECURITY] Живая сессия отозванной личности закрыта: {u}")
+    return len(victims)
+
+
+async def revoked_sessions_watchdog():
+    while True:
+        await asyncio.sleep(REVOKED_SESSION_SWEEP_INTERVAL_SEC)
+        try:
+            await _revoked_sessions_tick()
+        except Exception as e:
+            print(f"[WATCHDOG] revoked_sessions: {type(e).__name__}: {e}")
+
+
 # ─── Watchdog: TTL для token_pending (раз в час) ─────────────────────────────
 # token_pending — чистая in-memory очередь без персистентности (осознанно, см.
 # комментарий у anon_message выше): рестарт сервера и так её обнуляет. Но пока
@@ -12877,6 +12929,9 @@ async def main(ssl_context=None):
     print(f"[WATCHDOG] mailbox TTL запущен (проверка раз в {MAILBOX_CLEANUP_INTERVAL_SEC}с, "
           f"TTL={MAILBOX_TTL//3600}ч, caps: {MAILBOX_MAX_TOTAL_BLOBS} блобов / "
           f"{MAILBOX_MAX_TOTAL_BYTES//(1024*1024)}МиБ)")
+
+    asyncio.create_task(revoked_sessions_watchdog())
+    print(f"[WATCHDOG] revoked_sessions запущен (проверка раз в {REVOKED_SESSION_SWEEP_INTERVAL_SEC}с)")
 
     asyncio.create_task(pending_messages_watchdog())
     print(f"[WATCHDOG] pending_messages TTL запущен (проверка раз в "

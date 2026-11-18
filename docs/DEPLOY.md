@@ -302,16 +302,24 @@ python3 Server/admin_users.py revoke 1A2B3C4D5E6F7A8B --yes
 registered, how many devices are bound, whether TOTP is on and whether it was
 revoked, plus the totals. Use `--full-fingerprints` to print them whole.
 
-What `revoke` is, and is not (read from `server.py`, not yet tested against a
-live client): it is the same one-row insert a client makes with "I have been
-compromised". From then on every connection attempt by that identity is refused
-(`identity_revoked`). It does **not** disconnect a session that is open at that
-moment (the check happens at connect time), does **not** free the seat
-(`MAX_REGISTERED_USERS` counts every fingerprint ever registered), does **not**
-delete queued messages or device keys, and does **not** cancel unused access
-codes that person may still hold: with one they could register a *new* identity.
-When someone leaves, also restart the server to drop live sessions, and do not
-hand out access codes you cannot account for.
+What `revoke` does: it is the same one-row insert a client makes with "I have
+been compromised". Every connection attempt by that identity is refused
+(`identity_revoked`), and a session that is **open right now** is cut by the
+server's revoked-sessions sweep: the person receives `identity_revoked` and the
+socket is closed within `REVOKED_SESSION_SWEEP_INTERVAL_SEC` (default 30 s;
+measured 29.4 s on a local server). It does **not** free the seat
+(`MAX_REGISTERED_USERS` counts every fingerprint ever registered — an open
+decision), does **not** delete queued messages or device keys, and does **not**
+cancel unused access codes that person may still hold: with one they could
+register a *new* identity.
+
+Access codes: `admin_users.py codes` lists unused codes by the first characters
+of their SHA-256 (the server stores only hashes, so a code can never be shown
+again) and `codes --delete <prefix> [--yes]` removes an **unused** one (dry run
+without `--yes`; used codes are never deleted). The server does **not** record
+which code was given to which person, and deliberately never will: that would be
+new data about people on the server. Keep that list on your side — when you
+generate codes with `admin_gen_codes.py`, write down who gets which link.
 
 By design this tool cannot show who talks to whom or what anyone sent: the
 server does not know, and that is the property the product exists to provide.
