@@ -68,6 +68,26 @@ way to know an old, unpatched deployment still exists, unlike an active support 
 is a real limitation, not a hidden one — see the `Support_Maintenance_Agreement.md` for what an
 active subscription actually commits to versus what running the open-source code alone does not.
 
+## Rule: every irreversible migration raises SCHEMA_VERSION
+
+`Server/server.py` stamps the database with `PRAGMA user_version = SCHEMA_VERSION`
+and refuses to start on a database whose stamp is **higher** than the code's
+(so a rolled-back, older server cannot run on an already-migrated database).
+That guard only works if the number moves:
+
+- **Any change to `_db_setup_sync()` that cannot be undone by an older binary**
+  (rebuilding or renaming a table, dropping or retyping a column, changing a
+  constraint, rewriting data) **must raise `SCHEMA_VERSION` by one in the same
+  commit.** Purely additive, backward-compatible changes (a new table, a new
+  nullable column an old server ignores) need not.
+- **Known weakness:** if this is forgotten the guard silently stops protecting
+  that migration — nothing fails. That is why the rule lives in this checklist
+  and not only in a code comment. Check it at release review: diff
+  `_db_setup_sync()` since the last tag and ask, for each hunk, "can the previous
+  release still run on this database?"
+- `Server/tests/test_schema_migration.py` pins the stamp and the refusal; it
+  does not know whether you forgot to bump.
+
 ## Process, step by step
 
 1. **Triage**: confirm the report reproduces, assign a severity level (table above).

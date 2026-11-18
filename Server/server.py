@@ -3832,8 +3832,26 @@ def _migrate_anon_token_state_check_constraint(conn):
     print(f"[DB] anon_token_state: миграция завершена, перенесено строк: {new_row_count}")
 
 
+# Schema version stamp (PRAGMA user_version). Migrations below run at startup
+# and some cannot be undone (table rebuilds). Without a stamp, an OLDER server
+# binary started on an already-migrated database (typically after rolling back a
+# failed update) would just run on it. RULE: every irreversible migration added to
+# _db_setup_sync() MUST raise SCHEMA_VERSION by one — see
+# docs/SECURITY_RELEASE_PROCESS.md. Forgetting silently disables this guard.
+# Version 1 = the schema as of the introduction of this stamp.
+SCHEMA_VERSION = 1
+
+
 def _db_setup_sync():
     with db_connect() as conn:
+        # Refuse a database NEWER than this code, before touching anything. The
+        # reverse (older database) is the normal migration path and is allowed.
+        db_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if db_version > SCHEMA_VERSION:
+            print(f"[FATAL] database schema v{db_version} is newer than this server (v{SCHEMA_VERSION}).",
+                  "Restore the pre-update backup (docs/DEPLOY.md) or run a newer server.",
+                  sep=chr(10), file=sys.stderr, flush=True)
+            sys.exit(1)
         _migrate_anon_token_state_check_constraint(conn)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS pending_messages (
@@ -4411,6 +4429,11 @@ def _db_setup_sync():
                 revoked_at  REAL NOT NULL
             )
         """)
+        conn.commit()
+        # Stamp only after every migration above has committed. A database at
+        # user_version 0 (created before this stamp existed) is stamped here on
+        # its first start; an equal version is rewritten harmlessly.
+        conn.execute(f"PRAGMA user_version = {int(SCHEMA_VERSION)}")
         conn.commit()
 
 

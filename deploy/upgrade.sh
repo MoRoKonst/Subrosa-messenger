@@ -58,6 +58,11 @@ docker compose cp "$SERVICE:$BACKUP_IN_CONTAINER" "$BACKUP_LOCAL" \
   || die "could not copy the backup out of the container (it is still inside the volume at $BACKUP_IN_CONTAINER)"
 chmod 600 "$BACKUP_LOCAL" 2>/dev/null
 echo "Backup copied to deploy/$BACKUP_LOCAL"
+# .env is not part of the database backup but a rollback needs it back too (a bad update
+# can also be a bad .env). Mode 600; ../backups/ is git-ignored.
+ENV_COPY="../backups/env-$(basename "$BACKUP_IN_CONTAINER" .db)"
+cp ../.env "$ENV_COPY" && chmod 600 "$ENV_COPY" || die "cannot save a copy of .env"
+echo ".env copied to deploy/$ENV_COPY (mode 600)"
 
 print_rollback() {
   cat <<EOF
@@ -66,6 +71,7 @@ ROLLBACK — run from $REPO/deploy:
   docker compose stop $SERVICE
   docker compose run --rm --no-deps --entrypoint sh $SERVICE -c 'rm -f ${DB_IN_CONTAINER}-wal ${DB_IN_CONTAINER}-shm'
   docker compose cp $BACKUP_LOCAL $SERVICE:$DB_IN_CONTAINER
+  cp $ENV_COPY ../.env      # only needed if .env was changed by the update
   git checkout $PREV_COMMIT
   docker compose up -d --build
 The backup above is a snapshot from BEFORE this update; messages accepted after

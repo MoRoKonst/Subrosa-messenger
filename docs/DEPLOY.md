@@ -319,11 +319,13 @@ docker-compose build --no-cache
 docker-compose up -d
 ```
 
-Note: the server has no database schema version stamp (`PRAGMA user_version` is
-never set), so starting an **older** version on a database that a newer version
-already migrated is *not* refused. After a failed update, restore the backup
-together with the old code; do not just check out the old code over the new
-database.
+The database carries a schema version stamp. If you roll back to an **older**
+server while the database was already migrated by a newer one, the server
+refuses to start with `[FATAL] database schema vN is newer than this server
+(vM). Restore the pre-update backup (docs/DEPLOY.md) or run a newer server.`
+and exit code 1. Restore the pre-update backup together with the old code (the
+rollback commands `upgrade.sh` prints do this); do not just check out the old
+code over the new database.
 
 ### Database Backup
 
