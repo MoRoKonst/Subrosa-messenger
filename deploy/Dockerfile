@@ -1,9 +1,9 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    miniupnpc=2.2.3-1 \
+    miniupnpc \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Server/requirements.txt .
@@ -11,8 +11,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY Server/server.py .
 
-ENV SUBROSA_HOST=0.0.0.0
-ENV SUBROSA_PORT=9000
 
 EXPOSE 9000
 

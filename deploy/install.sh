@@ -22,7 +22,9 @@
 # Usage:  SERVER_URL=wss://chat.example.com ACCESS_CODES=5 bash deploy/install.sh
 
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"
-ACCESS_CODES="${ACCESS_CODES:-5}"
+# Access-code protection (SERVER_ACCESS_PROTECTED) is OFF by default here: with it ON the current
+# server.py crashes at start (UnboundLocalError on `os`, start_server(), found 2026-11-19).
+ACCESS_CODES="${ACCESS_CODES:-0}"
 CONTAINER="subrosa-messenger-server"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -63,9 +65,8 @@ else
   # NOTE: DB_ENCRYPTION_KEY_HEX cannot be added later to an existing database - decide NOW.
   set_var DB_ENCRYPTION_KEY_HEX "$(rand_hex 32)"
   set_var TOTP_SECRET_ENCRYPTION_KEY "$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())' 2>/dev/null)"
-  set_var SERVER_ACCESS_PROTECTED true
   [ -n "${SERVER_URL:-}" ] && set_var SERVER_URL "$SERVER_URL"
-  echo ".env: created from .env.example (mode 600). Generated: DB_ENCRYPTION_KEY_HEX, SERVER_ACCESS_PROTECTED=true."
+  echo ".env: created from .env.example (mode 600). Generated: DB_ENCRYPTION_KEY_HEX (TOTP key if cryptography is installed)."
   echo "      !! BACK UP .env SEPARATELY from the database: without DB_ENCRYPTION_KEY_HEX the data is unreadable."
   grep -q "^TOTP_SECRET_ENCRYPTION_KEY=.\+" "$ROOT/.env" || NEED_BY_HAND+=("TOTP_SECRET_ENCRYPTION_KEY (needs python3 + 'cryptography' to generate; see .env.example)")
 fi
@@ -92,7 +93,7 @@ if [ "$status" != "healthy" ]; then
 fi
 echo "Server is healthy."
 
-# 5. access codes (they are only shown once; the server stores hashes)
+# 5. access codes (they are only shown once; the server stores hashes) — needs SERVER_ACCESS_PROTECTED=true
 if [ "$ACCESS_CODES" -gt 0 ] 2>/dev/null && [ -f "$ROOT/Server/admin_gen_codes.py" ]; then
   echo "Generating $ACCESS_CODES one-time access codes ..."
   # The image contains only server.py, so run the generator from the host against the volume's DB via a throwaway container.
