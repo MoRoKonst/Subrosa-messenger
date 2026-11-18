@@ -1,0 +1,26 @@
+# Keep line endings deterministic for files whose consumers care about them.
+#
+# Added 2026-11-11 after the F-Droid submission failed three CI runs. Git on
+# Windows checks files out with CRLF by default, and copying from a browser adds
+# CRLF to the clipboard regardless of what the page contained. fdroiddata's CI
+# runs `fdroid rewritemeta`, which normalises metadata to LF and then fails if
+# the file changed -- so a CRLF copy produces a diff on every single line and
+# the job fails no matter how correct the content is. Their contribution
+# template states the requirement plainly: "Metadata must use LF as line
+# ending."
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Shell scripts and Gradle wrappers break outright with CRLF: a `#!/bin/sh`
+# line ending in \r makes the kernel look for an interpreter named "sh\r".
+*.sh text eol=lf
+gradlew text eol=lf
+
+# Binary, never touch.
+*.png binary
+*.jpg binary
+*.ico binary
+*.jks binary
+*.aar binary
+*.jar binary
+*.keystore binary
