@@ -37,7 +37,19 @@ services:
     networks:
       - subrosa-network
     healthcheck:
-      test: ["CMD", "python", "-c", "import asyncio; asyncio.run(asyncio.sleep(0))"]
+      # Opens a TCP connection to the port the server actually listens on.
+      #
+      # The previous check was `python -c "import asyncio;
+      # asyncio.run(asyncio.sleep(0))"`, which only proved that Python starts.
+      # It reported healthy while the server was dead, had crashed on a bad
+      # DB_ENCRYPTION_KEY_HEX, or had never bound its port at all -- and the
+      # README advertises "health checks built-in", so the indicator was worse
+      # than having none: it actively said the thing was fine.
+      #
+      # Deliberately a plain TCP connect rather than a WebSocket handshake: no
+      # extra dependency in the image, no credentials, and it fails for every
+      # case that matters here (process gone, bind failed, port wrong).
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9000), 3).close()"]
       interval: 30s
       timeout: 10s
       retries: 3
