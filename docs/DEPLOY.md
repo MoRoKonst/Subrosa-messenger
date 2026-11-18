@@ -261,29 +261,70 @@ docker-compose restart
 
 ### Update Server
 
+**Back up the database first.** A migration runs at server start and some
+schema changes cannot be undone; if the update goes wrong, the backup is the way
+back. See *Database Backup* below, and do not skip it.
+
+`deploy/upgrade.sh` does the whole sequence (record current commit, consistent
+backup and read-back, pull, rebuild, wait for the healthcheck, print the
+rollback commands if it fails):
+
 ```bash
-# Pull latest code
+bash deploy/upgrade.sh
+```
+
+> **Status: draft, not yet run end to end.** It has only been syntax-checked
+> (`bash -n`) because the machine it was written on has no Docker; the backup
+> script it calls is tested. Treat the manual steps below as the reference until
+> it has been run on a throwaway host, including the failure branch.
+
+Manual equivalent:
+
+```bash
+# 1. back up first (next section), then:
 git pull
-
-# Rebuild image
 docker-compose build --no-cache
-
-# Restart
 docker-compose up -d
 ```
 
+Note: the server has no database schema version stamp (`PRAGMA user_version` is
+never set), so starting an **older** version on a database that a newer version
+already migrated is *not* refused. After a failed update, restore the backup
+together with the old code; do not just check out the old code over the new
+database.
+
 ### Database Backup
 
-```bash
-# Extract database from volume
-docker run --rm \
-  -v subrosa-data:/data \
-  -v $(pwd):/backup \
-  alpine:latest \
-  cp /data/messages.db /backup/Subrosa-backup-$(date +%Y%m%d).db
+**Never `cp` a running server's database.** It runs SQLite in WAL mode: recent
+commits live in `messages.db-wal`, not in `messages.db`. Copying only the main
+file silently drops them. This was measured (`Server/tests/test_db_backup.py`:
+200 rows committed, a plain file copy of the main file did not contain all of
+them). A copy made during a checkpoint can also be inconsistent, and you find
+out when you need it.
 
-# File saved to ./Subrosa-backup-YYYYMMDD.db
+`deploy/db_backup.py` uses SQLite's online-backup API, which gives a consistent
+snapshot while the server keeps running, then reads the copy back with
+`PRAGMA integrity_check` and deletes it if that fails. It honors
+`DB_ENCRYPTION_KEY_HEX`.
+
+On a plain (non-docker) install, tested:
+
+```bash
+python3 deploy/db_backup.py /opt/beacon/messages.db /opt/beacon/backups
 ```
+
+In the docker-compose stack (**not yet tested** against a real container; the
+script is streamed in because the image contains only `server.py`):
+
+```bash
+cd deploy
+docker compose exec -T subrosa-server python - /app/data/messages.db /app/data/backups < db_backup.py
+```
+
+The backup lands inside the same volume; copy it somewhere else
+(`docker compose cp`), a backup in the volume you lose is no backup.
+Restoring: stop the server, delete `messages.db-wal` and `messages.db-shm`, put
+the backup in place as `messages.db`, start the server.
 
 ---
 
