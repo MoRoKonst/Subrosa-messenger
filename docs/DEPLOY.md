@@ -10,9 +10,42 @@ This guide walks you through deploying Subrosa Messenger server using Docker and
 - A Linux server (Ubuntu 20.04+ recommended) or Docker Desktop on Mac/Windows
 - A domain name (for production TLS certificates)
 
-## Quick Start (Development)
+## Fastest path: one script
 
-All deployment files live in `deploy/`: `cd deploy`.
+Tested on 2026-11-19 on a clean Ubuntu 24.04 host (1 vCPU, 2 GB RAM). Each
+command below was run as written.
+
+```bash
+sudo apt-get update && sudo apt-get install -y git openssl curl
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"     # then log out and back in
+git clone https://github.com/MoRoKonst/Subrosa-messenger.git subrosa
+cd subrosa/deploy
+SERVER_URL=wss://your-domain bash install.sh
+```
+
+`install.sh` checks Docker, generates a **self-signed** certificate if
+`deploy/certs/` has none (phones will not trust it: put a real one there, see
+Production Deployment), creates `../.env` with a random `DB_ENCRYPTION_KEY_HEX`
+(**back `.env` up separately from the database; without that key the data is
+unreadable, and it cannot be added to an existing database later**), starts the
+stack and waits for the healthcheck. Running it again changes nothing that
+exists: `.env` and certificates are kept (verified by checksum).
+
+Known limitation, found by this run: with `SERVER_ACCESS_PROTECTED=true` the
+current `server.py` crashes at start (`UnboundLocalError: ... 'os'` in
+`start_server()`), so access codes cannot be used yet and `install.sh` leaves
+protection off. Until that is fixed, anyone who can reach the server can
+register on it.
+
+Not measured: a message delivered from a phone. What was verified is the
+WebSocket handshake through nginx (the server's `challenge` frame arrives).
+
+## Manual steps (same result, step by step)
+
+All deployment files live in `deploy/`: `cd deploy`. The commands are
+`docker compose` (v2); `docker-compose` with a hyphen does not exist on a fresh
+install.
 
 ### 1. Generate Self-Signed Certificate
 
@@ -33,30 +66,27 @@ nano ../.env
 ### 3. Build and Start Server
 
 ```bash
-docker-compose up -d
+docker compose up -d --build
 ```
 
 The server will:
-- Start the Python WebSocket server on port 9000 (internal)
+- Start the Python WebSocket server on port 9000 (internal, published on 127.0.0.1 only)
 - Start nginx reverse proxy on ports 80 (HTTP) and 443 (HTTPS)
 - Create a persistent volume for data
 
 ### 4. Verify It's Running
 
 ```bash
-docker-compose logs -f subrosa-server
-docker-compose ps
+docker compose ps
+docker compose logs subrosa-server
 ```
 
-You should see both `Subrosa-messenger-server` and `Subrosa-nginx` running.
+You should see `subrosa-messenger-server` (healthy) and `subrosa-nginx` running.
 
 ### 5. Test WebSocket Connection
 
-```bash
-# From your local machine or Android app
-# Connect to: wss://your-server-domain/ws
-# (or wss://localhost/ws for local testing, ignoring cert warnings)
-```
+Connect a WebSocket client to `wss://<host>/ws` (certificate warnings apply
+to the self-signed certificate). The server answers with a `{"type": "challenge", ...}` frame.
 
 ---
 
