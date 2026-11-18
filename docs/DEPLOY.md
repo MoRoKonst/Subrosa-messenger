@@ -13,7 +13,9 @@ This guide walks you through deploying Subrosa Messenger server using Docker and
 ## Fastest path: one script
 
 Tested on 2026-11-19 on a clean Ubuntu 24.04 host (1 vCPU, 2 GB RAM). Each
-command below was run as written.
+command below was run as written, **with the fixes of the commit that added this
+section** (before them the documented path did not build: stale pinned apt
+package in the Dockerfile, a BOM that made nginx refuse its config).
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git openssl curl
