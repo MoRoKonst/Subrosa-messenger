@@ -10,6 +10,9 @@ Usage:
     python3 admin_users.py list --full-fingerprints
     python3 admin_users.py revoke 1A2B3C4D5E6F7A8B            # DRY RUN: prints what it would do
     python3 admin_users.py revoke 1A2B3C4D5E6F7A8B --yes      # actually does it
+    python3 admin_users.py codes                              # unused access codes (by hash prefix)
+    python3 admin_users.py codes --delete 1a2b3c4d            # dry run
+    python3 admin_users.py codes --delete 1a2b3c4d --yes      # delete that UNUSED code
     DB_PATH=/app/data/messages.db python3 admin_users.py list # non-default database
 
 `list` is strictly read-only (the database is opened with mode=ro and is never
@@ -21,23 +24,28 @@ WHAT `revoke` DOES — exactly the mechanism a client already triggers with
 "I have been compromised" (`revoke_identity` in server.py): one
 `INSERT OR IGNORE INTO revoked_fingerprints`. Effects, read from server.py:
   * every future `register()` for that fingerprint is refused with
-    `identity_revoked`, even though the challenge/response proves key possession
-    (server.py, "if await db_is_fingerprint_revoked(candidate_username)");
-  * prekey bundles of that fingerprint are flagged `revoked: true` for anyone
-    starting a new session with it.
-WHAT IT DOES NOT DO (so the operator is not surprised, and so a sales promise
-is not made on the tool's behalf):
-  * it does NOT disconnect a session that is open right now — server.py checks
-    the revoked table only at `register()`, i.e. at connect time. The person is
-    cut off when that connection ends (or when the server is restarted);
+    `identity_revoked`, even though the challenge/response proves key possession;
+  * prekey bundles of that fingerprint are flagged `revoked: true`;
+  * a session that is open RIGHT NOW is cut by the server's revoked-sessions
+    watchdog (revoked_sessions_watchdog in server.py): within
+    REVOKED_SESSION_SWEEP_INTERVAL_SEC (default 30 s) the person receives
+    `identity_revoked` and the socket is closed. This tool writes straight into
+    SQLite and cannot talk to the server process, so the server finds the row on
+    its next sweep.
+WHAT IT DOES NOT DO:
   * it does NOT free the seat: the `registered_fingerprints` row stays, and
-    MAX_REGISTERED_USERS counts every fingerprint "ever registered";
+    MAX_REGISTERED_USERS counts every fingerprint "ever registered" (open
+    decision, see docs/DEPLOY.md "Seats");
   * it does NOT delete messages already queued for that fingerprint, nor
     remove their device keys / TOTP rows (they become unreachable, not erased);
   * it does NOT invalidate server access codes that were handed out and are
-    still unused: someone holding one could register a brand-new identity
-    (new fingerprint). Revoking a person means revoking their codes too — this
-    tool does not track which code went to whom, and cannot.
+    still unused: someone holding one could register a brand-new identity.
+    Use `codes` to see and delete unused codes. The server stores only the
+    SHA-256 of each code, so this tool can show a code's hash prefix and age but
+    never the code itself, and it deliberately does NOT record which code went
+    to which person — that would be new data about people on the server. Keep
+    that bookkeeping on your side (e.g. when you run admin_gen_codes.py, note
+    who receives which link).
 
 WHAT THIS TOOL CANNOT KNOW, ON PURPOSE. The server never learns who sent an
 `anon_message` and does not store who talks to whom: delivery runs on one-time
@@ -164,6 +172,50 @@ def cmd_list(args) -> int:
     return 0
 
 
+def cmd_codes(args) -> int:
+    conn = open_db(db_path(), writable=bool(args.delete and args.yes))
+    if not has_table(conn, "server_access_codes"):
+        print("No server_access_codes table (server never started with access codes).")
+        return 0
+    rows = conn.execute("SELECT code, used, created_at FROM server_access_codes ORDER BY created_at, code").fetchall()
+    hashed = [(c, u, t) for c, u, t in rows if re.fullmatch(r"sha256:[0-9a-f]{64}", c)]
+    legacy = sum(1 for c, u, t in rows if not re.fullmatch(r"sha256:[0-9a-f]{64}", c))
+    if args.delete:
+        want = args.delete.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{6,64}", want):
+            raise SystemExit("error: give a hash prefix of at least 6 hex characters (see `codes`)")
+        m = [(c, u, t) for c, u, t in hashed if c[len("sha256:"):].startswith(want)]
+        if not m:
+            raise SystemExit("error: no code with that prefix")
+        if len(m) > 1:
+            raise SystemExit(f"error: prefix is ambiguous ({len(m)} matches); give more characters")
+        code, used, created = m[0]
+        print(f"Code {code[len('sha256:'):][:12]}…  created {fmt_ts(created)}  {'USED' if used else 'unused'}")
+        if used:
+            print("This code is already USED: it grants nothing and its row is history. Not deleting.")
+            return 1
+        if not args.yes:
+            print("DRY RUN — nothing was changed. Re-run with --yes to delete this unused code.")
+            return 0
+        cur = conn.execute("DELETE FROM server_access_codes WHERE code = ? AND used = 0", (code,))
+        conn.commit()
+        print("Deleted." if cur.rowcount == 1 else "Nothing deleted (it was used in the meantime).")
+        return 0
+    unused = [(c, t) for c, u, t in hashed if not u]
+    print(f"Database: {db_path()}  (read-only)")
+    print()
+    print("unused access codes (SHA-256 prefix, created) — the codes themselves are not stored:")
+    for c, t in unused:
+        print(f"  {c[len('sha256:'):][:12]}…  {fmt_ts(t)}")
+    if not unused:
+        print("  (none)")
+    print(f"\nUnused: {len(unused)}   Used: {sum(1 for c, u, t in hashed if u)}")
+    if legacy:
+        print(f"{legacy} legacy plaintext row(s) not shown — remove with admin_gen_codes.py --purge-legacy")
+    print("Which person holds which code is NOT recorded here, by design.")
+    return 0
+
+
 def resolve(conn, token: str):
     token = token.strip().upper()
     if not re.fullmatch(r"[0-9A-F]{8,16}", token):
@@ -190,11 +242,11 @@ def cmd_revoke(args) -> int:
     print("This will:")
     print("  - add the fingerprint to revoked_fingerprints (same as the client's 'I have been compromised')")
     print("  - make every future connection attempt by this identity fail with identity_revoked")
+    print("  - cut their live session within the server's sweep interval (default 30 s)")
     print("This will NOT:")
-    print("  - disconnect them if they are connected right now (they are cut off when that connection ends / on server restart)")
     print("  - free their seat (MAX_REGISTERED_USERS counts every fingerprint ever registered)")
     print("  - delete queued messages, device keys or TOTP rows")
-    print("  - cancel unused access codes they may hold (they could register a NEW identity with one)")
+    print("  - cancel unused access codes they may hold (they could register a NEW identity with one: see `codes`)")
     if not args.yes:
         print()
         print("DRY RUN — nothing was changed. Re-run with --yes to do it.")
@@ -215,7 +267,13 @@ def main(argv=None) -> int:
     pr = sub.add_parser("revoke", help="revoke an identity (dry run unless --yes)")
     pr.add_argument("fingerprint")
     pr.add_argument("--yes", action="store_true", help="actually perform the revocation")
+    pc = sub.add_parser("codes", help="list / delete UNUSED access codes (by SHA-256 prefix)")
+    pc.add_argument("--list", action="store_true", help="list unused codes (default)")
+    pc.add_argument("--delete", metavar="PREFIX", help="delete the unused code whose hash starts with PREFIX (dry run unless --yes)")
+    pc.add_argument("--yes", action="store_true", help="actually delete")
     args = p.parse_args(argv)
+    if args.cmd == "codes":
+        return cmd_codes(args)
     if args.cmd in (None, "list"):
         if args.cmd is None:
             args.full_fingerprints = False

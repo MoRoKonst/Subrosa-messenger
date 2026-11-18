@@ -126,7 +126,7 @@ def test_revoke_without_yes_changes_nothing(seeded_db):
     before = seeded_db.read_bytes()
     rc, out = tool(seeded_db, "revoke", FP_A)
     assert rc == 0 and "DRY RUN" in out
-    assert "will NOT" in out and "disconnect them" in out
+    assert "will NOT" in out and "free their seat" in out and "cut their live session" in out
     assert revoked_rows(seeded_db) == []
     assert seeded_db.read_bytes() == before
 
@@ -166,3 +166,46 @@ def test_revoked_row_matches_what_server_py_itself_writes(seeded_db):
     code = f"import server; print(server._db_is_fingerprint_revoked_sync('{FP_A}'), server._db_is_fingerprint_revoked_sync('{FP_B}'))"
     r = subprocess.run([sys.executable, "-c", code], cwd=SERVER_DIR, env=env, capture_output=True, timeout=120)
     assert r.stdout.decode().strip().splitlines()[-1] == "True False"
+
+
+def codes_rows(db):
+    c = sqlite3.connect(db)
+    try:
+        return [r[0] for r in c.execute("SELECT code FROM server_access_codes")]
+    finally:
+        c.close()
+
+
+def test_codes_lists_prefix_only_never_the_full_hash(seeded_db):
+    rc, out = tool(seeded_db, "codes")
+    assert rc == 0 and "abababababab" in out
+    assert SECRET_CODE_HASH not in out and "ab" * 32 not in out
+    assert "Unused: 1" in out and "NOT recorded here" in out
+
+
+def test_codes_delete_dry_run_then_yes(seeded_db):
+    rc, out = tool(seeded_db, "codes", "--delete", "abababab")
+    assert rc == 0 and "DRY RUN" in out and codes_rows(seeded_db) == [SECRET_CODE_HASH]
+    rc, out = tool(seeded_db, "codes", "--delete", "abababab", "--yes")
+    assert rc == 0 and "Deleted." in out and codes_rows(seeded_db) == []
+
+
+def test_codes_never_deletes_a_used_code(seeded_db):
+    c = sqlite3.connect(seeded_db)
+    c.execute("UPDATE server_access_codes SET used = 1, used_by = ?", (FP_A,))
+    c.commit(); c.close()
+    rc, out = tool(seeded_db, "codes", "--delete", "abababab", "--yes")
+    assert rc != 0 and "already USED" in out
+    assert codes_rows(seeded_db) == [SECRET_CODE_HASH]
+
+
+def test_codes_prefix_must_be_unambiguous_and_known(seeded_db):
+    c = sqlite3.connect(seeded_db)
+    c.execute("INSERT INTO server_access_codes (code, used, created_at) VALUES (?,0,?)", ("sha256:" + "ab" * 31 + "cd", time.time()))
+    c.commit(); c.close()
+    rc, out = tool(seeded_db, "codes", "--delete", "abab", "--yes")       # too short (<6)
+    assert rc != 0
+    rc, out = tool(seeded_db, "codes", "--delete", "ababab", "--yes")     # matches both
+    assert rc != 0 and "ambiguous" in out and len(codes_rows(seeded_db)) == 2
+    rc, out = tool(seeded_db, "codes", "--delete", "ffffff", "--yes")
+    assert rc != 0 and "no code" in out
