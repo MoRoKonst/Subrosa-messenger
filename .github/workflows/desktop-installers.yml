@@ -19,6 +19,8 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - 'ci/desktop-installers'   # TEMPORARY: first run before this workflow exists on main
 
 permissions:
   contents: read
