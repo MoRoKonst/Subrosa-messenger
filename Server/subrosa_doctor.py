@@ -3,42 +3,61 @@
 subrosa doctor — deployment diagnostic script.
 
 Run this ON THE SERVER (VPS), after deploying/configuring, to catch the
-class of mistake that has actually bitten this project before: port 9000
-open to the whole internet while ufw was inactive, DB_PATH resolving
-outside the mounted volume so data silently lived in the container's
-writable layer, etc. Every check below corresponds to either a documented
-invariant (docs/SECURITY_INVARIANTS.md) or a real incident recorded in
-docs/TODO.md/SECURITY_CHANGELOG.md — this is not a generic hardening
-checklist, it's specific to mistakes this deployment has actually made.
+class of mistake that has actually bitten this project before. Each check
+below corresponds to a failure that really happened (docs/KNOWN_SECURITY_ISSUES.md,
+docs/DEPLOY.md), not to a generic hardening checklist:
 
-Read-only: never modifies anything, never sends data anywhere. Safe to run
-repeatedly, including on a live production server.
+  1. server listening on a public interface / firewall not up      (KL-25, twice)
+  2. nginx config on disk is not the config actually loaded        (DEPLOY.md,
+     "WebSocket Returns 400 Behind Cloudflare" — root cause was a failing `nginx -t`)
+  3. DB_PATH points outside the mounted volume                     (docker-compose.yml, "found live")
+  4. DB_ENCRYPTION_KEY_HEX malformed / sqlcipher missing           (server dies at start)
+  5. TLS certificate expired or about to                           (DEPLOY.md renewal section)
+
+Read-only: never modifies anything, never opens a connection to anything but
+this machine's own port table and local files, never sends data anywhere.
+Safe to run repeatedly, including on a live production server.
+
+The output is meant to be pasted into a support email. It prints paths, port
+numbers, day counts and the NAMES of settings — never the VALUE of any key,
+secret or access code, never message content, fingerprints or user names.
+(Server/tests/test_doctor.py plants canary secrets and fails if one is printed.)
+
+It does NOT see: who talks to whom (the server deliberately does not know),
+anything that needs root it was not given (run with sudo for ufw / nginx -t),
+or the public internet's view of your server (nothing here connects outward —
+use a phone on mobile data for that).
 
 Usage:
-    python3 subrosa_doctor.py                  # auto-detects deployment style
-    python3 subrosa_doctor.py --docker          # force docker-compose checks
-    python3 subrosa_doctor.py --systemd         # force systemd checks
+    python3 subrosa_doctor.py
+    sudo python3 subrosa_doctor.py        # lets it read ufw and run nginx -t
     DB_PATH=/opt/beacon/messages.db python3 subrosa_doctor.py
 
-Exit code 0 if no FAIL, 1 if at least one FAIL (WARN/INFO don't affect it —
-they're context, not necessarily problems).
+Reads ./.env (or ../.env) for variables that are not already set in the
+environment; only the names of those variables are ever reported.
+
+Exit code 0 if no FAIL, 1 if at least one FAIL (WARN/INFO don't affect it).
 """
 import argparse
+import calendar
 import io
+import json
 import os
+import re
 import shutil
-import socket
 import subprocess
 import sys
 import time
 
-# Same UTF-8 stdout reconfiguration as server.py/admin_gen_codes.py — without
-# it, the em-dashes in the messages below break on a Windows console using a
-# non-UTF-8 codepage (found by actually running this, not just eyeballing it).
-if hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
-
 results = []  # (level, name, detail)
+
+
+def _utf8_stdout():
+    # The em-dashes below break on a Windows console using a non-UTF-8
+    # codepage. Done in main(), not at import, so importing this module (the
+    # tests do) has no side effects on sys.stdout.
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
 
 
 def report(level, name, detail=""):
@@ -50,56 +69,199 @@ def run(cmd, timeout=5):
     """Best-effort shell-out; returns (ok, stdout) — never raises."""
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return p.returncode == 0, p.stdout
+        return p.returncode == 0, (p.stdout or "") + ("" if p.returncode == 0 else (p.stderr or ""))
     except Exception as e:
         return False, str(e)
 
 
-# ── Exposed ports / firewall ────────────────────────────────────────────
+# ── .env fallback (values are NEVER printed) ────────────────────────────
+
+ENV_FROM_FILE = set()
+
+
+def load_dotenv_fallback():
+    """Fill UNSET variables from ./.env or ../.env so the doctor sees what the
+    docker/systemd deployment sees. Only names are ever reported."""
+    for path in (".env", os.path.join("..", ".env")):
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k, v = k.strip(), v.strip().strip('"').strip("'")
+                    if k and v and not os.environ.get(k):
+                        os.environ[k] = v
+                        ENV_FROM_FILE.add(k)
+        except OSError:
+            pass
+        return
+
+
+# ── 1. Exposed ports / firewall ─────────────────────────────────────────
+# KL-25 happened twice because the CONFIG said loopback/firewalled while the
+# REALITY was a public listener. So this reads what the OS says is listening.
+
+def classify(addr):
+    a = addr.strip("[]")
+    if a in ("*", "0.0.0.0", "::", ""):
+        return "all"
+    if a.startswith("127.") or a in ("::1", "localhost"):
+        return "loopback"
+    return "specific"
+
+
+_ADDR_PORT = re.compile(r"(\[[0-9a-fA-F:.]+\]|[0-9]{1,3}(?:\.[0-9]{1,3}){3}|\*)[:.](\d+)")
+
+
+def parse_listeners(text, port):
+    """Addresses a TCP listener on `port` is bound to, from `ss -tln`, Linux
+    `netstat -ltn`, macOS `netstat -an` or Windows `netstat -an` output."""
+    found = []
+    for line in text.splitlines():
+        if "LISTEN" not in line.upper():
+            continue
+        for tok in line.split():
+            m = _ADDR_PORT.fullmatch(tok)
+            if m and int(m.group(2)) == port:
+                found.append(m.group(1))
+                break
+    return found
+
+
+def actual_listeners(port):
+    for cmd in (["ss", "-tln"], ["netstat", "-ltn"], ["netstat", "-an"]):
+        ok, out = run(cmd)
+        if ok and out.strip():
+            return parse_listeners(out, port), cmd[0]
+    return None, None
+
+
+def parse_docker_ports(text, port):
+    """(container, host_addr, host_port) for each binding of container `port`."""
+    res = []
+    for line in text.splitlines():
+        name, _, ports = line.partition("|")
+        for m in re.finditer(r"(\[[0-9a-f:]+\]|[0-9.]+|::|\*):(\d+)->%d/tcp" % port, ports):
+            res.append((name, m.group(1), int(m.group(2))))
+    return res
+
+
+def docker_published(port):
+    ok, out = run(["docker", "ps", "--format", "{{.Names}}|{{.Ports}}"])
+    return parse_docker_ports(out, port) if ok else None
+
 
 def check_firewall_and_port9000():
+    port = int(os.environ.get("SUBROSA_BIND_PORT", "9000") or "9000")
+    configured = os.environ.get("SUBROSA_BIND_HOST", "0.0.0.0")
+
     ok, out = run(["ufw", "status"])
+    ufw_active = None
     if not ok:
-        report("WARN", "ufw not available/queryable", "can't confirm firewall state on this OS — check manually")
+        report("WARN", "ufw not available/queryable",
+               "needs root, or this is not a ufw host — check the firewall manually")
     elif "inactive" in out.lower():
+        ufw_active = False
         report("FAIL", "ufw is INSTALLED but INACTIVE",
-               "the exact incident that motivated this script (2026-08-2x): port 9000 was reachable "
-               "from the whole internet, not just via nginx, because ufw was never enabled")
+               "KL-25: the plaintext port was reachable from the whole internet because the "
+               "firewall was never enabled")
     elif "active" in out.lower():
+        ufw_active = True
         report("PASS", "ufw is active")
     else:
-        report("WARN", "ufw status unclear", out.strip()[:200])
+        report("WARN", "ufw status unclear")
 
-    # Is 9000 reachable directly (not just via nginx on 443)?
-    port_open = False
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(2)
-        port_open = s.connect_ex(("127.0.0.1", 9000)) == 0
-        s.close()
-    except Exception:
-        pass
-    if port_open:
-        report("INFO", "port 9000 is listening locally",
-               "expected if server.py is running — the question is whether ufw/cloud "
-               "firewall also blocks it from the public interface (see ufw check above)")
+    pub = docker_published(port)
+    if pub:
+        for name, host, hport in pub:
+            if classify(host) == "all":
+                report("FAIL", f"docker publishes port {port} on ALL interfaces",
+                       f"{name}: {host}:{hport}->{port}. Docker's iptables rules bypass ufw, so the "
+                       f"firewall does NOT protect this; publish as 127.0.0.1:{hport}:{port} (KL-25)")
+            else:
+                report("PASS", f"docker publishes port {port} on {host} only", name)
+        return
 
-    ok, out = run(["ss", "-tlnp"])
-    if ok and ":9000" in out:
-        if "0.0.0.0:9000" in out or "*:9000" in out:
-            report("WARN", "server.py listening on all interfaces (0.0.0.0:9000)",
-                   "normal for the docker-compose setup (nginx fronts it, ufw should still gate "
-                   "9000 from outside) — abnormal if this is the systemd/beacon.service deployment, "
-                   "which expects nginx as the only public entrypoint")
+    addrs, tool = actual_listeners(port)
+    if addrs is None:
+        report("WARN", "can't read the listening-ports table", "neither ss nor netstat is available")
+        return
+    if not addrs:
+        report("WARN", f"nothing is listening on port {port} on this machine",
+               "server not running, or SUBROSA_BIND_PORT differs, or it runs in a container this "
+               "user cannot see (try sudo)")
+        return
+    kinds = {classify(a) for a in addrs}
+    shown = ", ".join(sorted(set(addrs)))
+    if kinds == {"loopback"}:
+        report("PASS", f"port {port} is bound to loopback only", f"{shown} (read via {tool})")
+    elif ufw_active:
+        report("WARN", f"port {port} is bound to a non-loopback address ({shown}); ufw is the only barrier",
+               "one layer only — the KL-25 fix that survived a host rebuild also set SUBROSA_BIND_HOST=127.0.0.1")
+    else:
+        report("FAIL", f"port {port} is bound to a non-loopback address ({shown}) and no active ufw was confirmed",
+               "if this is the --dev (plaintext) server it is reachable from outside: set "
+               "SUBROSA_BIND_HOST=127.0.0.1 and enable the firewall (KL-25)")
+    if classify(configured) == "loopback" and "loopback" not in kinds:
+        report("FAIL", "SUBROSA_BIND_HOST says loopback but the real listener is not",
+               f"configured {configured}, actual {shown} — the config is not what is running (restart needed?)")
 
 
-# ── TLS certificate ──────────────────────────────────────────────────────
+# ── 2. nginx: the config on disk vs the config actually loaded ───────────
+# docs/DEPLOY.md "WebSocket Returns 400 Behind Cloudflare": the real cause was
+# a stale server block with a missing certificate, so `nginx -t` failed, every
+# reload silently kept the OLD config, and the new vhost "looked fine on disk".
+
+CLOUDFLARE_HTTPS_PORTS = {443, 2053, 2083, 2087, 2096, 8443}
+
+
+def missing_nginx_certs(conf_text, exists=os.path.exists):
+    return [m.group(1) for m in re.finditer(r"^\s*ssl_certificate(?:_key)?\s+([^;\s]+);", conf_text, re.M)
+            if not exists(m.group(1))]
+
+
+def check_nginx_loadable():
+    exe = shutil.which("nginx")
+    if not exe:
+        return
+    ok, out = run([exe, "-t"], timeout=10)
+    if "permission denied" in out.lower():
+        report("WARN", "nginx -t needs root to run", "re-run the doctor with sudo to check this")
+    elif ok or "syntax is ok" in out:
+        report("PASS", "nginx -t passes (the config on disk can actually be loaded)")
+    else:
+        lines = [l.strip() for l in out.splitlines() if "emerg" in l or "error" in l.lower()]
+        report("FAIL", "nginx -t FAILS — reloads silently keep serving the OLD config",
+               "; ".join(l[:160] for l in lines[:3]) or "run `nginx -t` for the reason")
+    conf = "/etc/nginx/nginx.conf"
+    if os.path.isfile(conf):
+        try:
+            text = open(conf, encoding="utf-8", errors="replace").read()
+        except OSError:
+            return
+        for path in missing_nginx_certs(text):
+            report("FAIL", "nginx config references a certificate file that does not exist", path)
+
+
+# ── 5. TLS certificate ───────────────────────────────────────────────────
+
+def parse_not_after(openssl_out):
+    """'notAfter=Aug 30 00:00:00 2026 GMT' -> epoch seconds (UTC)."""
+    date_str = openssl_out.strip().split("=", 1)[1]
+    return calendar.timegm(time.strptime(date_str, "%b %d %H:%M:%S %Y %Z"))
+
 
 def check_tls_cert():
     candidates = [
         "secrets/cert.pem",
         "/opt/beacon/secrets/cert.pem",
         "deploy/certs/cert.pem",
+        "certs/cert.pem",
+        "../deploy/certs/cert.pem",
     ]
     cert_path = next((c for c in candidates if os.path.exists(c)), None)
     if not cert_path:
@@ -107,65 +269,152 @@ def check_tls_cert():
         return
     ok, out = run(["openssl", "x509", "-enddate", "-noout", "-in", cert_path])
     if not ok:
-        report("WARN", "couldn't read certificate expiry", f"{cert_path}: {out.strip()[:200]}")
+        report("WARN", "couldn't read certificate expiry", f"{cert_path} (is openssl installed?)")
         return
-    # out looks like "notAfter=Aug 30 00:00:00 2026 GMT"
     try:
-        date_str = out.strip().split("=", 1)[1]
-        expiry = time.strptime(date_str, "%b %d %H:%M:%S %Y %Z")
-        days_left = int((time.mktime(expiry) - time.time()) / 86400)
-        if days_left < 0:
-            report("FAIL", f"TLS certificate EXPIRED", f"{cert_path}, {abs(days_left)} days ago")
-        elif days_left < 14:
-            report("FAIL", f"TLS certificate expires very soon", f"{cert_path}, {days_left} days left")
-        elif days_left < 30:
-            report("WARN", f"TLS certificate expires within a month", f"{cert_path}, {days_left} days left")
-        else:
-            report("PASS", f"TLS certificate valid", f"{cert_path}, {days_left} days left")
+        days_left = int((parse_not_after(out) - time.time()) / 86400)  # truncates toward 0
     except Exception as e:
-        report("WARN", "couldn't parse certificate expiry date", str(e))
+        report("WARN", "couldn't parse certificate expiry date", str(e)[:100])
+        return
+    if days_left < 0:
+        report("FAIL", "TLS certificate EXPIRED", f"{cert_path}, {abs(days_left)} days ago — see DEPLOY.md, certificate renewal")
+    elif days_left < 14:
+        report("FAIL", "TLS certificate expires very soon", f"{cert_path}, {days_left} days left")
+    elif days_left < 30:
+        report("WARN", "TLS certificate expires within a month", f"{cert_path}, {days_left} days left")
+    else:
+        report("PASS", "TLS certificate valid", f"{cert_path}, {days_left} days left")
 
 
-# ── DB encryption at rest ───────────────────────────────────────────────
+# ── 4. DB encryption key + at-rest state ─────────────────────────────────
+
+def validate_db_key(value):
+    """Mirror of server.py's startup check (hex parse) plus the 32-byte length
+    the docs tell people to generate. Returns a problem string or None."""
+    try:
+        raw = bytes.fromhex(value)
+    except ValueError:
+        return "not a hex string — server.py exits at startup with [FATAL]"
+    if len(raw) != 32:
+        return f"decodes to {len(raw)} bytes, expected 32 (64 hex chars, `secrets.token_hex(32)`)"
+    return None
+
 
 def check_db_encryption():
     db_path = os.environ.get("DB_PATH", "messages.db")
-    key_set = bool(os.environ.get("DB_ENCRYPTION_KEY_HEX", "").strip())
+    key = os.environ.get("DB_ENCRYPTION_KEY_HEX", "").strip()
+    key_set = bool(key)
+    if key_set:
+        problem = validate_db_key(key)
+        if problem:
+            report("FAIL", "DB_ENCRYPTION_KEY_HEX is malformed", problem)
+        else:
+            report("PASS", "DB_ENCRYPTION_KEY_HEX is well-formed")
+        try:
+            import sqlcipher3  # noqa: F401
+        except ImportError:
+            report("FAIL", "DB_ENCRYPTION_KEY_HEX is set but the sqlcipher3 package is not installed",
+                   "server.py exits at startup — pip install sqlcipher3-binary")
     if not os.path.exists(db_path):
-        report("INFO", "no database file found yet", f"expected at {db_path} — server may not have run here")
+        report("INFO", "no database file found yet",
+               f"expected at {os.path.abspath(db_path)} — server may not have run here")
         return
     with open(db_path, "rb") as f:
         header = f.read(16)
     is_plain_sqlite = header.startswith(b"SQLite format 3")
     if key_set and is_plain_sqlite:
         report("FAIL", "DB_ENCRYPTION_KEY_HEX is set but the DB file is plain, unencrypted SQLite",
-               f"{db_path} — SQLCipher can't open a file written in plain format; this key is not "
-               "actually protecting this file (see docs/SECURITY.md item 27's note on this exact trap)")
+               f"{db_path} — SQLCipher can't open a file written in plain format; the key is not "
+               "protecting this file (docs/SECURITY.md item 27)")
     elif key_set and not is_plain_sqlite:
         report("PASS", "DB appears encrypted (SQLCipher) and DB_ENCRYPTION_KEY_HEX is set")
     elif not key_set and is_plain_sqlite:
         report("WARN", "database is unencrypted at rest",
-               f"{db_path} — opt-in via DB_ENCRYPTION_KEY_HEX (docs/SECURITY.md item 27); a stolen "
-               "disk/backup is readable in plain text without it. Not necessarily wrong for every "
-               "deployment (e.g. disk-level FDE already in place), but worth a deliberate decision.")
+               f"{db_path} — opt-in via DB_ENCRYPTION_KEY_HEX (docs/SECURITY.md item 27); it cannot be "
+               "added later to an existing database. Fine if disk-level encryption is in place.")
     else:
         report("WARN", "database file doesn't look like plain SQLite and no key is set",
                "unexpected — verify manually")
 
 
-# ── TOTP secret encryption ──────────────────────────────────────────────
+# ── 3. DB_PATH vs the mounted volume ─────────────────────────────────────
+
+def parse_mountinfo(text):
+    """Mount points listed in /proc/self/mountinfo (field 5)."""
+    mounts = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) > 4:
+            mounts.append(parts[4].replace("\\040", " "))
+    return mounts
+
+
+def under_mount(path, mounts):
+    """True if `path` sits under a mount point other than '/'."""
+    path = path.rstrip("/")
+    return any(m != "/" and (path == m or path.startswith(m.rstrip("/") + "/")) for m in mounts)
+
+
+def check_db_path_volume_trap():
+    """The docker-compose incident: DB_PATH unset -> messages.db resolves
+    relative to WORKDIR, inside the container's writable layer, and is lost
+    on every container recreate."""
+    db_path = os.environ.get("DB_PATH", "")
+    in_container = os.path.exists("/.dockerenv")
+
+    if in_container:
+        abs_path = os.path.abspath(db_path or "messages.db")
+        try:
+            mounts = parse_mountinfo(open("/proc/self/mountinfo", encoding="utf-8").read())
+        except OSError:
+            mounts = None
+        if mounts is None:
+            report("WARN", "can't read /proc/self/mountinfo", "cannot verify DB_PATH is on a volume")
+        elif under_mount(abs_path, mounts):
+            report("PASS", "DB_PATH is on a mounted volume", abs_path)
+        else:
+            report("FAIL", "DB_PATH is NOT on a mounted volume — data lives in the container layer",
+                   f"{abs_path} resolves outside every mount; it is lost when the container is recreated "
+                   "(set DB_PATH=/app/data/messages.db, as deploy/docker-compose.yml does)")
+        return
+
+    if not shutil.which("docker"):
+        return
+    ok, out = run(["docker", "inspect", "subrosa-messenger-server"], timeout=10)
+    if not ok:
+        return  # no such container / no permission: not the compose deployment
+    try:
+        info = json.loads(out)[0]
+        env = {e.split("=", 1)[0]: e.split("=", 1)[1] for e in info["Config"]["Env"] if "=" in e}
+        dests = [m["Destination"] for m in info.get("Mounts", [])]
+        workdir = info["Config"].get("WorkingDir") or "/"
+    except Exception:
+        report("WARN", "couldn't parse `docker inspect` output for subrosa-messenger-server")
+        return
+    cpath = env.get("DB_PATH", "")
+    if not cpath:
+        report("FAIL", "container has no DB_PATH — database is in the writable layer",
+               f"defaults to 'messages.db' under {workdir}, outside the volume; lost on recreate")
+        return
+    if not cpath.startswith("/"):
+        cpath = os.path.join(workdir, cpath)
+    if under_mount(cpath, dests):
+        report("PASS", "container DB_PATH is inside a mounted volume", f"{cpath} (mounts: {', '.join(dests)})")
+    else:
+        report("FAIL", "container DB_PATH is NOT inside any mounted volume",
+               f"{cpath}; mounts are {', '.join(dests) or 'none'} — data is lost when the container is recreated")
+
+
+# ── Other checks ─────────────────────────────────────────────────────────
 
 def check_totp_encryption():
     if os.environ.get("TOTP_SECRET_ENCRYPTION_KEY", "").strip():
         report("PASS", "TOTP_SECRET_ENCRYPTION_KEY is set")
     else:
         report("WARN", "TOTP_SECRET_ENCRYPTION_KEY not set",
-               "TOTP secrets sit in the DB in plaintext at rest (server still needs the raw secret "
-               "to verify codes at runtime either way — this only protects a copy of the DB file, "
-               "see .env.example)")
+               "TOTP secrets sit in the DB in plaintext at rest (the server needs the raw secret "
+               "at runtime either way — this only protects a copy of the DB file; see .env.example)")
 
-
-# ── Backups ──────────────────────────────────────────────────────────────
 
 def check_backups():
     candidates = ["/opt/beacon/backups", "backups", "/var/backups/subrosa"]
@@ -177,7 +426,7 @@ def check_backups():
     files = [os.path.join(found, f) for f in os.listdir(found)]
     files = [f for f in files if os.path.isfile(f)]
     if not files:
-        report("WARN", f"backup directory exists but is empty", found)
+        report("WARN", "backup directory exists but is empty", found)
         return
     newest = max(files, key=os.path.getmtime)
     age_hours = (time.time() - os.path.getmtime(newest)) / 3600
@@ -187,28 +436,22 @@ def check_backups():
         report("PASS", "recent backup found", f"{newest}, {age_hours:.0f}h ago")
 
 
-# ── FCM config ───────────────────────────────────────────────────────────
-
 def check_fcm():
     cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
     if not cred_path:
         report("INFO", "GOOGLE_APPLICATION_CREDENTIALS not set",
                "FCM push notifications disabled — fine if this deployment deliberately runs "
-               "strict no-third-party (see docs/TODO.md's FCM deployment-profile item)")
+               "strict no-third-party")
     elif not os.path.exists(cred_path):
-        report("FAIL", "GOOGLE_APPLICATION_CREDENTIALS is set but the file doesn't exist",
-               cred_path)
+        report("FAIL", "GOOGLE_APPLICATION_CREDENTIALS is set but the file doesn't exist", cred_path)
     else:
-        st = os.stat(cred_path)
-        mode = oct(st.st_mode)[-3:]
+        mode = oct(os.stat(cred_path).st_mode)[-3:]
         if mode not in ("600", "400"):
             report("WARN", "Firebase service-account file has loose permissions",
-                   f"{cred_path} is {mode}, expected 600 — a private key readable by other local users")
+                   f"{cred_path} is {mode}, expected 600")
         else:
             report("PASS", "FCM service-account file present with restrictive permissions", cred_path)
 
-
-# ── File permissions on secrets ──────────────────────────────────────────
 
 def check_secrets_permissions():
     secrets_dir = "secrets"
@@ -225,7 +468,7 @@ def check_secrets_permissions():
             problems.append((path, mode))
     if problems:
         for path, mode in problems:
-            report("WARN", f"secrets file has loose permissions", f"{path} is {mode}, expected 600")
+            report("WARN", "secrets file has loose permissions", f"{path} is {mode}, expected 600")
     else:
         report("PASS", "secrets/ file permissions look reasonable")
 
@@ -238,31 +481,24 @@ def check_secrets_permissions():
             report("PASS", ".env permissions look reasonable")
 
 
-# ── TURN config ──────────────────────────────────────────────────────────
-
 def check_turn():
     turn_vars = ["TURN_SERVER", "TURN_USERNAME", "TURN_PASSWORD", "TURN_SECRET"]
     present = [v for v in turn_vars if os.environ.get(v, "").strip()]
     if not present:
         report("INFO", "no TURN_* environment variables set",
-               "1:1 calls will rely on STUN/direct P2P only — may fail behind symmetric NAT; "
-               "fine if this deployment doesn't use calls or accepts that limitation")
+               "1:1 calls will rely on STUN/direct P2P only — may fail behind symmetric NAT")
     else:
         report("INFO", f"TURN env vars present: {', '.join(present)}",
-               "can't verify the TURN server itself is reachable from here without a live call test")
+               "can't verify the TURN server itself is reachable from here")
 
-
-# ── Deployment-invariant sanity checks (things that were real incidents) ──
 
 def check_ip_forwarding_invariant():
-    """docs/SECURITY.md item 30 / docs/SECURITY_INVARIANTS.md #1 — server.py
-    must never see real client IPs. Grep the nginx config actually in use
-    for the specific headers that broke this before."""
+    """docs/SECURITY.md item 30 / SECURITY_INVARIANTS.md #1 — server.py must
+    never see real client IPs. Looks for the headers that broke this before."""
     candidates = ["deploy/nginx.conf", "/etc/nginx/nginx.conf", "/etc/nginx/sites-enabled/default"]
     found = [c for c in candidates if os.path.exists(c)]
     if not found:
-        report("INFO", "no nginx config found in common locations to check",
-               ", ".join(candidates))
+        report("INFO", "no nginx config found in common locations to check", ", ".join(candidates))
         return
     for path in found:
         try:
@@ -270,53 +506,37 @@ def check_ip_forwarding_invariant():
                 content = f.read()
         except Exception:
             continue
-        # Look specifically for these headers being forwarded TOWARD the
-        # subrosa upstream, not just present anywhere in the file (they're
-        # expected/fine in a $remote_addr-based access_log context).
         suspicious = ("proxy_set_header X-Real-IP" in content or
                       "proxy_set_header X-Forwarded-For" in content)
         if suspicious:
-            report("FAIL", f"nginx config forwards client IP headers to the backend",
-                   f"{path} — this was a real, previously-fixed regression "
-                   "(docs/SECURITY.md item 30); server.py must never receive these")
+            report("FAIL", "nginx config forwards client IP headers to the backend",
+                   f"{path} — a previously-fixed regression (docs/SECURITY.md item 30)")
         else:
-            report("PASS", f"nginx config does not forward IP headers to backend", path)
-
-
-def check_db_path_volume_trap():
-    """The exact docker-compose incident: DB_PATH unset -> messages.db
-    resolves relative to WORKDIR, landing outside any mounted volume."""
-    if not shutil.which("docker") and not os.path.exists("/.dockerenv"):
-        return  # not a docker deployment, this check doesn't apply
-    db_path = os.environ.get("DB_PATH", "")
-    if not db_path:
-        report("WARN", "DB_PATH is not set in a docker environment",
-               "defaults to relative 'messages.db' — resolves inside the container's writable "
-               "layer, NOT any mounted volume, unless WORKDIR itself happens to be the volume "
-               "mount point. Data would be silently lost on container recreate (this exact bug "
-               "was found and fixed in deploy/docker-compose.yml — see docs/TODO.md)")
-    elif not db_path.startswith("/"):
-        report("WARN", "DB_PATH is a relative path in a docker environment", db_path)
-    else:
-        report("PASS", f"DB_PATH is an absolute path", db_path)
+            report("PASS", "nginx config does not forward IP headers to backend", path)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Subrosa deployment diagnostic")
+    parser = argparse.ArgumentParser(description="Subrosa deployment diagnostic (read-only, local only)")
     parser.parse_args()
+    _utf8_stdout()
+    load_dotenv_fallback()
 
-    print("subrosa doctor — read-only deployment diagnostic\n")
+    print("subrosa doctor — read-only deployment diagnostic")
+    if ENV_FROM_FILE:
+        print(f"(read {len(ENV_FROM_FILE)} setting(s) from .env: {', '.join(sorted(ENV_FROM_FILE))} — names only)")
+    print()
 
     check_firewall_and_port9000()
+    check_nginx_loadable()
     check_tls_cert()
     check_db_encryption()
+    check_db_path_volume_trap()
     check_totp_encryption()
     check_backups()
     check_fcm()
     check_secrets_permissions()
     check_turn()
     check_ip_forwarding_invariant()
-    check_db_path_volume_trap()
 
     print("\n" + "=" * 60)
     fails = [r for r in results if r[0] == "FAIL"]
