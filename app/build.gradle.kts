@@ -411,7 +411,7 @@ dependencies {
     testImplementation(libs.junit)
     // Robolectric -- lets Android-dependent unit tests (Context, SharedPreferences)
     // run on the plain JVM instead of needing a real device/emulator.
-    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("org.robolectric:robolectric:4.18")
     testImplementation("androidx.test:core:1.7.0")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
