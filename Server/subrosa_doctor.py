@@ -313,8 +313,11 @@ def check_db_encryption():
         try:
             import sqlcipher3  # noqa: F401
         except ImportError:
-            report("FAIL", "DB_ENCRYPTION_KEY_HEX is set but the sqlcipher3 package is not installed",
-                   "server.py exits at startup — pip install sqlcipher3-binary")
+            if shutil.which("docker") and run(["docker", "inspect", "subrosa-messenger-server"], timeout=10)[0]:
+                pass  # server runs in the container, which has its own packages; the host's Python is irrelevant
+            else:
+                report("FAIL", "DB_ENCRYPTION_KEY_HEX is set but the sqlcipher3 package is not installed",
+                       "server.py exits at startup — pip install sqlcipher3-binary")
     if not os.path.exists(db_path):
         report("INFO", "no database file found yet",
                f"expected at {os.path.abspath(db_path)} — server may not have run here")
