@@ -74,10 +74,12 @@ jobs:
           ver="$(grep -E '^version = ' desktop/build.gradle.kts | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
           echo "project.version = $ver"
           mkdir -p out
-          # build dir is desktop/build on Linux/macOS and C:/subrosa_desktop_build on Windows
-          find desktop/build /c/subrosa_desktop_build -path '*compose/binaries*' -type f \
-            \( -name '*.exe' -o -name '*.msi' -o -name '*.deb' -o -name '*.dmg' \) 2>/dev/null \
-            | while read -r f; do cp "$f" out/; done
+          # build dir is desktop/build on Linux/macOS and C:/subrosa_desktop_build on Windows;
+          # search only the ones that exist (a missing dir would make `find` fail under pipefail)
+          dirs=""
+          for d in desktop/build /c/subrosa_desktop_build; do [ -d "$d" ] && dirs="$dirs $d"; done
+          echo "searching:$dirs"
+          find $dirs -path '*compose/binaries*' -type f             \( -name '*.exe' -o -name '*.msi' -o -name '*.deb' -o -name '*.dmg' \) -print0             | xargs -0 -I{} cp {} out/
           ls -l out
           [ -n "$(ls -A out)" ] || { echo "ERROR: no installer was produced"; exit 1; }
           bad=0
