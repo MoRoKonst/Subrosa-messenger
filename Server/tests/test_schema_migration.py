@@ -154,11 +154,70 @@ def test_migration_is_idempotent(current_db, tmp_path):
     c.close()
 
 
-def test_no_user_version_stamp_exists_documented_gap(current_db):
-    """DOCUMENTED GAP, not a requirement: server.py never sets PRAGMA
-    user_version, so a binary OLDER than the schema is not refused on a newer
-    database. If a version stamp is added (docs/DEPLOY.md, safe-upgrade
-    proposal), replace this test with one asserting the refusal."""
-    conn = sqlite3.connect(current_db)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+def user_version(path):
+    c = sqlite3.connect(path)
+    try:
+        return c.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        c.close()
+
+
+def run_setup_full(db_path):
+    env = dict(os.environ, DB_PATH=str(db_path), POW_DIFFICULTY_BITS="0")
+    env.pop("DB_ENCRYPTION_KEY_HEX", None)
+    r = subprocess.run([sys.executable, "-c", "import server; server._db_setup_sync()"],
+                       cwd=SERVER_DIR, env=env, capture_output=True, timeout=180)
+    return r.returncode, r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
+
+
+def current_schema_version():
+    r = subprocess.run([sys.executable, "-c", "import server; print(server.SCHEMA_VERSION)"], cwd=SERVER_DIR,
+                       capture_output=True, timeout=120)
+    return int(r.stdout.decode().strip().splitlines()[-1])
+
+
+def test_setup_stamps_user_version(current_db):
+    assert user_version(current_db) == current_schema_version() == 1
+
+
+def test_unstamped_old_database_is_migrated_and_stamped(current_db, tmp_path):
+    old = tmp_path / "old.db"
+    conn = make_old_db(current_db, old)
+    conn.execute("PRAGMA user_version = 0")      # a database from before the stamp existed
+    insert_row(conn, "user_totp")
+    conn.commit()
     conn.close()
+    assert user_version(old) == 0
+    rc, _out, err = run_setup_full(old)
+    assert rc == 0, err
+    assert user_version(old) == 1
+    c = sqlite3.connect(old)
+    assert c.execute("SELECT COUNT(*) FROM user_totp").fetchone()[0] == 1
+    c.close()
+
+
+def test_database_newer_than_the_server_is_refused_and_untouched(current_db, tmp_path):
+    newer = tmp_path / "newer.db"
+    newer.write_bytes(current_db.read_bytes())
+    c = sqlite3.connect(newer)
+    c.execute("PRAGMA user_version = 99")
+    c.commit()
+    c.close()
+    before = newer.read_bytes()
+    rc, _out, err = run_setup_full(newer)
+    assert rc == 1, f"expected exit code 1, got {rc}: {err[-500:]}"
+    assert "[FATAL] database schema v99 is newer than this server (v1)." in err
+    assert "Restore the pre-update backup" in err
+    assert user_version(newer) == 99               # not downgraded
+    assert newer.read_bytes() == before            # nothing was touched
+
+
+def test_database_older_than_the_server_still_works(current_db, tmp_path, monkeypatch):
+    """The refusal is one-directional: an older stamp is the normal migration path.
+    (Today SCHEMA_VERSION is 1, so 'older' means 0; covered above — this asserts the
+    equal case too: a second start on an already-stamped database is fine.)"""
+    db = tmp_path / "same.db"
+    db.write_bytes(current_db.read_bytes())
+    rc, _o, err = run_setup_full(db)
+    assert rc == 0, err
+    assert user_version(db) == 1

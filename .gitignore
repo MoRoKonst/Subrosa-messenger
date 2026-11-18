@@ -125,3 +125,6 @@ server_diff.txt
 /LOG/
 .knownPackages
 Beacon.jpg
+
+# upgrade.sh puts database backups and a copy of .env here — never commit them
+/backups/
