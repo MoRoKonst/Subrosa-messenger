@@ -321,6 +321,20 @@ docker run --rm \
 
 ## Troubleshooting
 
+**If something does not work, run this on the server and send us the output:**
+
+```bash
+sudo python3 Server/subrosa_doctor.py
+```
+
+It only reads local state (listening ports, config files, certificate dates,
+`nginx -t`), connects to nothing, and prints setting *names* and paths but never
+key values, message content or user data, so the output is safe to paste into an
+email. It checks the failures this project has actually had: the server port
+listening on a public interface (KL-25), an nginx config that does not load,
+`DB_PATH` outside the mounted volume, a malformed `DB_ENCRYPTION_KEY_HEX`, and
+an expired TLS certificate.
+
 ### Port Already in Use
 
 ```bash
