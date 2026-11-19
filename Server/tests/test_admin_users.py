@@ -209,3 +209,137 @@ def test_codes_prefix_must_be_unambiguous_and_known(seeded_db):
     assert rc != 0 and "ambiguous" in out and len(codes_rows(seeded_db)) == 2
     rc, out = tool(seeded_db, "codes", "--delete", "ffffff", "--yes")
     assert rc != 0 and "no code" in out
+
+
+# ── revoke --purge ───────────────────────────────────────────────────────────
+
+PURGE_TABLES = ["pending_messages", "prekey_bundles_db", "authorized_devices", "user_totp",
+                "totp_recovery_codes", "user_avatars"]
+
+
+def seed_purge_data(path):
+    """Rows for FP_A (to be purged) and FP_B (must survive), with *_meta consistent, like a live server."""
+    c = sqlite3.connect(path)
+    now = time.time()
+    for fp, n, size in ((FP_A, 3, 100), (FP_B, 2, 7)):
+        for i in range(n):
+            c.execute("INSERT INTO pending_messages (recipient, payload, created_at, msg_id, payload_bytes) VALUES (?,?,?,?,?)",
+                      (fp, "x" * size, now, f"{fp}-{i}", size))
+        c.execute("INSERT INTO prekey_bundles_db (username, bundle, updated_at) VALUES (?,?,?)", (fp, "{}", now))
+        c.execute("INSERT INTO totp_recovery_codes (username, code_hash, used, created_at) VALUES (?,?,0,?)", (fp, "h-" + fp, now))
+        c.execute("INSERT INTO user_avatars (username, avatar_b64, updated_at, avatar_bytes) VALUES (?,?,?,?)", (fp, "a" * 50, now, 50))
+    c.execute("INSERT OR REPLACE INTO pending_messages_meta (id, total_rows, total_bytes) VALUES (1, 5, 314)")
+    c.execute("INSERT OR REPLACE INTO user_avatars_meta (id, total_rows, total_bytes) VALUES (1, 2, 100)")
+    c.commit(); c.close()
+
+
+def row_counts(path):
+    c = sqlite3.connect(path)
+    try:
+        out = {}
+        for t in PURGE_TABLES:
+            col = "recipient" if t == "pending_messages" else "username"
+            out[t] = (c.execute(f"SELECT COUNT(*) FROM {t} WHERE {col} = ?", (FP_A,)).fetchone()[0],
+                      c.execute(f"SELECT COUNT(*) FROM {t} WHERE {col} = ?", (FP_B,)).fetchone()[0])
+        out["meta_p"] = c.execute("SELECT total_rows, total_bytes FROM pending_messages_meta").fetchone()
+        out["meta_a"] = c.execute("SELECT total_rows, total_bytes FROM user_avatars_meta").fetchone()
+        out["real_p"] = c.execute("SELECT COUNT(*), COALESCE(SUM(payload_bytes),0) FROM pending_messages").fetchone()
+        out["real_a"] = c.execute("SELECT COUNT(*), COALESCE(SUM(avatar_bytes),0) FROM user_avatars").fetchone()
+        return out
+    finally:
+        c.close()
+
+
+@pytest.fixture
+def purge_db(seeded_db):
+    seed_purge_data(seeded_db)
+    return seeded_db
+
+
+def test_purge_dry_run_prints_counts_and_changes_nothing(purge_db):
+    before = purge_db.read_bytes()
+    rc, out = tool(purge_db, "revoke", FP_A, "--purge")
+    assert rc == 0 and "DRY RUN" in out
+    assert "pending_messages: 3 row(s)" in out and "user_avatars: 1 row(s)" in out
+    assert "authorized_devices: 2 row(s)" in out and "user_totp: 1 row(s)" in out
+    assert purge_db.read_bytes() == before and revoked_rows(purge_db) == []
+
+
+def test_purge_deletes_every_named_table_for_that_identity_only(purge_db):
+    rc, out = tool(purge_db, "revoke", FP_A, "--purge", "--yes")
+    assert rc == 0 and "Purged:" in out, out
+    c = row_counts(purge_db)
+    for t in PURGE_TABLES:
+        assert c[t][0] == 0, f"{t} still has rows for the purged identity"
+    # the other identity keeps what it had (authorized_devices/user_totp: FP_B has the NULL-pubkey device only)
+    assert c["pending_messages"][1] == 2 and c["prekey_bundles_db"][1] == 1 and c["user_avatars"][1] == 1
+    assert c["authorized_devices"][1] == 1
+    # the identity rows stay: registered AND revoked
+    db = sqlite3.connect(purge_db)
+    assert db.execute("SELECT COUNT(*) FROM registered_fingerprints WHERE fingerprint=?", (FP_A,)).fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM revoked_fingerprints WHERE fingerprint=?", (FP_A,)).fetchone()[0] == 1
+    # access codes and everything else outside the list untouched
+    assert db.execute("SELECT COUNT(*) FROM server_access_codes").fetchone()[0] == 1
+    db.close()
+
+
+def test_aggregates_match_a_recount_after_purge(purge_db):
+    tool(purge_db, "revoke", FP_A, "--purge", "--yes")
+    c = row_counts(purge_db)
+    assert tuple(c["meta_p"]) == tuple(c["real_p"]) == (2, 14)
+    assert tuple(c["meta_a"]) == tuple(c["real_a"]) == (1, 50)
+
+
+def test_server_startup_reconcile_agrees_with_the_purged_database(purge_db):
+    """What server.py itself recounts at startup must equal what purge wrote (S6-50 fail-closed check)."""
+    tool(purge_db, "revoke", FP_A, "--purge", "--yes")
+    before = row_counts(purge_db)
+    make_db_setup = [sys.executable, "-c", "import server; server._db_setup_sync()"]
+    env = dict(os.environ, DB_PATH=str(purge_db), POW_DIFFICULTY_BITS="0")
+    env.pop("DB_ENCRYPTION_KEY_HEX", None)
+    r = subprocess.run(make_db_setup, cwd=SERVER_DIR, env=env, capture_output=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-500:]
+    after = row_counts(purge_db)
+    assert before["meta_p"] == after["meta_p"] and before["meta_a"] == after["meta_a"]
+
+
+def test_purge_is_idempotent_and_does_not_lift_the_revocation(purge_db):
+    tool(purge_db, "revoke", FP_A, "--purge", "--yes")
+    db = sqlite3.connect(purge_db)
+    revoked_at = db.execute("SELECT revoked_at FROM revoked_fingerprints WHERE fingerprint=?", (FP_A,)).fetchone()[0]
+    db.close()
+    first = row_counts(purge_db)
+    rc, out = tool(purge_db, "revoke", FP_A, "--purge", "--yes")
+    assert rc == 0, out
+    assert row_counts(purge_db) == first
+    db = sqlite3.connect(purge_db)
+    assert db.execute("SELECT revoked_at FROM revoked_fingerprints WHERE fingerprint=?", (FP_A,)).fetchone()[0] == revoked_at
+    db.close()
+
+
+def test_purge_works_on_an_already_revoked_identity(purge_db):
+    tool(purge_db, "revoke", FP_A, "--yes")                 # revoke only, no purge
+    assert row_counts(purge_db)["pending_messages"][0] == 3  # data still there
+    rc, out = tool(purge_db, "revoke", FP_A, "--purge", "--yes")
+    assert rc == 0 and "stays as it is" in out
+    assert row_counts(purge_db)["pending_messages"][0] == 0
+
+
+def test_without_purge_nothing_is_deleted(purge_db):
+    rc, out = tool(purge_db, "revoke", FP_A, "--yes")
+    assert rc == 0 and "add --purge" in out
+    c = row_counts(purge_db)
+    assert c["pending_messages"][0] == 3 and c["user_avatars"][0] == 1 and c["prekey_bundles_db"][0] == 1
+
+
+def test_purge_is_one_transaction(purge_db):
+    """If anything fails mid-way nothing is half-deleted: break the meta table and expect no change."""
+    c = sqlite3.connect(purge_db)
+    c.execute("DROP TABLE user_avatars_meta")
+    c.execute("CREATE TABLE user_avatars_meta (id INTEGER PRIMARY KEY CHECK(id = 1), total_rows INTEGER NOT NULL, "
+              "total_bytes INTEGER NOT NULL CHECK(total_bytes > 1000000))")   # recompute will violate this
+    c.commit(); c.close()
+    before = row_counts(purge_db)["pending_messages"]
+    rc, out = tool(purge_db, "revoke", FP_A, "--purge", "--yes")
+    assert rc != 0
+    assert row_counts(purge_db)["pending_messages"] == before and revoked_rows(purge_db) == []

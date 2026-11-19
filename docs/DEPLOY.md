@@ -394,6 +394,18 @@ messages, device keys or TOTP state, and it does not cancel unused access
 codes the person may still hold — with one, they could register a *new*
 identity. Use `codes --delete` below for that.
 
+Deleting their data: `revoke` alone leaves the revoked person's stored data in the
+database (unreachable, but present). `revoke <fingerprint> --purge` (dry run
+without `--yes`, which prints the row count per table) also deletes, in the same
+transaction, their queued messages, prekey bundle, device keys, TOTP secret and
+recovery codes and avatar — and nothing else; the capacity counters the server
+keeps for those tables are recomputed in the same transaction. The fingerprint
+stays registered **and revoked**. Messages they *sent* sit in other people's
+queues and cannot be found (the server does not know senders). A running server
+keeps bundle/avatar/TOTP copies in RAM: restart it after a purge. Tested on
+databases built by the server's own schema and on a copy of a real one; not
+tested through the docker stack.
+
 Access codes: `admin_users.py codes` lists unused codes by the first characters
 of their SHA-256 (the server stores only hashes, so a code can never be shown
 again) and `codes --delete <prefix> [--yes]` removes an **unused** one (dry run
