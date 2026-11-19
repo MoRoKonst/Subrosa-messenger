@@ -42,6 +42,7 @@ Exit code 0 if no FAIL, 1 if at least one FAIL (WARN/INFO don't affect it).
 """
 import argparse
 import calendar
+import glob
 import http.client
 import io
 import json
@@ -267,6 +268,12 @@ def check_tls_cert():
         "certs/cert.pem",
         "../deploy/certs/cert.pem",
     ]
+    # Certbot's layout, which this list did not know about: on our own host the
+    # real certificates are Let's Encrypt ones under /etc/letsencrypt, so the
+    # check reported "no cert.pem found" on a deployment with two perfectly valid
+    # certificates and never looked at their expiry -- the one thing it exists
+    # for. Globbed rather than named, since the directory is the domain.
+    candidates += sorted(glob.glob("/etc/letsencrypt/live/*/fullchain.pem"))
     cert_path = next((c for c in candidates if os.path.exists(c)), None)
     if not cert_path:
         report("WARN", "no cert.pem found in expected locations", ", ".join(candidates))
