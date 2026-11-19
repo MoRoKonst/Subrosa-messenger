@@ -8584,7 +8584,17 @@ async def test_official_client_pow_nonce_still_works(running_server):
                 "public_key": base64.b64encode(pub_der).decode(),
                 "device_id": device_id,
             }))
-            reply = await drain_until(ws, "pow_required")
+            # Explicit, generous budgets instead of the module default of 3 s.
+            # This test failed twice in CI with a bare TimeoutError while all
+            # 805 others passed, and it is the one most exposed to a slow
+            # runner: the server runs IN THIS PROCESS (the running_server
+            # fixture, not a subprocess), so registration work and the test
+            # share one event loop and one CPU with whatever else GitHub has
+            # put on that box. Three seconds is a stopwatch, not an assertion
+            # -- nothing about this test is about how fast a register is, and
+            # a flaky failure here teaches people to re-run CI until it is
+            # green, which is how a real failure gets waved through.
+            reply = await drain_until(ws, "pow_required", timeout=20.0)
             difficulty = reply["difficulty_bits"]
 
             # Mirrors Android's solveProofOfWork(): counter.toString(), the
@@ -8610,7 +8620,7 @@ async def test_official_client_pow_nonce_still_works(running_server):
                 "device_id": device_id,
                 "pow_nonce": nonce,
             }))
-            ok = await drain_until(ws, "register_ok")
+            ok = await drain_until(ws, "register_ok", timeout=20.0)
             assert ok["type"] == "register_ok"
         finally:
             await ws.close()
