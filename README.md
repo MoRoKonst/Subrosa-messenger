@@ -115,14 +115,16 @@ Timing correlation attacks remain possible even without identity data. In Aggres
 | Mode | Interval | Traffic |
 |---|---|---|
 | Off | — | real messages only |
-| Moderate | 1 packet / 5 sec | ~2–3 MB/hour |
-| Aggressive | 1 packet / sec | ~20–30 MB/hour |
+| Moderate | 1 packet / 5 sec | ~0.4 MB/hour |
+| Aggressive | 1 packet / sec | ~2 MB/hour |
 
 Noise packets are structurally identical to real messages — same type, random token, padded payload.
 
+*The volumes above are computed from the code (a noise packet is padded to a multiple of 512 bytes, about 510 bytes on average), not measured on a live connection, and exclude TLS/WebSocket framing. An earlier version of this table said 2–3 and 20–30 MB/hour, which the code does not support. Cover traffic is **off by default** on both platforms.*
+
 ### 4. Tor Hidden Service
 
-The server exposes a `.onion` address. Traffic travels entirely within the Tor network — no exit nodes, no IP exposure, no Cloudflare in the chain.
+The server exposes a `.onion` address. Messaging traffic travels entirely within the Tor network — no exit nodes, no IP exposure, no Cloudflare in the chain. **Calls are the exception:** Tor only wraps the call-signalling channel; the call's media (WebRTC) goes directly between peers or via the relay, bypassing Tor (see the "Hide IP during calls" option and `docs/SECURITY_MODEL.md`). Tor is **opt-in**, off by default.
 
 - **Android** uses Orbot and automatically selects the correct proxy mode for `.onion` vs clearnet addresses (Orbot's system-wide VPN mode vs its local SOCKS proxy).
 - **Desktop** routes any `.onion` server URL through a local SOCKS5 proxy on `127.0.0.1:9050` (standard system Tor) or `127.0.0.1:9150` (Tor Browser's bundled tor), detected automatically. There's no VPN-mode ambiguity on desktop — you need Tor (the system service or Tor Browser) already running; the app does not launch it for you.

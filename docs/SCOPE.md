@@ -56,9 +56,9 @@ have already-known, documented limitations that don't need re-discovery:
   see `docs/TODO.md`'s documentation section).
 - Legacy/unused code paths already identified as dead (Channels feature — disabled at the UI layer,
   see `ARCHITECTURE.md`).
-- Desktop client — functionally mature but not yet published in this repository
-  (`/desktop/` is gitignored); a static audit of it is a separate, not-yet-started item in
-  `docs/TODO.md`.
+- Desktop client — in this repository (`/desktop/`) and built and tested in CI, but **no full static
+  audit of it has been done** (`OPEN-4`; only a first mechanical pass, S15, in
+  `docs/KNOWN_SECURITY_ISSUES.md`), so it is not prioritized here; see `docs/TODO.md`.
 
 *Anonymous routing used to be listed here too, as a "known-imperfect area, not a surprise finding."*
 *External review correctly pushed back: "known-imperfect + never independently reviewed" is a*
