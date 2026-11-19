@@ -405,10 +405,32 @@ generate codes with `admin_gen_codes.py`, write down who gets which link.
 By design this tool cannot show who talks to whom or what anyone sent: the
 server does not know, and that is the property the product exists to provide.
 
-The tool was tested on a copy of a database in a plain Python install. The
-docker image copies only `server.py`, so the tool is not inside the container;
-running it against the `subrosa-data` volume of the compose stack has not been
-tested.
+### On the docker deployment
+
+`admin_users.py` and `admin_gen_codes.py` are in the image, because they work on
+the database and the database lives in the container's volume. Verified on a
+live stack with an encrypted database, 2026-11-19:
+
+```bash
+cd deploy
+docker compose exec -T subrosa-server python admin_users.py list
+docker compose exec -T subrosa-server python admin_users.py revoke <prefix> --yes
+docker compose exec -T subrosa-server python admin_gen_codes.py 5 --server-url wss://your.host:8443/ws
+```
+
+`DB_PATH` and `DB_ENCRYPTION_KEY_HEX` come from the same `env_file` the server
+uses, so there is nothing to pass by hand.
+
+**`subrosa_doctor.py` is deliberately NOT in the image — run it on the host.**
+It inspects the host: which address is really being listened on, whether nginx
+loaded the config it believes it did, `ufw`, certificate expiry. Inside a
+container every one of those belongs to the container's own namespaces, so it
+would answer confidently and wrongly — the same failure mode as the healthcheck
+that reported healthy while the server was dead.
+
+```bash
+cd Server && python3 subrosa_doctor.py
+```
 
 ## Troubleshooting
 
