@@ -78,6 +78,7 @@ meminfo_watch.log
 
 # Внутренние документы — не для публичного репо
 docs/AUDIT_PREPARATION_NEXT_STEPS.md
+docs/TODO.md
 docs/HANDOFF_*.md
 docs/Article_EN.md
 docs/ISSUE_*.md

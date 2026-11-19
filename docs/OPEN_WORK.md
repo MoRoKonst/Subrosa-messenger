@@ -7,6 +7,8 @@ verified, is `KNOWN_SECURITY_ISSUES.md` (rows `KL-*`, `OPEN-*`, `S*-*`).
 
 **No external security audit has been done.** An F-Droid listing is not one.
 
+*Not to be confused with `docs/TODO.md`, which several documents here cite: that is the maintainer's internal working file, deliberately not published (see `.gitignore`, "Внутренние документы"). This file is the public list, and it carries only items that another published document already states.*
+
 ## 1. Open, with work or a decision attached
 
 - **OPEN-4** — Desktop client — no static audit yet performed (same bug classes as Android, not yet checked) ([KNOWN_SECURITY_ISSUES.md](KNOWN_SECURITY_ISSUES.md), row `OPEN-4`)
