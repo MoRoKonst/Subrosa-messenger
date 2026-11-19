@@ -80,7 +80,26 @@ dependencies {
     // message (AMR-NB in a 3GPP container, MediaRecorder's format) to WAV
     // for local playback via javax.sound.sampled, which has no AMR decoder
     // of its own — see AudioTranscoder.kt.
-    implementation("ws.schild:jave-all-deps:3.5.0")
+    //
+    // Only the ffmpeg binary for the OS/arch being BUILT is bundled, not all eight platforms
+    // (jave-all-deps carried ~187 MB of ffmpeg for win32/win64/linux32/linux64/linux-arm32/
+    // linux-arm64/osx64/osx-m1; this client's installers are per-OS anyway — see
+    // .github/workflows/desktop-installers.yml — so ~161 MB of that was dead weight in every
+    // installer; measured in _scratch/reports/N6.md / S2.md). jave-core is the Java API; the
+    // nativebin artifact supplies the executable that DefaultFFMPEGLocator finds on the classpath.
+    // Selected by the JVM running Gradle (os.name / os.arch), so each CI matrix entry gets its own.
+    // Consequence: a Windows-built installer no longer carries Linux/macOS ffmpeg, and vice versa;
+    // 32-bit Windows/Linux and Windows-on-ARM are NOT supported by this selection (falls to win64/linux64).
+    val javeNative = System.getProperty("os.name").lowercase().let { os ->
+        val arm = System.getProperty("os.arch").lowercase().let { it.contains("aarch64") || it.contains("arm64") }
+        when {
+            os.contains("win") -> "jave-nativebin-win64"
+            os.contains("mac") -> if (arm) "jave-nativebin-osxm1" else "jave-nativebin-osx64"
+            else -> if (arm) "jave-nativebin-linux-arm64" else "jave-nativebin-linux64"
+        }
+    }
+    implementation("ws.schild:jave-core:3.5.0")
+    implementation("ws.schild:$javeNative:3.5.0")
 
     // ZXing — QR code generation (own invite code) and now also decoding
     // (add-contact-by-QR-image-file — no camera on most desktops, so a file
