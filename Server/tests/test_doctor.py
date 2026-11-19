@@ -111,3 +111,112 @@ def test_output_never_contains_secret_values(tmp_path):
     # the DB key IS set and well-formed here, yet the file is plain SQLite -> that FAIL must name the variable only
     assert "DB_ENCRYPTION_KEY_HEX" in out
     assert p.returncode == 1  # plain DB + key set is a FAIL
+
+
+# ── path-MTU blackhole (S6) ───────────────────────────────────────────────────
+
+IPT_WITHOUT = """-P PREROUTING ACCEPT
+-P INPUT ACCEPT
+-P FORWARD ACCEPT
+-P OUTPUT ACCEPT
+-P POSTROUTING ACCEPT
+"""
+NL = chr(10)
+IPT_WITH = IPT_WITHOUT + "-A POSTROUTING -o eth0 -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1300" + NL
+NFT_WITH = NL.join(["table inet mangle {", " chain post {", "  type filter hook postrouting priority -150;",
+                    "  tcp flags syn tcp option maxseg size set 1300", " }", "}", ""])
+
+
+def test_mtu_parsers_on_recorded_output():
+    assert d.parse_mtu_probing("1" + NL) == 1 and d.parse_mtu_probing("0" + NL) == 0
+    assert d.parse_mtu_probing("") is None and d.parse_mtu_probing("garbage") is None
+    assert d.has_mss_clamp(IPT_WITH) and d.has_mss_clamp(NFT_WITH)
+    assert not d.has_mss_clamp(IPT_WITHOUT) and not d.has_mss_clamp("")
+
+
+def test_mtu_verdict_without_protection_is_warn_not_fail():
+    v = d.mtu_protection_verdict(0, False)
+    assert [x[0] for x in v] == ["WARN"]
+    assert "tcp_mtu_probing=1" in v[0][2] and "Small pages load, large ones hang" in v[0][2]
+
+
+def test_mtu_verdict_with_protection():
+    assert [x[0] for x in d.mtu_protection_verdict(1, False)] == ["PASS"]
+    assert [x[0] for x in d.mtu_protection_verdict(0, True)] == ["PASS"]
+    assert [x[0] for x in d.mtu_protection_verdict(1, True)] == ["PASS", "PASS"]
+
+
+def test_mtu_verdict_unreadable_firewall_is_info_not_warn():
+    v = d.mtu_protection_verdict(0, "unknown")
+    assert [x[0] for x in v] == ["INFO"] and "sudo" in v[0][2]
+    assert "FAIL" not in [x[0] for x in d.mtu_protection_verdict(None, False)]
+
+
+def test_size_probe_classification():
+    ok_small = (404, 300, 0.01)
+    assert d.classify_size_probe(ok_small, (200, 31000, 0.05))[0] == "PASS"
+    assert d.classify_size_probe(ok_small, (200, 120, 0.01))[0] == "INFO"
+    assert d.classify_size_probe(ok_small, TimeoutError())[0] == "FAIL"
+    assert d.classify_size_probe(None, None) is None
+    assert d.classify_size_probe(Exception("x"), (200, 31000, 0.1)) is None
+
+
+def _serve(handler_factory):
+    import socketserver
+    import threading
+    srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), handler_factory)
+    srv.daemon_threads = True
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def test_size_probe_live_against_a_loopback_server_that_serves_both_sizes():
+    import http.server
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b"x" * 31000 if self.path == "/" else b"nope"
+            self.send_response(200 if self.path == "/" else 404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *a): pass
+    srv = _serve(H)
+    try:
+        port = srv.server_address[1]
+        small, large = d._http_get(port, "/nothing", False), d._http_get(port, "/", False)
+        assert small[0] == 404 and large[1] == 31000
+        assert d.classify_size_probe(small, large)[0] == "PASS"
+    finally:
+        srv.shutdown()
+
+
+def test_size_probe_live_detects_a_server_that_hangs_on_large_responses():
+    """A real socket server that answers small requests and stalls after the headers of a large one."""
+    import socketserver
+    import time as _t
+    CRLF = chr(13) + chr(10)
+
+    class H(socketserver.StreamRequestHandler):
+        def handle(self):
+            line = self.rfile.readline().decode()
+            while self.rfile.readline() not in (CRLF.encode(), b""):
+                pass
+            if " / " in line:
+                self.wfile.write(("HTTP/1.1 200 OK" + CRLF + "Content-Length: 31000" + CRLF + CRLF).encode() + b"x" * 1000)
+                self.wfile.flush()
+                _t.sleep(8)                      # never delivers the rest
+            else:
+                self.wfile.write(("HTTP/1.1 404 Not Found" + CRLF + "Content-Length: 4" + CRLF + CRLF + "nope").encode())
+    srv = _serve(H)
+    try:
+        port = srv.server_address[1]
+        small = d._http_get(port, "/nothing", False, timeout=2)
+        try:
+            large = d._http_get(port, "/", False, timeout=2)
+        except Exception as e:
+            large = e
+        res = d.classify_size_probe(small, large)
+        assert res and res[0] == "FAIL" and "even on loopback" in res[1]
+    finally:
+        srv.shutdown()

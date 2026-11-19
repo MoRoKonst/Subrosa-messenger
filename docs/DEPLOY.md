@@ -531,6 +531,13 @@ sysctl -w net.ipv4.tcp_mtu_probing=1
 iptables -t mangle -A POSTROUTING -o eth0 -p tcp   --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1300
 ```
 
+`subrosa_doctor.py` now reports whether the host has either protection (`WARN`
+when neither `tcp_mtu_probing` nor a `TCPMSS` rule exists — a missing safety net,
+not a fault) and, on loopback only, whether the local web server serves a large
+response as easily as a small one. That second check **cannot see** an MTU
+blackhole (loopback never crosses the bad link); it tells you the origin is fine,
+which together with "big pages hang from outside" points at the path.
+
 Persist both, or a reboot quietly brings the outage back — on our host that is
 `/etc/sysctl.d/99-subrosa-mtu.conf` plus a one-shot systemd unit
 (`subrosa-mss-clamp.service`). After the clamp, the 31 KB page went from never
