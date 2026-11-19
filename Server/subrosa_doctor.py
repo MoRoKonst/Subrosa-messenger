@@ -499,6 +499,9 @@ def _http_get(port, path, use_tls, timeout=5):
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE                # loopback only; we are not validating identity here
+        # Loopback-only probe of our own nginx with a self-signed/unverifiable certificate: the point is
+        # "does a big response arrive", not "is this peer who it says" — nothing leaves this machine.
+        # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected
         conn = http.client.HTTPSConnection("127.0.0.1", port, timeout=timeout, context=ctx)
     else:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
