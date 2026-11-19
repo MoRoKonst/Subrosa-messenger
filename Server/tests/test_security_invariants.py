@@ -157,6 +157,31 @@ async def drain_until(ws, msg_type, timeout=3.0):
                 return msg
 
 
+async def wait_until(predicate, timeout=20.0):
+    """Wait for server state to reach a condition, instead of assuming a fixed
+    sleep is long enough to get there.
+
+    running_server runs the server IN THIS PROCESS, on this event loop, so work
+    a test waits for competes with the rest of the suite and with whatever else
+    CI has scheduled on that box. A sleep that is generous on a developer's
+    machine is a stopwatch wired to the assertion on a loaded runner, and a test
+    that fails for reasons unrelated to what it asserts teaches everyone to
+    re-run CI until green.
+
+    Only for an assertion that something APPEARS. An assertion that something is
+    absent still needs its own reasoning: polling for it would succeed
+    immediately, before the thing it forbids had any chance to show up.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        if predicate():
+            return True
+        if loop.time() >= deadline:
+            return False
+        await asyncio.sleep(0.05)
+
+
 # ── 1. recovery-код потребляется атомарно ───────────────────────────────
 
 async def test_recovery_code_consumed_exactly_once_under_concurrency():
@@ -3296,7 +3321,10 @@ async def test_federation_dedup_cache_never_exceeds_max_ids(running_server):
                     "type": "federated_forward", "to": canonical_fingerprint(f"NOSUCHUSER_MAXIDS_{i}"),
                     "payload": {"id": f"fed-maxids-{i}", "type": "message", "text": "x", "from": sender},
                 }))
-            await asyncio.sleep(0.5)
+            # Wait for the last of the 20 to be processed rather than assuming
+            # half a second is enough to get there.
+            assert await wait_until(
+                lambda: "fed-maxids-19" in server.delivered_msg_ids)
             assert len(server.delivered_msg_ids) <= 5
             # Evicting the OLDEST tombstone is the documented trade-off --
             # the most recent ones must be what's retained.
@@ -8076,8 +8104,7 @@ async def test_json_list_handshake_rejected_cleanly(running_server):
     # Server must still be alive and accepting new connections afterward.
     ws2, fp, _, _ = await connect_and_register(running_server, device_id="s645-after-list-handshake")
     try:
-        await asyncio.sleep(0.1)
-        assert fp in server.clients
+        assert await wait_until(lambda: fp in server.clients)
     finally:
         await ws2.close()
 
@@ -8584,7 +8611,17 @@ async def test_official_client_pow_nonce_still_works(running_server):
                 "public_key": base64.b64encode(pub_der).decode(),
                 "device_id": device_id,
             }))
-            reply = await drain_until(ws, "pow_required")
+            # Explicit, generous budgets instead of the module default of 3 s.
+            # This test failed twice in CI with a bare TimeoutError while all
+            # 805 others passed, and it is the one most exposed to a slow
+            # runner: the server runs IN THIS PROCESS (the running_server
+            # fixture, not a subprocess), so registration work and the test
+            # share one event loop and one CPU with whatever else GitHub has
+            # put on that box. Three seconds is a stopwatch, not an assertion
+            # -- nothing about this test is about how fast a register is, and
+            # a flaky failure here teaches people to re-run CI until it is
+            # green, which is how a real failure gets waved through.
+            reply = await drain_until(ws, "pow_required", timeout=20.0)
             difficulty = reply["difficulty_bits"]
 
             # Mirrors Android's solveProofOfWork(): counter.toString(), the
@@ -8610,7 +8647,7 @@ async def test_official_client_pow_nonce_still_works(running_server):
                 "device_id": device_id,
                 "pow_nonce": nonce,
             }))
-            ok = await drain_until(ws, "register_ok")
+            ok = await drain_until(ws, "register_ok", timeout=20.0)
             assert ok["type"] == "register_ok"
         finally:
             await ws.close()
