@@ -3,7 +3,7 @@
 *Created 2026-08-30, extended 2026-09-03 with §7 (Double Ratchet epoch handling) and, later the
 same day, §8 (registration gates) plus a full rewrite of §1/§2 (anonymous-token durability). This
 document exists because the actual bug history of this project (recorded across
-`SECURITY_CHANGELOG.md`, `KNOWN_SECURITY_ISSUES.md`, `TODO.md`, `ISSUE_backup_identity_hijack.md`)
+`SECURITY_CHANGELOG.md`, `KNOWN_SECURITY_ISSUES.md`, `ISSUE_backup_identity_hijack.md`)
 is dominated by state-consistency bugs — token lifecycle, mailbox, retry/ack, bootstrap, Double
 Ratchet epoch/backup-restore interaction, and (as of §8) registration/device-authentication gate
 ordering — not the underlying primitives (AES-GCM, HKDF, Argon2id) themselves, which have had
