@@ -3296,7 +3296,15 @@ async def test_federation_dedup_cache_never_exceeds_max_ids(running_server):
                     "type": "federated_forward", "to": canonical_fingerprint(f"NOSUCHUSER_MAXIDS_{i}"),
                     "payload": {"id": f"fed-maxids-{i}", "type": "message", "text": "x", "from": sender},
                 }))
-            await asyncio.sleep(0.5)
+            # Wait for the last of the 20 to be processed rather than
+            # assuming half a second is enough: on a loaded CI runner the
+            # server shares this process and loop with the rest of the
+            # suite, and a fixed sleep made this test fail with only the
+            # first few ids in the cache.
+            for _ in range(400):
+                if "fed-maxids-19" in server.delivered_msg_ids:
+                    break
+                await asyncio.sleep(0.05)
             assert len(server.delivered_msg_ids) <= 5
             # Evicting the OLDEST tombstone is the documented trade-off --
             # the most recent ones must be what's retained.
