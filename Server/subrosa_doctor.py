@@ -550,11 +550,31 @@ def check_totp_encryption():
 
 
 def check_backups():
+    """Absence of backups is INFO here, not WARN, and that is a deliberate
+    product decision rather than leniency.
+
+    This server is a relay. It holds no plaintext and no chat history -- history
+    lives on the clients, which have their own encrypted export. The intended
+    operating model is that the relay is disposable: if it dies or is seized, you
+    stand up another one. Backing it up adds a second copy of the one thing worth
+    stealing (registered identities, TOTP secrets, access-code hashes) and one
+    more thing to get wrong.
+
+    What a replacement does cost is written down in docs/DEPLOY.md
+    ("Replacing the server instead of backing it up"); the one that bites an
+    operator is that revocations are gone, so anyone cut off can register again
+    until they are re-revoked.
+
+    So: if backups exist, report on their freshness, because an operator who set
+    them up wants to know they are running. If they do not, say so once and move
+    on -- a support tool that warns about a decision the project made on purpose
+    teaches people to ignore its warnings."""
     candidates = ["/opt/beacon/backups", "backups", "/var/backups/subrosa"]
     found = next((c for c in candidates if os.path.isdir(c)), None)
     if not found:
-        report("WARN", "no backup directory found in common locations",
-               ", ".join(candidates) + " — confirm backups exist somewhere, this check can't see custom paths")
+        report("INFO", "no database backups here — fine, the relay is meant to be replaceable",
+               "if you do want them: deploy/db_backup.py, and see 'Replacing the server "
+               "instead of backing it up' in docs/DEPLOY.md for what a replacement costs")
         return
     files = [os.path.join(found, f) for f in os.listdir(found)]
     files = [f for f in files if os.path.isfile(f)]

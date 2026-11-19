@@ -362,6 +362,49 @@ the backup in place as `messages.db`, start the server.
 
 ---
 
+## Replacing the server instead of backing it up
+
+This project's own deployment runs **without database backups on purpose**, and
+it is worth saying why, because the absence looks like an omission.
+
+The server is a relay. It holds no plaintext and no chat history — history lives
+on the clients, which have their own encrypted export (`BackupArchive`). A
+backup of the relay is therefore a second copy of the only part of it worth
+stealing — registered identities, TOTP secrets, access-code hashes — and one
+more moving part to get wrong. The intended model is the opposite: the relay is
+replaceable. If the host dies, is seized, or just needs to move, you stand up
+another one with `deploy/install.sh` and point DNS at it.
+
+What a replacement costs, plainly, because a customer will ask:
+
+1. **Undelivered queued messages are lost.** They carry a 24-hour TTL anyway and
+   the sender's client already shows them as not delivered.
+2. **Everyone registers again**: identities, device pins, TOTP enrolment, access
+   codes. Chat history on the devices is untouched — that is the point.
+3. **Revocations are gone.** Anyone the operator cut off can register on the new
+   server until they are revoked again (`admin_users.py revoke`). This is the one
+   item that genuinely needs to outlive the host, and it is a short list of
+   fingerprints — keep it somewhere else, not only on the server.
+4. **Spent anonymous-token tombstones are gone.** `anon_token_state` keeps
+   SPENT/REVOKED rows as durable tombstones exactly so a token cannot be spent
+   twice (it is also why `synchronous=FULL` is not negotiable there). A fresh
+   database has no tombstones, so a token a client still holds and re-subscribes
+   counts as ACTIVE on the new server. What refuses a replayed *message* is the
+   recipient's own ratchet rather than the server, and a swap does not change
+   that — but it was not re-verified for this note, so do not present a server
+   swap as replay-neutral at the transport layer.
+5. **Nothing else.** No user key material lives here, and the server has never
+   been able to read a message.
+
+If a particular client's policy does demand backups, `deploy/db_backup.py` is
+written and tested, and `deploy/upgrade.sh` already takes one before every
+update — so the update path is covered regardless of this decision.
+`subrosa_doctor.py` reports their absence as INFO, not a warning, for the same
+reason: a support tool that warns about a deliberate choice teaches people to
+ignore its warnings.
+
+---
+
 ## Seats: who is on the server, and cutting someone off
 
 `Server/admin_users.py` works directly on the SQLite file `server.py` uses
