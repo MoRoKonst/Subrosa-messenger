@@ -153,8 +153,8 @@ android {
         // and for Android's own upgrade check; versionName is what users see.
         // 1.1.0 rather than 1.0.1 because dropping Firebase and Play Services
         // changes what the app is, not just how it behaves.
-        versionCode = 7
-        versionName = "1.1.3"
+        versionCode = 8
+        versionName = "1.1.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures {

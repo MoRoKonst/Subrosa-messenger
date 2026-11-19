@@ -38,6 +38,7 @@ nothing used them (see the end).
 | `MODIFY_AUDIO_SETTINGS` | Switching between earpiece and speaker during a call. |
 | `USE_BIOMETRIC`, `USE_FINGERPRINT` | Unlocking the app with a fingerprint. These two are not in this project's manifest at all — they arrive from `androidx.biometric` and appear in the merged manifest of the built APK, which is why they are listed here: what a user sees on the install screen is the merged list, not ours. |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Offered, not demanded: a screen in the app explains that aggressive battery management kills the connection, and lets the user exempt it. The app works without it, less reliably. |
+| `com.subrosa.messenger.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` | Not a permission anyone grants and not one a user is shown: `androidx.core` declares it at `signature` protection level and uses it to keep a dynamically registered broadcast receiver unexported, so only code signed with the same key can reach it. It is in the merged manifest of the built APK, which is why it is here; counting it, the merged manifest has 23 entries, of which 22 are permissions in the ordinary sense. |
 
 ## Removed in this pass
 
