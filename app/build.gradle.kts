@@ -254,8 +254,34 @@ android {
             // stays blocked in every shipped build. See the debug type's own
             // comment for why the flag exists at all.
             buildConfigField("boolean", "ALLOW_SCREENSHOTS", "false")
+            // Tamper check, and the one line that decides whether a build that is
+            // NOT ours can run at all.
+            //
+            // SignatureValidator compares the installed APK's signing certificate
+            // against one hardcoded fingerprint, and MainActivity turns a mismatch
+            // into a dialog with a single Close button. That is right for our own
+            // published APK: a repackager strips the signature, re-signs with their
+            // own key, and the check catches exactly that.
+            //
+            // It is wrong for anyone else who builds from source. F-Droid signs with
+            // its own key, so every F-Droid user would have launched the app into
+            // "App integrity violated" and a dead end -- reported by their reviewer
+            // on a real device (fdroid/fdroiddata!56861, 2026-11-12) and the reason
+            // inclusion was blocked.
+            //
+            // Tied to canSignRelease rather than to a flavour or a flag someone can
+            // pass, because it is the same condition that decides whether this build
+            // IS ours: enforcement exists exactly where the keystore does. Repackaging
+            // our APK is still caught, since that APK carries this compiled in as true
+            // and the attacker's certificate still will not match. Building from source
+            // was never something this check could speak to -- anyone doing that can
+            // delete the check outright.
+            buildConfigField("boolean", "ENFORCE_SIGNATURE", canSignRelease.toString())
         }
         debug {
+            // Never enforced in debug; the check is already skipped there, but
+            // BuildConfig needs the field to exist in every build type.
+            buildConfigField("boolean", "ENFORCE_SIGNATURE", "false")
             // Empty on purpose: debug builds talk to localhost, the emulator
             // host and a test server whose certificate is not the pinned one.
             buildConfigField("String", "CERT_PINS", "\"\"")

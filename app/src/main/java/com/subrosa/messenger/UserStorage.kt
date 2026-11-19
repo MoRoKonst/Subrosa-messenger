@@ -578,9 +578,20 @@ object UserStorage {
             .edit().putBoolean("biometric_unlock_enabled", enabled).apply()
     }
 
+    /** The UI language: what the user picked, or the device's own language.
+     *
+     *  This used to return "ru" whenever nothing was stored, so a phone set to
+     *  English opened the app in Russian -- raised by the F-Droid reviewer
+     *  (fdroid/fdroiddata!56861) and fair: nobody picked Russian, it was just the
+     *  author's language. Only the DEFAULT changed; an explicit choice is still
+     *  whatever the user set, and setLanguage() writes that key the moment they
+     *  choose. The app ships two languages, so anything that is not Russian maps
+     *  to English rather than to an empty UI. */
     fun getLanguage(context: Context): String {
-        return context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-            .getString("app_language", "ru") ?: "ru"
+        val stored = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+            .getString("app_language", null)
+        if (!stored.isNullOrBlank()) return stored
+        return if (java.util.Locale.getDefault().language == "ru") "ru" else "en"
     }
 
     fun setLanguage(context: Context, langCode: String) {
