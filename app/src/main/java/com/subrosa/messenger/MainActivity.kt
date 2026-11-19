@@ -256,7 +256,12 @@ class MainActivity : FragmentActivity() {
                             }
                             rootCheckResult = result
                         }
-                        if (!BuildConfig.DEBUG) {
+                        // ENFORCE_SIGNATURE is true only in a build we signed
+                        // ourselves (see app/build.gradle.kts). F-Droid and anyone
+                        // else building from source sign with their own key, and
+                        // blocking those launched every F-Droid user straight into
+                        // a dialog with one Close button.
+                        if (!BuildConfig.DEBUG && BuildConfig.ENFORCE_SIGNATURE) {
                             val sigOk = withContext(Dispatchers.IO) { SignatureValidator.isValidSignature(applicationContext) }
                             if (!sigOk) signatureTampered = true
                         }

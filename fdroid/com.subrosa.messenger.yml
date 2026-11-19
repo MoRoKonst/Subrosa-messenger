@@ -99,6 +99,6 @@ MaintainerNotes: |-
   the full description and docs/KNOWN_SECURITY_ISSUES.md.
 
 AutoUpdateMode: Version
-UpdateCheckMode: Tags ^v[0-9.]+$
+UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
 CurrentVersion: 1.1.3
 CurrentVersionCode: 7
