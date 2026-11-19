@@ -382,11 +382,17 @@ been compromised". Every connection attempt by that identity is refused
 (`identity_revoked`), and a session that is **open right now** is cut by the
 server's revoked-sessions sweep: the person receives `identity_revoked` and the
 socket is closed within `REVOKED_SESSION_SWEEP_INTERVAL_SEC` (default 30 s;
-measured 29.4 s on a local server). It does **not** free the seat
-(`MAX_REGISTERED_USERS` counts every fingerprint ever registered — an open
-decision), does **not** delete queued messages or device keys, and does **not**
-cancel unused access codes that person may still hold: with one they could
-register a *new* identity.
+measured 29.4 s on a local server). It also **frees the seat**:
+`MAX_REGISTERED_USERS` is now counted against the identities that can still
+connect, so a revoked one no longer occupies a place you paid for. The row
+stays in `registered_fingerprints`, both because that fingerprint must never
+be allowed back and because `REGISTERED_ACCOUNTS_HARD_MAX_ROWS` — the safety
+ceiling on table growth — deliberately still counts it.
+
+What `revoke` does **not** do: it does not delete that identity's queued
+messages, device keys or TOTP state, and it does not cancel unused access
+codes the person may still hold — with one, they could register a *new*
+identity. Use `codes --delete` below for that.
 
 Access codes: `admin_users.py codes` lists unused codes by the first characters
 of their SHA-256 (the server stores only hashes, so a code can never be shown

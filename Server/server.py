@@ -2590,13 +2590,21 @@ if REGISTERED_ACCOUNTS_HARD_MAX_ROWS <= 0:
 
 
 def effective_registration_cap() -> int:
-    """The cap actually enforced by db_admit_new_fingerprint() for a brand-
-    new fingerprint (S6-56) — MAX_REGISTERED_USERS remains the operator's
-    own deployment-specific policy cap (0 meaning "no smaller cap than the
-    hard ceiling below", never "no ceiling at all" anymore), while
-    REGISTERED_ACCOUNTS_HARD_MAX_ROWS is the always-on safety ceiling no
-    configuration can raise past. An operator cap smaller than the hard
-    ceiling still wins, exactly as before this fix."""
+    """The number to SHOW an operator as "the ceiling for new accounts".
+
+    No longer what db_admit_new_fingerprint() enforces, and the difference
+    matters: enforcement is two separate checks now, because one number was
+    doing two jobs. REGISTERED_ACCOUNTS_HARD_MAX_ROWS (S6-56) bounds the
+    TABLE and is checked against every row, revoked included.
+    MAX_REGISTERED_USERS bounds SEATS and is checked against the identities
+    that can actually still connect, so revoking someone returns their seat.
+    Both are applied inside _db_admit_new_fingerprint_sync(), in its own
+    transaction; see the comment there.
+
+    This helper keeps the old min() for the two places that print a figure
+    to a human (the "server full" message and the startup banner): the
+    smaller of the two is still the honest answer to "how many more can
+    register", and 0/unset still never means "no ceiling at all"."""
     if MAX_REGISTERED_USERS > 0:
         return min(MAX_REGISTERED_USERS, REGISTERED_ACCOUNTS_HARD_MAX_ROWS)
     return REGISTERED_ACCOUNTS_HARD_MAX_ROWS
@@ -5388,7 +5396,8 @@ def _db_count_registered_fingerprints_sync() -> int:
         return conn.execute("SELECT COUNT(*) FROM registered_fingerprints").fetchone()[0]
 
 
-def _db_admit_new_fingerprint_sync(fingerprint: str, max_users: int, access_code: str, require_access_code: bool):
+def _db_admit_new_fingerprint_sync(fingerprint: str, max_users: int, access_code: str,
+                                  require_access_code: bool, hard_max: int = None):
     """Atomic cap-check + access-code-consume + insert, all in ONE
     transaction (external review 2026-09-03) — replaces the old two-step
     cap-check-and-insert (formerly _db_try_register_new_fingerprint_sync,
@@ -5440,9 +5449,32 @@ def _db_admit_new_fingerprint_sync(fingerprint: str, max_users: int, access_code
                 conn.commit()
                 return "exists"
 
+            # TWO counters, because one number was doing two different jobs.
+            # REGISTERED_ACCOUNTS_HARD_MAX_ROWS (S6-56) exists to stop the TABLE
+            # growing without bound, so it counts rows -- every row, revoked ones
+            # included, since a revoked row still occupies storage.
+            # MAX_REGISTERED_USERS is the operator's seat count, and a seat is a
+            # person who can connect. An identity the operator revoked cannot,
+            # so counting it against their paid seats meant "the employee left and
+            # the seat is gone forever" -- the Firm tier promises the opposite.
+            # Safe against KL-26 (mass registration): only the operator can write
+            # revoked_fingerprints, through admin_users.py or the owner's own
+            # revoke_identity, never an attacker, so nothing here can be used to
+            # free seats at will. The revoked fingerprint also stays blocked by
+            # db_is_fingerprint_revoked() and can never come back.
+            ceiling = REGISTERED_ACCOUNTS_HARD_MAX_ROWS if hard_max is None else hard_max
+            total_rows = conn.execute("SELECT COUNT(*) FROM registered_fingerprints").fetchone()[0]
+            if total_rows >= ceiling:
+                conn.rollback()
+                return "full"
+
             if max_users > 0:
-                count = conn.execute("SELECT COUNT(*) FROM registered_fingerprints").fetchone()[0]
-                if count >= max_users:
+                active = conn.execute(
+                    "SELECT COUNT(*) FROM registered_fingerprints rf "
+                    "WHERE NOT EXISTS (SELECT 1 FROM revoked_fingerprints rv "
+                    "                  WHERE rv.fingerprint = rf.fingerprint)"
+                ).fetchone()[0]
+                if active >= max_users:
                     conn.rollback()
                     return "full"
 
@@ -5478,10 +5510,11 @@ async def db_is_fingerprint_registered(fingerprint):
     return await loop.run_in_executor(None, _db_is_fingerprint_registered_sync, fingerprint)
 
 
-async def db_admit_new_fingerprint(fingerprint, max_users, access_code, require_access_code):
+async def db_admit_new_fingerprint(fingerprint, max_users, access_code, require_access_code, hard_max=None):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        None, _db_admit_new_fingerprint_sync, fingerprint, max_users, access_code, require_access_code
+        None, _db_admit_new_fingerprint_sync, fingerprint, max_users, access_code,
+        require_access_code, hard_max
     )
 
 
@@ -9010,16 +9043,17 @@ async def handle_client(websocket):
                             return
                     else:
                         access_code = ""
-                    # effective_registration_cap() (S6-56), not the raw
-                    # MAX_REGISTERED_USERS setting — 0/unset no longer means
-                    # "no cap enforced at all" here, it means "no smaller
-                    # operator-defined cap than REGISTERED_ACCOUNTS_HARD_MAX_
-                    # ROWS". _db_admit_new_fingerprint_sync()'s own cap check
-                    # (`if max_users > 0`) is unchanged — it always receives
-                    # a strictly-positive value now, since the hard ceiling
-                    # is itself always > 0.
+                    # The raw operator setting, deliberately: since the two
+                    # counters were split, the hard ceiling of S6-56 is applied
+                    # inside _db_admit_new_fingerprint_sync() against the row
+                    # count, and it no longer needs to be folded into the number
+                    # passed here. Passing effective_registration_cap() now
+                    # would enforce the hard ceiling against the count of
+                    # NON-REVOKED identities, which is weaker than S6-56 asks
+                    # for. 0/unset still does not mean "no cap": the ceiling
+                    # always applies, it is just enforced where it belongs.
                     admit = await db_admit_new_fingerprint(
-                        candidate_username, effective_registration_cap(), access_code, SERVER_ACCESS_PROTECTED
+                        candidate_username, MAX_REGISTERED_USERS, access_code, SERVER_ACCESS_PROTECTED
                     )
                     if admit == "full":
                         print(f"[SECURITY] register: сервер заполнен (эффективный потолок "
