@@ -21,6 +21,14 @@ Builds:
       - foss
     gradleprops:
       - subrosaAllowUnpinnedRelease=true
+  - versionName: 1.1.3
+    versionCode: 7
+    commit: 93dc51f29092a9152f42a0e6e9a380e162e8f9be
+    subdir: app
+    gradle:
+      - foss
+    gradleprops:
+      - subrosaAllowUnpinnedRelease=true
 
 MaintainerNotes: |-
   The `foss` product flavour is the one to build. It links no Google code at
@@ -92,5 +100,5 @@ MaintainerNotes: |-
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 1.1.2
-CurrentVersionCode: 6
+CurrentVersion: 1.1.3
+CurrentVersionCode: 7
