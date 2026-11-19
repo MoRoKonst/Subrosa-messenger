@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # deploy/install.sh — one-script install of a Subrosa server with docker compose.
 #
-# STATUS: DRAFT. NOT YET RUN. The machine this was written on has no Docker, so
-# neither a clean-host walkthrough nor the idempotence re-run happened (see
-# _scratch/reports/R1.md). `bash -n` passes. Do not hand this to a customer
-# until it has been run on a throwaway Linux host, twice.
+# STATUS: run end to end on a clean Ubuntu 24.04 host on 2026-11-19, twice --
+# once from a bare machine (about 7 minutes from nothing to a healthy stack,
+# most of it the image build) and once more on top of itself to check that it
+# leaves an existing .env and certificate alone. Three defects in the
+# documented path were found by doing that and fixed in the same pass: a
+# pinned miniupnpc version that no longer exists in Debian 13, a missing
+# executable bit on generate-certs.sh, and a UTF-8 BOM in deploy/nginx.conf
+# that nginx rejects outright.
 #
 # Does exactly this, and stops with a plain message at the first problem:
 #   1. checks docker and docker compose
@@ -22,8 +26,12 @@
 # Usage:  SERVER_URL=wss://chat.example.com ACCESS_CODES=5 bash deploy/install.sh
 
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"
-# Access-code protection (SERVER_ACCESS_PROTECTED) is OFF by default here: with it ON the current
-# server.py crashes at start (UnboundLocalError on `os`, start_server(), found 2026-11-19).
+# Access-code protection (SERVER_ACCESS_PROTECTED) is OFF by default here because whether a
+# server is open or invite-only is the operator's decision, not an installer's. It is safe to
+# turn on: the UnboundLocalError that used to crash start_server() under it is fixed, and a
+# regression test (Server/tests/test_no_shadowed_imports.py) keeps that class of bug out.
+# A firm deployment wants it ON -- pass ACCESS_CODES=5 and set SERVER_ACCESS_PROTECTED=true
+# in .env.
 ACCESS_CODES="${ACCESS_CODES:-0}"
 CONTAINER="subrosa-messenger-server"
 

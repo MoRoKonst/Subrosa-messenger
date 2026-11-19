@@ -498,6 +498,46 @@ needed changing at all.
 
 ---
 
+### Small pages load, large ones hang (path MTU blackhole)
+
+Measured on this project's own server on 2026-11-19. Worth recognising fast,
+because every layer you would normally suspect looks healthy:
+
+- On the host, everything works. `curl -k https://127.0.0.1:4443/` returns the
+  whole page in milliseconds.
+- From outside, the TCP handshake completes and TLS negotiates — then the
+  connection hangs with **zero bytes received**, but only when the response is
+  large. A 404 (a few hundred bytes) comes back in the same conditions where a
+  31 KB page never does.
+- With Cloudflare in front it surfaces as **error 521**, which reads as "origin
+  is down" and sends you to the wrong layer entirely. nginx's own stream log
+  had already recorded Cloudflare's edge IPs with `sent=13420 dur=75s`: the
+  origin answered, the answer never arrived.
+
+Cause: path MTU discovery is blackholed upstream — full-size segments are
+dropped and no ICMP "fragmentation needed" comes back, so the sender never
+learns. Nothing on the origin reports a problem, because as far as it is
+concerned the bytes went out.
+
+The one-command way to tell this apart from SNI filtering or a dead origin:
+ask for a nonexistent path (tiny response) and then the index page (large),
+same host, same port. Small answers and large hangs means MTU. Both failing
+means something else.
+
+Fix:
+
+```bash
+sysctl -w net.ipv4.tcp_mtu_probing=1
+iptables -t mangle -A POSTROUTING -o eth0 -p tcp   --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1300
+```
+
+Persist both, or a reboot quietly brings the outage back — on our host that is
+`/etc/sysctl.d/99-subrosa-mtu.conf` plus a one-shot systemd unit
+(`subrosa-mss-clamp.service`). After the clamp, the 31 KB page went from never
+arriving to 0.84 s.
+
+---
+
 ## Security Recommendations
 
 ### 1. Use Strong TLS Certificates

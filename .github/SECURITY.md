@@ -13,7 +13,10 @@ vulnerability* button on the [Security
 tab](https://github.com/MoRoKonst/Subrosa-messenger/security). It is private
 until we publish, it threads, and it does not depend on an inbox being watched.
 
-**Alternative:** `security@subrosamessenger.com`.
+**Alternative:** `developer@beacon-app.org`. Beacon was this project's
+earlier name; the address is the maintainer's working mailbox and predates the
+rename. It is deliberately not an address at `subrosamessenger.com`: that
+domain has no MX records, so mail to it bounces rather than waits.
 
 Please do **not** open a public issue for a vulnerability, and do not report it
 through the app itself — the app is the thing under discussion.
