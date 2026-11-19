@@ -13,6 +13,8 @@ docs/DEPLOY.md), not to a generic hardening checklist:
   3. DB_PATH points outside the mounted volume                     (docker-compose.yml, "found live")
   4. DB_ENCRYPTION_KEY_HEX malformed / sqlcipher missing           (server dies at start)
   5. TLS certificate expired or about to                           (DEPLOY.md renewal section)
+  6. no protection against a path-MTU blackhole                    (DEPLOY.md, "Small pages load, large
+     ones hang" — 2026-11-19: Cloudflare 521 while the origin was healthy)
 
 Read-only: never modifies anything, never opens a connection to anything but
 this machine's own port table and local files, never sends data anywhere.
@@ -40,11 +42,14 @@ Exit code 0 if no FAIL, 1 if at least one FAIL (WARN/INFO don't affect it).
 """
 import argparse
 import calendar
+import glob
+import http.client
 import io
 import json
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import time
@@ -263,6 +268,12 @@ def check_tls_cert():
         "certs/cert.pem",
         "../deploy/certs/cert.pem",
     ]
+    # Certbot's layout, which this list did not know about: on our own host the
+    # real certificates are Let's Encrypt ones under /etc/letsencrypt, so the
+    # check reported "no cert.pem found" on a deployment with two perfectly valid
+    # certificates and never looked at their expiry -- the one thing it exists
+    # for. Globbed rather than named, since the directory is the domain.
+    candidates += sorted(glob.glob("/etc/letsencrypt/live/*/fullchain.pem"))
     cert_path = next((c for c in candidates if os.path.exists(c)), None)
     if not cert_path:
         report("WARN", "no cert.pem found in expected locations", ", ".join(candidates))
@@ -408,6 +419,125 @@ def check_db_path_volume_trap():
                f"{cpath}; mounts are {', '.join(dests) or 'none'} — data is lost when the container is recreated")
 
 
+# ── 6. Path-MTU blackhole ────────────────────────────────────────────────
+# DEPLOY.md, "Small pages load, large ones hang": full-size TCP segments are dropped upstream and no
+# ICMP "fragmentation needed" returns, so small responses arrive and large ones never do. Every layer
+# on the host looks healthy; Cloudflare shows 521. Two checks: (a) is the host protected against it
+# (a missing protection is a WARN, never a FAIL — it is the absence of a safety net, not a fault);
+# (b) does the origin itself serve a large response, on LOOPBACK ONLY. (b) cannot detect an MTU
+# blackhole — loopback never crosses the bad link — but it is the discriminating test the DEPLOY.md
+# section describes: "origin fine locally + big responses hang from outside" => suspect MTU.
+
+MTU_DOC = "docs/DEPLOY.md, 'Small pages load, large ones hang'"
+
+
+def parse_mtu_probing(text):
+    """Value of net.ipv4.tcp_mtu_probing (0 off, 1 on after a blackhole, 2 always) or None."""
+    try:
+        return int(text.strip().split()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def has_mss_clamp(text):
+    """True if iptables/nft output contains a TCPMSS clamp (`-j TCPMSS --set-mss N`/`--clamp-mss-to-pmtu`, or nft `maxseg size`)."""
+    return bool(re.search(r"TCPMSS|maxseg\s+size", text or ""))
+
+
+def mtu_protection_verdict(probing, clamp):
+    """probing: int or None; clamp: True / False / 'unknown' (couldn't read the firewall).
+    Returns a list of (level, name, detail)."""
+    out = []
+    if probing:
+        out.append(("PASS", f"TCP MTU probing is on (net.ipv4.tcp_mtu_probing={probing})", ""))
+    if clamp is True:
+        out.append(("PASS", "a TCPMSS clamp rule exists in the firewall", ""))
+    if probing or clamp is True:
+        return out
+    if clamp == "unknown":
+        out.append(("INFO", "tcp_mtu_probing is off and the firewall's mangle table could not be read",
+                    "re-run with sudo to see whether a TCPMSS clamp exists"))
+        return out
+    out.append(("WARN", f"no protection against a path-MTU blackhole (tcp_mtu_probing={probing}, no TCPMSS clamp)",
+                "not a fault by itself. If a small page loads from outside but a large one hangs (Cloudflare 521 while "
+                f"the origin is fine): sysctl -w net.ipv4.tcp_mtu_probing=1 and clamp MSS — {MTU_DOC}"))
+    return out
+
+
+def check_mtu_protection():
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        probing = parse_mtu_probing(open("/proc/sys/net/ipv4/tcp_mtu_probing").read())
+    except OSError:
+        probing = None
+    clamp = "unknown"
+    for cmd in (["iptables", "-t", "mangle", "-S"], ["nft", "list", "ruleset"]):
+        ok, out = run(cmd)
+        if ok:
+            clamp = has_mss_clamp(out)
+            if clamp:
+                break
+    for item in mtu_protection_verdict(probing, clamp):
+        report(*item)
+
+
+def classify_size_probe(small, large):
+    """small/large = (status, nbytes, seconds) or an Exception/None. Returns (level, name, detail) or None."""
+    if small is None and large is None:
+        return None                                    # nothing answered on loopback: not this check's business
+    if small is None or isinstance(small, Exception):
+        return None
+    if large is None or isinstance(large, Exception):
+        return ("FAIL", "the local web server answers a small request but a large one fails or hangs, even on loopback",
+                f"{type(large).__name__ if large else 'no response'} — this is the origin itself (proxy buffers, temp dir "
+                f"permissions, upstream), not the network path")
+    status, n, secs = large
+    if n < 4000:
+        return ("INFO", "no large response on the local web server to compare against a small one",
+                f"'/' returned {n} bytes (status {status}); if a big page hangs from outside, see {MTU_DOC}")
+    return ("PASS", f"the local web server serves a large response fine on loopback ({n} bytes in {secs:.2f}s)",
+            f"if the SAME page hangs from outside, the origin is not at fault: suspect path MTU — {MTU_DOC}")
+
+
+def _http_get(port, path, use_tls, timeout=5):
+    t0 = time.time()
+    if use_tls:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE                # loopback only; we are not validating identity here
+        # Loopback-only probe of our own nginx with a self-signed/unverifiable certificate: the point is
+        # "does a big response arrive", not "is this peer who it says" — nothing leaves this machine.
+        # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected
+        conn = http.client.HTTPSConnection("127.0.0.1", port, timeout=timeout, context=ctx)
+    else:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        conn.request("GET", path, headers={"User-Agent": "subrosa-doctor"})
+        resp = conn.getresponse()
+        body = resp.read(2_000_000)
+        return (resp.status, len(body), time.time() - t0)
+    finally:
+        conn.close()
+
+
+def check_local_size_probe():
+    """Loopback only — never contacts anything outside this machine."""
+    for port, tls in ((443, True), (4443, True), (8443, True), (80, False)):
+        try:
+            small = _http_get(port, "/subrosa-doctor-nonexistent-%d" % int(time.time()), tls)
+        except Exception:
+            continue                                   # nothing (TLS) listening here
+        try:
+            large = _http_get(port, "/", tls)
+        except Exception as e:
+            large = e
+        res = classify_size_probe(small, large)
+        if res:
+            report(*res)
+        return
+
+
 # ── Other checks ─────────────────────────────────────────────────────────
 
 def check_totp_encryption():
@@ -420,11 +550,31 @@ def check_totp_encryption():
 
 
 def check_backups():
+    """Absence of backups is INFO here, not WARN, and that is a deliberate
+    product decision rather than leniency.
+
+    This server is a relay. It holds no plaintext and no chat history -- history
+    lives on the clients, which have their own encrypted export. The intended
+    operating model is that the relay is disposable: if it dies or is seized, you
+    stand up another one. Backing it up adds a second copy of the one thing worth
+    stealing (registered identities, TOTP secrets, access-code hashes) and one
+    more thing to get wrong.
+
+    What a replacement does cost is written down in docs/DEPLOY.md
+    ("Replacing the server instead of backing it up"); the one that bites an
+    operator is that revocations are gone, so anyone cut off can register again
+    until they are re-revoked.
+
+    So: if backups exist, report on their freshness, because an operator who set
+    them up wants to know they are running. If they do not, say so once and move
+    on -- a support tool that warns about a decision the project made on purpose
+    teaches people to ignore its warnings."""
     candidates = ["/opt/beacon/backups", "backups", "/var/backups/subrosa"]
     found = next((c for c in candidates if os.path.isdir(c)), None)
     if not found:
-        report("WARN", "no backup directory found in common locations",
-               ", ".join(candidates) + " — confirm backups exist somewhere, this check can't see custom paths")
+        report("INFO", "no database backups here — fine, the relay is meant to be replaceable",
+               "if you do want them: deploy/db_backup.py, and see 'Replacing the server "
+               "instead of backing it up' in docs/DEPLOY.md for what a replacement costs")
         return
     files = [os.path.join(found, f) for f in os.listdir(found)]
     files = [f for f in files if os.path.isfile(f)]
@@ -532,6 +682,8 @@ def main():
     check_firewall_and_port9000()
     check_nginx_loadable()
     check_tls_cert()
+    check_mtu_protection()
+    check_local_size_probe()
     check_db_encryption()
     check_db_path_volume_trap()
     check_totp_encryption()
