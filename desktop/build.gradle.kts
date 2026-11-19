@@ -27,7 +27,7 @@ group = "com.subrosa.desktop"
 // which is how GitHub Release v1.0.0 ended up carrying an asset named
 // Subrosa-1.0.2.exe — a visible version mismatch for anyone verifying a
 // download against the tag. packageVersion now derives from this value.
-version = "1.0.2"
+version = "1.0.3"
 
 kotlin {
     jvmToolchain(21)
