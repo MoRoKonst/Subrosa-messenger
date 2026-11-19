@@ -405,7 +405,7 @@ dependencies {
     // the packages moved -- class names, behaviour and encodings are the same,
     // and cross-version interop was verified in both directions before the
     // bump (see PqCrypto.kt).
-    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.87")
 
     // Тесты
     testImplementation(libs.junit)
