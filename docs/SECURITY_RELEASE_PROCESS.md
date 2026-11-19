@@ -14,7 +14,7 @@ This process applies to security-relevant findings in:
 - The deployment configs (`deploy/`, `docs/DOCKER.md`/`DEPLOY.md`)
 
 It does not apply to non-security bugs (crashes, UI issues, etc.) — those follow the normal
-issue tracker / `docs/TODO.md` workflow, no embargo or disclosure process needed.
+issue-tracker workflow, no embargo or disclosure process needed.
 
 ## Severity levels
 

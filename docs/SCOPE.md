@@ -52,13 +52,12 @@ have already-known, documented limitations that don't need re-discovery:
 
 - UI polish / visual bugs.
 - Non-security analytics.
-- Marketing site / README / pitch-deck copy (separately reviewed for overclaiming this session,
-  see `docs/TODO.md`'s documentation section).
+- Marketing site / README / pitch-deck copy (separately reviewed for overclaiming this session).
 - Legacy/unused code paths already identified as dead (Channels feature — disabled at the UI layer,
   see `ARCHITECTURE.md`).
 - Desktop client — in this repository (`/desktop/`) and built and tested in CI, but **no full static
   audit of it has been done** (`OPEN-4`; only a first mechanical pass, S15, in
-  `docs/KNOWN_SECURITY_ISSUES.md`), so it is not prioritized here; see `docs/TODO.md`.
+  `docs/KNOWN_SECURITY_ISSUES.md`), so it is not prioritized here; see `docs/OPEN_WORK.md`.
 
 *Anonymous routing used to be listed here too, as a "known-imperfect area, not a surprise finding."*
 *External review correctly pushed back: "known-imperfect + never independently reviewed" is a*
