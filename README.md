@@ -366,7 +366,6 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system design and module ref
 |---|---|---|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Developers | System design, module reference, data flows |
 | [SECURITY.md](docs/SECURITY.md) | Security analysts | Threat model, cryptographic design, anti-forensics |
-| [CHANGEL_LOG.md](docs/CHANGEL_LOG.md) | Developers | Engineering change log |
 
 ---
 
