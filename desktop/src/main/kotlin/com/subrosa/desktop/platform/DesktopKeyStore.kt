@@ -43,7 +43,7 @@ object DesktopKeyStore {
                 val encrypted = seedFile.readBytes()
                 com.sun.jna.platform.win32.Crypt32Util.cryptUnprotectData(encrypted)
             } catch (e: Exception) {
-                System.err.println("DesktopKeyStore: DPAPI decrypt failed, regenerating seed (${e.message})")
+                DesktopLog.e("DesktopKeyStore", "DPAPI decrypt failed, regenerating seed (${e.message})")
                 generateWindowsSeed(seedFile)
             }
         } else {
@@ -85,7 +85,7 @@ object DesktopKeyStore {
             } catch (e: Exception) {
                 // Stale keystore (wrong password after code change, or corruption).
                 // Delete and recreate — a new EC keypair will be generated.
-                System.err.println("DesktopKeyStore: unreadable keystore, regenerating (${e.message})")
+                DesktopLog.d("DesktopKeyStore") { "unreadable keystore, regenerating (${e.message})" }
                 ksFile.delete()
                 ks.load(null, pwd)
             }

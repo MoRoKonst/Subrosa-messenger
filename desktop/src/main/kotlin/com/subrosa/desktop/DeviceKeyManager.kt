@@ -97,7 +97,7 @@ object DeviceKeyManager {
                 // silently replaced an otherwise-valid, already-pinned
                 // device key, which is exactly what device_auth_failed
                 // looks like from the server's side.
-                System.err.println("DeviceKeyManager: stored device_priv encrypted under a different SMK (${e.message}) — generating a new one")
+                DesktopLog.d("DeviceKeyManager") { "stored device_priv encrypted under a different SMK (${e.message}) — generating a new one" }
             }
         }
 
@@ -119,7 +119,7 @@ object DeviceKeyManager {
         val kp = kpg.generateKeyPair()
         DesktopStorage.put(KEY_PRIV, StorageKeyManager.wrapBytes(kp.private.encoded))
         DesktopStorage.put(KEY_PUB, Base64.getEncoder().encodeToString(kp.public.encoded))
-        println("DeviceKeyManager: device EC keypair generated")
+        DesktopLog.d("DeviceKeyManager") { "device EC keypair generated" }
         return kp
     }
 

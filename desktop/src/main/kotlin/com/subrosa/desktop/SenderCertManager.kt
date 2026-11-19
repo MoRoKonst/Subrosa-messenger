@@ -75,14 +75,14 @@ object SenderCertManager {
      *  not as a hard error. */
     fun verify(cert: JSONObject, signatureB64: String): Boolean {
         if (!isPinConfigured()) {
-            println("$TAG: verify: SERVER_CERT_PUBLIC_KEY_B64 not pinned (placeholder) — rejecting")
+            DesktopLog.d(TAG) { "verify: SERVER_CERT_PUBLIC_KEY_B64 not pinned (placeholder) — rejecting" }
             return false
         }
         return try {
             val expiresAt = cert.optLong("expires_at", 0L)
             val nowSec = System.currentTimeMillis() / 1000L
             if (expiresAt <= 0L || nowSec > expiresAt) {
-                println("$TAG: verify: certificate expired")
+                DesktopLog.d(TAG) { "verify: certificate expired" }
                 return false
             }
             val keyBytes = Base64.getDecoder().decode(SERVER_CERT_PUBLIC_KEY_B64)
@@ -93,7 +93,7 @@ object SenderCertManager {
             signature.update(canonicalString(cert).toByteArray(Charsets.UTF_8))
             signature.verify(Base64.getDecoder().decode(signatureB64))
         } catch (e: Exception) {
-            println("$TAG: verify: verification error — ${e.message}")
+            DesktopLog.d(TAG) { "verify: verification error — ${e.message}" }
             false
         }
     }

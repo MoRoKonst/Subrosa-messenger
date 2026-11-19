@@ -220,7 +220,7 @@ object AnonTokenManager {
         val fresh = (1..BATCH_TO_SHARE).map { generateToken() }
         var combined = fresh + getMyTokens()
         if (combined.size > MAX_POOL_HARD_CAP) {
-            println("$TAG: freshTokensToShare: pool exceeded emergency cap ($MAX_POOL_HARD_CAP), trimming — some still-unspent tokens may become unreachable")
+            DesktopLog.d(TAG) { "freshTokensToShare: pool exceeded emergency cap ($MAX_POOL_HARD_CAP), trimming — some still-unspent tokens may become unreachable" }
             combined = combined.take(MAX_POOL_HARD_CAP)
         }
         DesktopStorage.put(PREF_MY_TOKENS, JSONArray(combined).toString())
@@ -303,21 +303,21 @@ object AnonTokenManager {
 
         val duplicates = valid.filter { it in existing }
         if (duplicates.isNotEmpty()) {
-            println("$TAG: addContactTokens($fingerprint): ${duplicates.size} token(s) already in the pool — ${duplicates.map { short(it) }}")
+            DesktopLog.d(TAG) { "addContactTokens(${DesktopLog.fp(fingerprint)}): ${duplicates.size} token(s) already in the pool" }
         }
         val spent = getSpentContactTokens(fingerprint)
         val resurrected = valid.filter { it in spent }
         if (resurrected.isNotEmpty()) {
-            println("$TAG: addContactTokens($fingerprint): ${resurrected.size} token(s) already spent earlier, discarded — ${resurrected.map { short(it) }}")
+            DesktopLog.d(TAG) { "addContactTokens(${DesktopLog.fp(fingerprint)}): ${resurrected.size} token(s) already spent earlier, discarded" }
         }
         existing.addAll(valid.filterNot { it in existing || it in spent })
 
         val capped = if (existing.size > MAX_POOL_HARD_CAP) {
-            println("$TAG: addContactTokens($fingerprint): pool exceeded emergency cap ($MAX_POOL_HARD_CAP), trimming — some still-unused tokens may be lost")
+            DesktopLog.d(TAG) { "addContactTokens(${DesktopLog.fp(fingerprint)}): pool exceeded emergency cap ($MAX_POOL_HARD_CAP), trimming — some still-unused tokens may be lost" }
             existing.takeLast(MAX_POOL_HARD_CAP)
         } else existing
         DesktopStorage.put("$PREF_CT_PREFIX$fingerprint", JSONArray(capped).toString())
-        println("$TAG: addContactTokens($fingerprint): +${valid.size} (was $originalSize, now ${capped.size})")
+        DesktopLog.d(TAG) { "addContactTokens(${DesktopLog.fp(fingerprint)}): +${valid.size} (was $originalSize, now ${capped.size})" }
     }
 
     fun needsRefill(fingerprint: String): Boolean =
@@ -367,18 +367,18 @@ object AnonTokenManager {
     fun consumeNextContactToken(fingerprint: String, allowReserve: Boolean = false): String? = synchronized(lock) {
         val tokens = getContactTokens(fingerprint).toMutableList()
         if (tokens.isEmpty()) {
-            println("$TAG: consumeNextContactToken($fingerprint): pool empty")
+            DesktopLog.d(TAG) { "consumeNextContactToken(${DesktopLog.fp(fingerprint)}): pool empty" }
             return@synchronized null
         }
         if (!allowReserve && tokens.size <= RESERVE_TOKENS) {
-            println("$TAG: consumeNextContactToken($fingerprint): only reserve tokens left (${tokens.size})")
+            DesktopLog.d(TAG) { "consumeNextContactToken(${DesktopLog.fp(fingerprint)}): only reserve tokens left (${tokens.size})" }
             return@synchronized null
         }
         val token = tokens.removeAt(0)
         val spent = (getSpentContactTokens(fingerprint) + token).takeLast(SPENT_HISTORY_CAP)
         DesktopStorage.put("$PREF_CT_PREFIX$fingerprint", JSONArray(tokens).toString())
         DesktopStorage.put("$PREF_CT_SPENT_PREFIX$fingerprint", JSONArray(spent).toString())
-        println("$TAG: consumeNextContactToken($fingerprint): took ${short(token)}, remaining ${tokens.size}")
+        DesktopLog.d(TAG) { "consumeNextContactToken(${DesktopLog.fp(fingerprint)}): took a token, remaining ${tokens.size}" }
         token
     }
 

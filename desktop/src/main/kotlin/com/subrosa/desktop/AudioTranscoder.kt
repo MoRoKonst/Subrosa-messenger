@@ -27,7 +27,7 @@ object AudioTranscoder {
         return try {
             transcodeToWav(bytes)
         } catch (e: Exception) {
-            System.err.println("AudioTranscoder: transcode failed — ${e.message}")
+            DesktopLog.e("AudioTranscoder", "transcode failed — ${e.message}")
             null
         }
     }

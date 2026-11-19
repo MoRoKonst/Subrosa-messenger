@@ -41,7 +41,7 @@ object VoiceRecorder {
             }.also { it.isDaemon = true; it.start() }
             true
         } catch (e: Exception) {
-            System.err.println("VoiceRecorder: start failed — ${e.message}")
+            DesktopLog.e("VoiceRecorder", "start failed — ${e.message}")
             line = null
             false
         }
@@ -120,7 +120,7 @@ object VoiceRecorder {
             AudioSystem.write(ais, javax.sound.sampled.AudioFileFormat.Type.WAVE, out)
             out.toByteArray()
         } catch (e: Exception) {
-            System.err.println("VoiceRecorder: WAV encode failed — ${e.message}")
+            DesktopLog.e("VoiceRecorder", "WAV encode failed — ${e.message}")
             null
         }
     }

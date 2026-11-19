@@ -82,7 +82,7 @@ object DesktopVideoCircleRecorder {
             VoiceRecorder.start()
             true
         } catch (e: Throwable) {
-            System.err.println("DesktopVideoCircleRecorder: start failed — ${e.message}")
+            DesktopLog.e("DesktopVideoCircleRecorder", "start failed — ${e.message}")
             cleanupNative()
             false
         }
@@ -200,11 +200,11 @@ object DesktopVideoCircleRecorder {
             val exit = proc.waitFor()
             dir.deleteRecursively()
             if (exit == 0 && outFile.exists() && outFile.length() > 0L) outFile else {
-                System.err.println("DesktopVideoCircleRecorder: ffmpeg exited $exit")
+                DesktopLog.d("DesktopVideoCircleRecorder") { "ffmpeg exited $exit" }
                 null
             }
         } catch (e: Exception) {
-            System.err.println("DesktopVideoCircleRecorder: mux failed — ${e.message}")
+            DesktopLog.e("DesktopVideoCircleRecorder", "mux failed — ${e.message}")
             dir.deleteRecursively()
             null
         }

@@ -112,7 +112,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGroupGone: () -> Unit
                     WebSocketClient.sendGroupAvatarUpdate(groupId, b64)
                 }
             } catch (e: Exception) {
-                System.err.println("GroupInfoScreen: group avatar crop/save failed — ${e.message}")
+                DesktopLog.e("GroupInfoScreen", "group avatar crop/save failed — ${e.message}")
             }
         }
     }

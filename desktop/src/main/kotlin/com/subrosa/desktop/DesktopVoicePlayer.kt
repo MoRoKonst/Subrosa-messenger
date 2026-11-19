@@ -156,7 +156,7 @@ object DesktopVoicePlayer {
             ByteBuffer.wrap(pcmBytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
             shorts to format
         } catch (e: Exception) {
-            System.err.println("DesktopVoicePlayer: decodeWav failed — ${e.message}")
+            DesktopLog.e("DesktopVoicePlayer", "decodeWav failed — ${e.message}")
             null
         }
     }
