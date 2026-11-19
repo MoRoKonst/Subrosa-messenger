@@ -224,7 +224,7 @@ object DesktopCryptoManager {
 
             packed
         } catch (e: Exception) {
-            System.err.println("DesktopCryptoManager: encryptImageBytes failed — ${e.message}")
+            DesktopLog.e("DesktopCryptoManager", "encryptImageBytes failed — ${e.message}")
             null
         }
     }
@@ -287,7 +287,7 @@ object DesktopCryptoManager {
             }
             null
         } catch (e: Exception) {
-            System.err.println("DesktopCryptoManager: image decrypt failed — ${e.message}")
+            DesktopLog.e("DesktopCryptoManager", "image decrypt failed — ${e.message}")
             null
         }
     }

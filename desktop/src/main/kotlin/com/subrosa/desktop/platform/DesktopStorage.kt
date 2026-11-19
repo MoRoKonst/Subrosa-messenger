@@ -66,7 +66,7 @@ object DesktopStorage {
                 val json  = Json.parseToJsonElement(plain).jsonObject
                 json.forEach { (k, v) -> map[k] = v.jsonPrimitive.content }
             } catch (e: Exception) {
-                System.err.println("DesktopStorage: failed to load — ${e.message}")
+                DesktopLog.e("DesktopStorage", "failed to load — ${e.message}")
             }
         }
     }
@@ -109,7 +109,7 @@ object DesktopStorage {
             val json  = JsonObject(map.mapValues { JsonPrimitive(it.value) }).toString()
             storageFile.writeBytes(encrypt(json))
         } catch (e: Exception) {
-            System.err.println("DesktopStorage: flush failed — ${e.message}")
+            DesktopLog.e("DesktopStorage", "flush failed — ${e.message}")
         }
     }
 

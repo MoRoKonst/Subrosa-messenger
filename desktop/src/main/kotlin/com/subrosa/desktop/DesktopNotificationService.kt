@@ -44,7 +44,7 @@ object DesktopNotificationService {
             SystemTray.getSystemTray().add(icon)
             trayIcon = icon
         } catch (e: Exception) {
-            System.err.println("DesktopNotificationService: tray init failed — ${e.message}")
+            DesktopLog.e("DesktopNotificationService", "tray init failed — ${e.message}")
         }
     }
 

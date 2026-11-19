@@ -255,7 +255,7 @@ object InviteCodeManager {
 
             InviteData(publicKeyB64, fingerprintHex, nonceHex, sigB64, displayName, ts, mailboxTagHex)
         } catch (e: Exception) {
-            System.err.println("InviteCodeManager: parse failed — ${e.message}")
+            DesktopLog.e("InviteCodeManager", "parse failed — ${e.message}")
             null
         }
     }
@@ -273,17 +273,17 @@ object InviteCodeManager {
             val expectedFp = MessageDigest.getInstance("SHA-256").digest(x509Bytes)
                 .take(8).joinToString("") { "%02X".format(it) }
             if (expectedFp != data.fingerprint) {
-                System.err.println("InviteCodeManager: fingerprint mismatch")
+                DesktopLog.e("InviteCodeManager", "fingerprint mismatch")
                 return false
             }
 
             val now = System.currentTimeMillis() / 1000L
             if (now - timestamp > INVITE_TTL_SECONDS) {
-                System.err.println("InviteCodeManager: code expired")
+                DesktopLog.d("InviteCodeManager") { "code expired" }
                 return false
             }
             if (timestamp > now + 300) {
-                System.err.println("InviteCodeManager: code from future")
+                DesktopLog.d("InviteCodeManager") { "code from future" }
                 return false
             }
 
@@ -318,7 +318,7 @@ object InviteCodeManager {
                 it.update(preSign)
             }.verify(derSig)
         } catch (e: Exception) {
-            System.err.println("InviteCodeManager: verify failed — ${e.message}")
+            DesktopLog.e("InviteCodeManager", "verify failed — ${e.message}")
             false
         }
     }

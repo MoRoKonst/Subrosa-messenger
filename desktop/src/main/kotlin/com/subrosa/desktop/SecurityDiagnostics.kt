@@ -29,7 +29,7 @@ fun enforceOnStartup() {
     // Check JDWP (Java debugger protocol)
     val jvmArgs = java.lang.management.ManagementFactory.getRuntimeMXBean().inputArguments
     if (jvmArgs.any { "-Xdebug" in it || "jdwp" in it.lowercase() }) {
-        System.err.println("SECURITY: JDWP debugger detected — forcing exit")
+        DesktopLog.d("SecurityDiagnostics") { "SECURITY: JDWP debugger detected — forcing exit" }
         Runtime.getRuntime().halt(1)
     }
 
@@ -38,7 +38,7 @@ fun enforceOnStartup() {
         java.net.Socket().use { s ->
             s.connect(java.net.InetSocketAddress("127.0.0.1", 27042), 300)
         }
-        System.err.println("SECURITY: Frida detected (port 27042) — forcing exit")
+        DesktopLog.d("SecurityDiagnostics") { "SECURITY: Frida detected (port 27042) — forcing exit" }
         Runtime.getRuntime().halt(1)
     } catch (_: Exception) { /* no Frida — continue */ }
 }
@@ -295,7 +295,7 @@ private fun checkKeyDeletionAndRecovery(): DiagResult {
             DesktopKeyStore.storeECKeyPair(dataDir, originalPriv, originalPub)
             DesktopCryptoManager.reloadKeyPair()
         } catch (e: Exception) {
-            System.err.println("SecurityDiagnostics: CRITICAL — failed to restore original identity key after test: ${e.message}")
+            DesktopLog.e("SecurityDiagnostics", "CRITICAL — failed to restore original identity key after test: ${e.message}")
         }
     }
 }

@@ -92,7 +92,7 @@ object SessionKeyManager {
         loadOpkPool()
         refillOpkPool(targetCount = 10)
         loadAllSessions()
-        println("$TAG: SessionKeyManager initialized. SPK id=$currentSpkId, OPK pool=${opkPool.size}, sessions=${sessions.size}")
+        DesktopLog.d(TAG) { "SessionKeyManager initialized. SPK id=$currentSpkId, OPK pool=${opkPool.size}, sessions=${sessions.size}" }
     }
 
     /** True only when spk_private_key_$id is SMK-wrapped and fails to decrypt
@@ -152,7 +152,7 @@ object SessionKeyManager {
                         DesktopStorage.put("prev_spk_created_at", savedCreatedAt.toString())
                         DesktopStorage.put("prev_spk_public", oldPubB64)
                         DesktopStorage.put("prev_spk_private_key", oldPrivB64)
-                        println("$TAG: Old SPK saved as previous: id=$savedSpkId")
+                        DesktopLog.d(TAG) { "Old SPK saved as previous: id=$savedSpkId" }
 
                         // Carry the matching PQ KEM keypair into the grace period too,
                         // so a handshake still in flight against the old SPK can complete.
@@ -164,7 +164,7 @@ object SessionKeyManager {
                             DesktopStorage.put("prev_pq_kem_private_key", oldPqPrivB64)
                         }
                     } catch (e: Exception) {
-                        println("$TAG: Failed to save previous SPK: ${e.message}")
+                        DesktopLog.d(TAG) { "Failed to save previous SPK: ${e.message}" }
                     }
                 }
             }
@@ -180,7 +180,7 @@ object SessionKeyManager {
             currentPqKem = newPqKem
             DesktopStorage.put("pq_kem_private_key_$currentSpkId", wrapKeyBytes(newPqKem.privateKey))
             DesktopStorage.put("pq_kem_public_$currentSpkId", encoder.encodeToString(newPqKem.publicKey))
-            println("$TAG: SPK rotated: id=$currentSpkId")
+            DesktopLog.d(TAG) { "SPK rotated: id=$currentSpkId" }
         } else {
             val privateKeyB64 = DesktopStorage.get("spk_private_key_$savedSpkId")
             val publicKeyB64 = DesktopStorage.get("spk_public_$savedSpkId")
@@ -195,7 +195,7 @@ object SessionKeyManager {
                         DesktopStorage.put("spk_private_key_$savedSpkId", wrapKeyBytes(privateKey.encoded))
                     }
                 } else {
-                    println("$TAG: SPK id=$savedSpkId temporarily unavailable (SMK locked) — waiting for unlock")
+                    DesktopLog.d(TAG) { "SPK id=$savedSpkId temporarily unavailable (SMK locked) — waiting for unlock" }
                 }
             } else {
                 currentSpk = generateEcKeyPair()
@@ -204,7 +204,7 @@ object SessionKeyManager {
             }
             currentSpkId = savedSpkId
             spkCreatedAt = savedCreatedAt
-            println("$TAG: SPK restored: id=$currentSpkId")
+            DesktopLog.d(TAG) { "SPK restored: id=$currentSpkId" }
 
             // Restore (or, for an install upgrading from pre-PQ, generate) the
             // PQ KEM keypair tied to the current SPK id.
@@ -218,14 +218,14 @@ object SessionKeyManager {
                         DesktopStorage.put("pq_kem_private_key_$currentSpkId", wrapKeyBytes(pqPrivBytes))
                     }
                 } else {
-                    println("$TAG: PQ KEM id=$currentSpkId temporarily unavailable (SMK locked) — waiting for unlock")
+                    DesktopLog.d(TAG) { "PQ KEM id=$currentSpkId temporarily unavailable (SMK locked) — waiting for unlock" }
                 }
             } else {
                 val migratedPqKem = PqCrypto.generateKeyPair()
                 currentPqKem = migratedPqKem
                 DesktopStorage.put("pq_kem_private_key_$currentSpkId", wrapKeyBytes(migratedPqKem.privateKey))
                 DesktopStorage.put("pq_kem_public_$currentSpkId", encoder.encodeToString(migratedPqKem.publicKey))
-                println("$TAG: PQ KEM key generated during migration for existing SPK id=$currentSpkId")
+                DesktopLog.d(TAG) { "PQ KEM key generated during migration for existing SPK id=$currentSpkId" }
             }
 
             val prevSpkId = DesktopStorage.getInt("prev_spk_id", -1)
@@ -242,7 +242,7 @@ object SessionKeyManager {
                         )
                         previousSpkId = prevSpkId
                         previousSpkCreatedAt = prevCreatedAt
-                        println("$TAG: Previous SPK restored: id=$prevSpkId")
+                        DesktopLog.d(TAG) { "Previous SPK restored: id=$prevSpkId" }
 
                         val prevPqPrivB64 = DesktopStorage.get("prev_pq_kem_private_key")
                         val prevPqPubB64  = DesktopStorage.get("prev_pq_kem_public")
@@ -250,7 +250,7 @@ object SessionKeyManager {
                             previousPqKem = PqCrypto.PqKeyPair(decoder.decode(prevPqPubB64), StorageKeyManager.unwrapBytes(prevPqPrivB64))
                         }
                     } catch (e: Exception) {
-                        println("$TAG: Failed to restore previous SPK: ${e.message}")
+                        DesktopLog.d(TAG) { "Failed to restore previous SPK: ${e.message}" }
                     }
                 }
             }
@@ -276,10 +276,10 @@ object SessionKeyManager {
                     DesktopStorage.put("opk_private_$id", wrapKeyBytes(privateBytes))
                 }
             } catch (e: Exception) {
-                println("$TAG: Failed to restore OPK $id: ${e.message}")
+                DesktopLog.d(TAG) { "Failed to restore OPK ${DesktopLog.fp(id)}: ${e.message}" }
             }
         }
-        println("$TAG: OPK pool restored: ${opkPool.size} keys")
+        DesktopLog.d(TAG) { "OPK pool restored: ${opkPool.size} keys" }
     }
 
     private fun refillOpkPool(targetCount: Int) {
@@ -295,12 +295,12 @@ object SessionKeyManager {
         }
         DesktopStorage.put("opk_ids", opkPool.keys.joinToString(","))
         DesktopStorage.putInt("opk_counter", opkIdCounter.get())
-        println("$TAG: OPK pool refilled: +$needed, total=${opkPool.size}")
+        DesktopLog.d(TAG) { "OPK pool refilled: +$needed, total=${opkPool.size}" }
     }
 
     fun consumeOpk(opkId: Int): KeyPair? {
         val kp = opkPool.remove(opkId) ?: return null
-        println("$TAG: OPK $opkId used. Remaining: ${opkPool.size}")
+        DesktopLog.d(TAG) { "OPK $opkId used. Remaining: ${opkPool.size}" }
         DesktopStorage.remove("opk_private_$opkId")
         DesktopStorage.remove("opk_public_$opkId")
         DesktopStorage.put("opk_ids", opkPool.keys.joinToString(","))
@@ -364,10 +364,10 @@ object SessionKeyManager {
                 kf.generatePrivate(PKCS8EncodedKeySpec(snapshot.spkPrivate))
             )
         } catch (e: Exception) {
-            println("$TAG: restorePrekeyFromBackup: failed to restore SPK in memory: ${e.message}")
+            DesktopLog.d(TAG) { "restorePrekeyFromBackup: failed to restore SPK in memory: ${e.message}" }
         }
         currentPqKem = PqCrypto.PqKeyPair(snapshot.pqPublic, snapshot.pqPrivate)
-        println("$TAG: Prekey restored from backup: spkId=${snapshot.spkId}")
+        DesktopLog.d(TAG) { "Prekey restored from backup: spkId=${snapshot.spkId}" }
     }
 
     /** Only the OPK issuance counter is worth carrying across a backup, not
@@ -384,7 +384,7 @@ object SessionKeyManager {
         // this device's own post-wipe pool is already ahead of the backup's.
         opkIdCounter.set(maxOf(opkIdCounter.get(), counter))
         DesktopStorage.putInt("opk_counter", opkIdCounter.get())
-        println("$TAG: OPK counter raised from backup: ${opkIdCounter.get()}")
+        DesktopLog.d(TAG) { "OPK counter raised from backup: ${opkIdCounter.get()}" }
     }
 
     fun getLocalPrekeyBundle(): PrekeyBundle {
@@ -464,7 +464,7 @@ object SessionKeyManager {
         contactIds.forEach { deleteSession(it) }
         DesktopStorage.putBoolean("pq_migration_v1_done", true)
         if (contactIds.isNotEmpty()) {
-            println("$TAG: PQ migration — reset ${contactIds.size} pre-upgrade session(s)")
+            DesktopLog.d(TAG) { "PQ migration — reset ${contactIds.size} pre-upgrade session(s)" }
         }
         return contactIds
     }
@@ -882,7 +882,7 @@ object SessionKeyManager {
                     newSkipped[k]?.let { SecureMemory.wipe(it) }
                     newSkipped.remove(k); newTs.remove(k)
                 }
-                println("$TAG: Skipped-key buffer full — evicted ${toEvict.size} old entries")
+                DesktopLog.d(TAG) { "Skipped-key buffer full — evicted ${toEvict.size} old entries" }
             }
 
             val messageKey   = ratchetStep(chainKey)
@@ -1125,7 +1125,7 @@ object SessionKeyManager {
         try {
             StorageKeyManager.unwrapBytes(stored)
         } catch (e: Exception) {
-            println("$TAG: Key temporarily unavailable (SMK locked?): ${e.message}")
+            DesktopLog.d(TAG) { "Key temporarily unavailable (SMK locked?): ${e.message}" }
             null
         }
 
@@ -1179,7 +1179,7 @@ object SessionKeyManager {
             else jsonStr
             DesktopStorage.put("session_${state.contactId}", toStore)
         } catch (e: Exception) {
-            println("$TAG: Error saving session: ${e.message}")
+            DesktopLog.d(TAG) { "Error saving session: ${e.message}" }
         }
     }
 
@@ -1252,12 +1252,12 @@ object SessionKeyManager {
                         previousRecvRatchetPubs = previousRecvRatchetPubs
                     )
                 } catch (e: Exception) {
-                    println("$TAG: Failed to restore session $key: ${e.message}")
+                    DesktopLog.d(TAG) { "Failed to restore session ${DesktopLog.fp(key)}: ${e.message}" }
                 }
             }
-            println("$TAG: Sessions restored from storage: ${sessions.size}")
+            DesktopLog.d(TAG) { "Sessions restored from storage: ${sessions.size}" }
         } catch (e: Exception) {
-            println("$TAG: Error loading sessions: ${e.message}")
+            DesktopLog.d(TAG) { "Error loading sessions: ${e.message}" }
         }
     }
 

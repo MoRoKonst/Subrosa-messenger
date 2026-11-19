@@ -121,7 +121,7 @@ object UserStorage {
         DesktopStorage.put(KEY_USER_ID, userId)
         DesktopStorage.put(KEY_PASSWORD_HASH, hashPasswordV2(password))
         DesktopStorage.put("display_name", username)
-        println("UserStorage: Registered new user")
+        DesktopLog.d("UserStorage") { "Registered new user" }
     }
 
     fun setUserId(userId: String) {
@@ -139,7 +139,7 @@ object UserStorage {
         if (!verifyPassword(password, savedHash)) return false
         if (!savedHash.startsWith("v2:")) {
             DesktopStorage.put(KEY_PASSWORD_HASH, hashPasswordV2(password))
-            println("UserStorage: Password migrated from SHA-256 to PBKDF2+salt")
+            DesktopLog.d("UserStorage") { "Password migrated from SHA-256 to PBKDF2+salt" }
         }
         return true
     }

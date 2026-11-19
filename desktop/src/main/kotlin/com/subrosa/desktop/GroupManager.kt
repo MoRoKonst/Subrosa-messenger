@@ -285,7 +285,7 @@ object GroupManager {
     fun addMember(groupId: String, actorId: String, userId: String) = synchronized(lock) {
         val group = getGroup(groupId) ?: return@synchronized
         if (!isAdmin(groupId, actorId)) {
-            System.err.println("GroupManager: addMember: $actorId is not admin of $groupId — rejected")
+            DesktopLog.e("GroupManager", "addMember: ${DesktopLog.fp(actorId)} is not admin of ${DesktopLog.fp(groupId)} — rejected")
             return@synchronized
         }
         val updatedMembers = group.members.toMutableList()
@@ -299,7 +299,7 @@ object GroupManager {
         val group = getGroup(groupId) ?: return@synchronized
         val selfRemoval = actorId == userId
         if (!selfRemoval && !isAdmin(groupId, actorId)) {
-            System.err.println("GroupManager: removeMember: $actorId is not admin of $groupId — rejected")
+            DesktopLog.e("GroupManager", "removeMember: ${DesktopLog.fp(actorId)} is not admin of ${DesktopLog.fp(groupId)} — rejected")
             return@synchronized
         }
 
@@ -324,7 +324,7 @@ object GroupManager {
     fun promoteToAdmin(groupId: String, actorId: String, userId: String) = synchronized(lock) {
         val group = getGroup(groupId) ?: return@synchronized
         if (!isAdmin(groupId, actorId)) {
-            System.err.println("GroupManager: promoteToAdmin: $actorId is not admin of $groupId — rejected")
+            DesktopLog.e("GroupManager", "promoteToAdmin: ${DesktopLog.fp(actorId)} is not admin of ${DesktopLog.fp(groupId)} — rejected")
             return@synchronized
         }
         val updatedAdmins = group.admins.toMutableList()

@@ -221,7 +221,7 @@ object DesktopCallManager {
                     localVideoTrack = f.createVideoTrack("LV_${UUID.randomUUID()}", src)
                     localVideoTrack?.addSink(localVideoSink)
                 } else {
-                    System.err.println("DesktopCallManager: no camera devices found")
+                    DesktopLog.d("DesktopCallManager") { "no camera devices found" }
                     onCameraUnavailable?.invoke()
                 }
             } catch (e: Throwable) {
@@ -239,7 +239,7 @@ object DesktopCallManager {
                 // null, already handled everywhere via ?.) rather than
                 // aborting the call entirely — losing video isn't a reason
                 // to also lose audio.
-                System.err.println("DesktopCallManager: failed to start camera — ${e.message}")
+                DesktopLog.e("DesktopCallManager", "failed to start camera — ${e.message}")
                 onCameraUnavailable?.invoke()
             }
         }
@@ -253,7 +253,7 @@ object DesktopCallManager {
         // all". Silently degrading to P2P here would be exactly the IP
         // leak this setting exists to prevent.
         if (hideIp && !NetworkConfig.TurnCredentials.isAvailable()) {
-            System.err.println("DesktopCallManager: hide IP during calls is on but no TURN server is available — refusing to start (peer=$remoteId)")
+            DesktopLog.e("DesktopCallManager", "hide IP during calls is on but no TURN server is available — refusing to start (peer=${DesktopLog.fp(remoteId)})")
             onRelayUnavailable?.invoke()
             return null
         }
@@ -352,7 +352,7 @@ object DesktopCallManager {
                         direction = RTCRtpTransceiverDirection.RECV_ONLY
                     })
                 } catch (e: Exception) {
-                    System.err.println("DesktopCallManager: failed to add recvonly video transceiver — ${e.message}")
+                    DesktopLog.e("DesktopCallManager", "failed to add recvonly video transceiver — ${e.message}")
                 }
             }
         }
@@ -365,7 +365,7 @@ object DesktopCallManager {
                 })
                 setupHeartbeatChannel(dc)
             } catch (e: Exception) {
-                System.err.println("DesktopCallManager: DataChannel creation failed — ${e.message}")
+                DesktopLog.e("DesktopCallManager", "DataChannel creation failed — ${e.message}")
             }
         }
 
@@ -387,16 +387,16 @@ object DesktopCallManager {
                             put("sdp", sdp.sdp)
                         })
                     }
-                    override fun onFailure(error: String) { System.err.println("DesktopCallManager: ICE restart setLocal fail — $error") }
+                    override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "ICE restart setLocal fail — $error") }
                 })
             }
-            override fun onFailure(error: String) { System.err.println("DesktopCallManager: ICE restart createOffer fail — $error") }
+            override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "ICE restart createOffer fail — $error") }
         })
     }
 
     private fun queueIceCandidate(remoteId: String, candidate: RTCIceCandidate) {
         if (hideIpActive && !isRelayCandidate(candidate.sdp)) {
-            System.err.println("DesktopCallManager: hide IP during calls — dropping non-relay ICE candidate for $remoteId instead of signaling it")
+            DesktopLog.e("DesktopCallManager", "hide IP during calls — dropping non-relay ICE candidate for ${DesktopLog.fp(remoteId)} instead of signaling it")
             return
         }
         val entry = JSONObject().apply {
@@ -438,7 +438,7 @@ object DesktopCallManager {
 
     fun startCall(targetId: String, video: Boolean) {
         if (UserStorage.getHideIpDuringCalls() && !NetworkConfig.TurnCredentials.isAvailable()) {
-            System.err.println("DesktopCallManager: hide IP during calls is on but no TURN server is available — refusing to start (peer=$targetId)")
+            DesktopLog.e("DesktopCallManager", "hide IP during calls is on but no TURN server is available — refusing to start (peer=${DesktopLog.fp(targetId)})")
             onRelayUnavailable?.invoke()
             return
         }
@@ -462,7 +462,7 @@ object DesktopCallManager {
         ringingTimeoutJob = scope.launch {
             delay(RINGING_TIMEOUT_MS)
             if (callActive.get() && callId == thisCallId && pendingRequestTarget == targetId) {
-                System.err.println("DesktopCallManager: call request timeout — peer did not answer, ending call")
+                DesktopLog.e("DesktopCallManager", "call request timeout — peer did not answer, ending call")
                 pendingRequestTarget = null
                 release()
                 onCallEnded?.invoke("no_answer")
@@ -488,10 +488,10 @@ object DesktopCallManager {
                             put("is_group", false)
                         })
                     }
-                    override fun onFailure(error: String) { System.err.println("DesktopCallManager: setLocal fail — $error") }
+                    override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "setLocal fail — $error") }
                 })
             }
-            override fun onFailure(error: String) { System.err.println("DesktopCallManager: createOffer fail — $error") }
+            override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "createOffer fail — $error") }
         })
     }
 
@@ -530,7 +530,7 @@ object DesktopCallManager {
         ringingTimeoutJob = scope.launch {
             delay(RINGING_TIMEOUT_MS)
             if (callId == cId && incomingRequestFrom == from) {
-                System.err.println("DesktopCallManager: incoming call request timeout (${RINGING_TIMEOUT_MS / 1000}s) — auto-declining")
+                DesktopLog.e("DesktopCallManager", "incoming call request timeout (${RINGING_TIMEOUT_MS / 1000}s) — auto-declining")
                 declineCall("timeout")
             }
         }
@@ -540,7 +540,7 @@ object DesktopCallManager {
         // S6-51: bound before setRemoteDescription() ever sees it -- a
         // compromised/malicious server is not this device's memory boundary.
         if (!isValidCallId(cId) || !isValidCallSdp(sdp)) {
-            System.err.println("DesktopCallManager: invalid/oversized call_id or sdp from $from — ignored")
+            DesktopLog.e("DesktopCallManager", "invalid/oversized call_id or sdp from ${DesktopLog.fp(from)} — ignored")
             return
         }
         // If we already agreed to this callId via the request/response phase,
@@ -575,7 +575,7 @@ object DesktopCallManager {
         ringingTimeoutJob = scope.launch {
             delay(RINGING_TIMEOUT_MS)
             if (pendingOffer?.third == cId) {
-                System.err.println("DesktopCallManager: incoming ringing timeout (${RINGING_TIMEOUT_MS / 1000}s) — auto-declining")
+                DesktopLog.e("DesktopCallManager", "incoming ringing timeout (${RINGING_TIMEOUT_MS / 1000}s) — auto-declining")
                 declineCall("timeout")
             }
         }
@@ -633,10 +633,10 @@ object DesktopCallManager {
                             override fun onFailure(error: String) {}
                         })
                     }
-                    override fun onFailure(error: String) { System.err.println("DesktopCallManager: createAnswer fail — $error") }
+                    override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "createAnswer fail — $error") }
                 })
             }
-            override fun onFailure(error: String) { System.err.println("DesktopCallManager: setRemote(offer) fail — $error") }
+            override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "setRemote(offer) fail — $error") }
         })
     }
 
@@ -681,21 +681,21 @@ object DesktopCallManager {
     fun handleAnswer(from: String, sdp: String) {
         // S6-51: bound before setRemoteDescription() ever sees it.
         if (!isValidCallSdp(sdp)) {
-            System.err.println("DesktopCallManager: oversized/invalid sdp from $from — ignored")
+            DesktopLog.e("DesktopCallManager", "oversized/invalid sdp from ${DesktopLog.fp(from)} — ignored")
             return
         }
         val pc = peerConnection ?: return
         val remoteSdp = RTCSessionDescription(RTCSdpType.ANSWER, sdp)
         pc.setRemoteDescription(remoteSdp, object : SetSessionDescriptionObserver {
             override fun onSuccess() { drainPendingIce(pc) }
-            override fun onFailure(error: String) { System.err.println("DesktopCallManager: setRemote(answer) fail — $error") }
+            override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "setRemote(answer) fail — $error") }
         })
     }
 
     fun handleIceCandidate(from: String, sdpMid: String?, sdpMLineIndex: Int, candidate: String) {
         // S6-51: bound before ever constructing an RTCIceCandidate/queuing it.
         if (!isValidCallIceCandidate(candidate) || (sdpMid != null && sdpMid.length > CALL_ICE_SDP_MID_MAX_LEN)) {
-            System.err.println("DesktopCallManager: invalid/oversized candidate from $from — dropped")
+            DesktopLog.e("DesktopCallManager", "invalid/oversized candidate from ${DesktopLog.fp(from)} — dropped")
             return
         }
         val ice = RTCIceCandidate(sdpMid, sdpMLineIndex, candidate)
@@ -716,7 +716,7 @@ object DesktopCallManager {
         val pc = peerConnection
         if (pc == null || pc.remoteDescription == null) {
             if (pendingIceCandidates.size >= MAX_PENDING_ICE_CANDIDATES) {
-                System.err.println("DesktopCallManager: pending ICE queue full — candidate dropped")
+                DesktopLog.e("DesktopCallManager", "pending ICE queue full — candidate dropped")
                 return
             }
             pendingIceCandidates.add(ice)
@@ -734,7 +734,7 @@ object DesktopCallManager {
     fun handleIceRestart(from: String, sdp: String) {
         // S6-51: bound before setRemoteDescription() ever sees it.
         if (!isValidCallSdp(sdp)) {
-            System.err.println("DesktopCallManager: oversized/invalid ICE-restart sdp from $from — ignored")
+            DesktopLog.e("DesktopCallManager", "oversized/invalid ICE-restart sdp from ${DesktopLog.fp(from)} — ignored")
             return
         }
         val pc = peerConnection ?: return
@@ -811,7 +811,7 @@ object DesktopCallManager {
         try {
             dc.send(RTCDataChannelBuffer(ByteBuffer.wrap("bye".toByteArray(Charsets.UTF_8)), false))
         } catch (e: Exception) {
-            System.err.println("DesktopCallManager: sendByeOverDataChannel failed — ${e.message}")
+            DesktopLog.e("DesktopCallManager", "sendByeOverDataChannel failed — ${e.message}")
         }
     }
 
@@ -848,7 +848,7 @@ object DesktopCallManager {
                         // handles DISCONNECTED/FAILED with its own grace period and restart logic).
                         scope.launch {
                             if (!callActive.get()) return@launch
-                            System.err.println("DesktopCallManager: heartbeat channel closed by peer — heartbeat disabled, call continues")
+                            DesktopLog.d("DesktopCallManager") { "heartbeat channel closed by peer — heartbeat disabled, call continues" }
                             stopHeartbeat()
                         }
                     }
@@ -889,7 +889,7 @@ object DesktopCallManager {
                 dc.send(RTCDataChannelBuffer(ByteBuffer.wrap(msg.toByteArray(Charsets.UTF_8)), false))
             }
         } catch (e: Exception) {
-            System.err.println("DesktopCallManager: heartbeat send failed — ${e.message}")
+            DesktopLog.e("DesktopCallManager", "heartbeat send failed — ${e.message}")
         }
     }
 
@@ -904,7 +904,7 @@ object DesktopCallManager {
                     val elapsed = System.currentTimeMillis() - lastPongTime
                     if (elapsed > HEARTBEAT_TIMEOUT_MS) {
                         // Same reasoning as the DataChannel-closed handler above.
-                        System.err.println("DesktopCallManager: heartbeat timeout (${elapsed}ms) — heartbeat disabled, call continues")
+                        DesktopLog.e("DesktopCallManager", "heartbeat timeout (${elapsed}ms) — heartbeat disabled, call continues")
                         break
                     }
                 }
@@ -945,7 +945,7 @@ object DesktopCallManager {
                     val pc = peerConnection ?: continue
                     val state = pc.iceConnectionState
                     if (isOfferer && (state == RTCIceConnectionState.DISCONNECTED || state == RTCIceConnectionState.FAILED)) {
-                        System.err.println("DesktopCallManager: network change detected — retrying ICE")
+                        DesktopLog.d("DesktopCallManager") { "network change detected — retrying ICE" }
                         disconnectJob?.cancel()
                         attemptIceRestart(pc, peerId)
                         disconnectJob = scope.launch {
@@ -1019,7 +1019,7 @@ object DesktopCallManager {
      *  invitee's acceptCall() is what actually calls connectToGroupPeer). */
     fun startGroupCall(gId: String, members: List<String>, video: Boolean) {
         if (UserStorage.getHideIpDuringCalls() && !NetworkConfig.TurnCredentials.isAvailable()) {
-            System.err.println("DesktopCallManager: hide IP during calls is on but no TURN server is available — refusing to start group call $gId")
+            DesktopLog.e("DesktopCallManager", "hide IP during calls is on but no TURN server is available — refusing to start group call ${DesktopLog.fp(gId)}")
             onRelayUnavailable?.invoke()
             return
         }
@@ -1077,7 +1077,7 @@ object DesktopCallManager {
         ringingTimeoutJob = scope.launch {
             delay(RINGING_TIMEOUT_MS)
             if (callId == cId && groupPeerConnections.isEmpty()) {
-                System.err.println("DesktopCallManager: group call ringing timeout — auto-declining")
+                DesktopLog.e("DesktopCallManager", "group call ringing timeout — auto-declining")
                 declineCall("timeout")
             }
         }
@@ -1103,10 +1103,10 @@ object DesktopCallManager {
                             put("sdp", sdp.sdp)
                         })
                     }
-                    override fun onFailure(error: String) { System.err.println("DesktopCallManager: group setLocal(offer) fail — $error") }
+                    override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "group setLocal(offer) fail — $error") }
                 })
             }
-            override fun onFailure(error: String) { System.err.println("DesktopCallManager: group createOffer fail — $error") }
+            override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "group createOffer fail — $error") }
         })
     }
 
@@ -1117,7 +1117,7 @@ object DesktopCallManager {
         val f = factory ?: return null
         val hideIp = UserStorage.getHideIpDuringCalls()
         if (hideIp && !NetworkConfig.TurnCredentials.isAvailable()) {
-            System.err.println("DesktopCallManager: hide IP during calls is on but no TURN server is available — refusing group peer $remoteId")
+            DesktopLog.e("DesktopCallManager", "hide IP during calls is on but no TURN server is available — refusing group peer ${DesktopLog.fp(remoteId)}")
             onRelayUnavailable?.invoke()
             return null
         }
@@ -1178,7 +1178,7 @@ object DesktopCallManager {
                         direction = RTCRtpTransceiverDirection.RECV_ONLY
                     })
                 } catch (e: Exception) {
-                    System.err.println("DesktopCallManager: failed to add group recvonly video transceiver — ${e.message}")
+                    DesktopLog.e("DesktopCallManager", "failed to add group recvonly video transceiver — ${e.message}")
                 }
             }
         }
@@ -1190,7 +1190,7 @@ object DesktopCallManager {
 
     private fun queueGroupIceCandidate(remoteId: String, candidate: RTCIceCandidate) {
         if (hideIpPerGroupPeer[remoteId] == true && !isRelayCandidate(candidate.sdp)) {
-            System.err.println("DesktopCallManager: hide IP during calls — dropping non-relay group ICE candidate for $remoteId instead of signaling it")
+            DesktopLog.e("DesktopCallManager", "hide IP during calls — dropping non-relay group ICE candidate for ${DesktopLog.fp(remoteId)} instead of signaling it")
             return
         }
         val entry = JSONObject().apply {
@@ -1242,7 +1242,7 @@ object DesktopCallManager {
      *  joiner opens its own offers to them in turn. */
     fun handleGroupJoin(from: String, sdp: String, cId: String, gId: String) {
         if (!isValidCallSdp(sdp) || !isGroupCall || callId != cId) {
-            System.err.println("DesktopCallManager: invalid/unexpected group_join from $from — ignored")
+            DesktopLog.e("DesktopCallManager", "invalid/unexpected group_join from ${DesktopLog.fp(from)} — ignored")
             return
         }
         val pc = createGroupPeerConnection(from) ?: return
@@ -1278,10 +1278,10 @@ object DesktopCallManager {
                             override fun onFailure(error: String) {}
                         })
                     }
-                    override fun onFailure(error: String) { System.err.println("DesktopCallManager: group createAnswer fail — $error") }
+                    override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "group createAnswer fail — $error") }
                 })
             }
-            override fun onFailure(error: String) { System.err.println("DesktopCallManager: group setRemote(offer) fail — $error") }
+            override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "group setRemote(offer) fail — $error") }
         })
     }
 
@@ -1291,7 +1291,7 @@ object DesktopCallManager {
         val remoteSdp = RTCSessionDescription(RTCSdpType.ANSWER, sdp)
         pc.setRemoteDescription(remoteSdp, object : SetSessionDescriptionObserver {
             override fun onSuccess() { drainGroupPendingIce(from, pc) }
-            override fun onFailure(error: String) { System.err.println("DesktopCallManager: group setRemote(answer) fail — $error") }
+            override fun onFailure(error: String) { DesktopLog.e("DesktopCallManager", "group setRemote(answer) fail — $error") }
         })
     }
 

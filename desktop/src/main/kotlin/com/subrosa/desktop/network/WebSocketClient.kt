@@ -497,7 +497,7 @@ object WebSocketClient {
         val mode = UserStorage.getCoverTrafficMode()
         if (mode == UserStorage.CoverTrafficMode.AGGRESSIVE && _connected.value) {
             if (!outboundQueue.offer(json)) {
-                System.err.println("WebSocketClient: outboundQueue full — sending directly")
+                DesktopLog.d("WebSocketClient") { "outboundQueue full — sending directly" }
                 webSocket?.send(json)
             }
         } else {
@@ -625,7 +625,7 @@ object WebSocketClient {
             }
             CryptoManager.encrypt(enriched.toString(), recipientKey, recipientPqKey)
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: sealPacketForRecipient: failed to seal for $to — ${e.message}")
+            DesktopLog.e("WebSocketClient", "sealPacketForRecipient: failed to seal for ${DesktopLog.fp(to)} — ${e.message}")
             null
         }
     }
@@ -877,7 +877,7 @@ object WebSocketClient {
                 } else false
             }
             if (!shouldAttempt) {
-                println("WebSocketClient: depositTokensViaMailbox: $contact — cooldown active, skipping")
+                DesktopLog.d("WebSocketClient") { "depositTokensViaMailbox: ${DesktopLog.fp(contact)} — cooldown active, skipping" }
                 return
             }
         }
@@ -921,7 +921,7 @@ object WebSocketClient {
                 put("blob", blob)
             }).toString())
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: depositTokensViaMailbox: $contact — ${e.message}")
+            DesktopLog.d("WebSocketClient") { "depositTokensViaMailbox: ${DesktopLog.fp(contact)} — ${e.message}" }
         }
     }
 
@@ -982,7 +982,7 @@ object WebSocketClient {
         val startedAt = channelBootstrapStartedAt[contact] ?: return
         if (System.currentTimeMillis() - startedAt < CHANNEL_STUCK_THRESHOLD_MS) return
         channelStuckNotified.add(contact)
-        System.err.println("WebSocketClient: bootstrapChannelFor: $contact still not ready after 5 minutes")
+        DesktopLog.d("WebSocketClient") { "bootstrapChannelFor: ${DesktopLog.fp(contact)} still not ready after 5 minutes" }
         sendWs(JSONObject().apply {
             put("type", "bootstrap_diagnostic")
         }.toString())
@@ -1052,7 +1052,7 @@ object WebSocketClient {
      *  replies, A receives the reply and replies again, ... */
     private fun sendAnonTokensTo(contact: String, isReply: Boolean = false) {
         if (!anonTokenResupplyInFlight.add(contact)) {
-            System.err.println("WebSocketClient: sendAnonTokensTo: already running for $contact, skipping duplicate")
+            DesktopLog.d("WebSocketClient") { "sendAnonTokensTo: already running for ${DesktopLog.fp(contact)}, skipping duplicate" }
             return
         }
         try {
@@ -1087,10 +1087,10 @@ object WebSocketClient {
         if (recipientPqKey == null) {
             val mailboxTag = AnonTokenManager.getContactMailboxTag(contact)
             if (mailboxTag != null && recipientKey != null) {
-                System.err.println("WebSocketClient: sendAnonTokensTo: no PQ key for $contact — bootstrapping tokens via mailbox")
+                DesktopLog.d("WebSocketClient") { "sendAnonTokensTo: no PQ key for ${DesktopLog.fp(contact)} — bootstrapping tokens via mailbox" }
                 depositTokensViaMailbox(contact, mailboxTag, recipientKey)
             } else {
-                System.err.println("WebSocketClient: sendAnonTokensTo: no token/keys for $contact yet, waiting for mailbox exchange")
+                DesktopLog.d("WebSocketClient") { "sendAnonTokensTo: no token/keys for ${DesktopLog.fp(contact)} yet, waiting for mailbox exchange" }
             }
             return
         }
@@ -1107,15 +1107,15 @@ object WebSocketClient {
             // the same way. Fall back to the same mailbox bootstrap used on contact-add.
             val mailboxTag = AnonTokenManager.getContactMailboxTag(contact)
             if (mailboxTag != null && recipientKey != null) {
-                System.err.println("WebSocketClient: sendAnonTokensTo: no anon token for $contact — bootstrapping tokens via mailbox")
+                DesktopLog.d("WebSocketClient") { "sendAnonTokensTo: no anon token for ${DesktopLog.fp(contact)} — bootstrapping tokens via mailbox" }
                 depositTokensViaMailbox(contact, mailboxTag, recipientKey)
             } else {
-                System.err.println("WebSocketClient: sendAnonTokensTo: no token for $contact yet, waiting for mailbox exchange")
+                DesktopLog.d("WebSocketClient") { "sendAnonTokensTo: no token for ${DesktopLog.fp(contact)} yet, waiting for mailbox exchange" }
             }
             return
         }
         if (recipientKey == null) {
-            System.err.println("WebSocketClient: sendAnonTokensTo: no key for $contact, skipping — will retry on next message")
+            DesktopLog.d("WebSocketClient") { "sendAnonTokensTo: no key for ${DesktopLog.fp(contact)}, skipping — will retry on next message" }
             return
         }
         // Piggybacks our persistent mailbox tag on every token exchange — see
@@ -1195,7 +1195,7 @@ object WebSocketClient {
                 scope.launch { sendAnonTokensTo(from, isReply = true) }
             }
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: failed to process beacon_tokens from $from — ${e.message}")
+            DesktopLog.e("WebSocketClient", "failed to process beacon_tokens from ${DesktopLog.fp(from)} — ${e.message}")
         }
         return true
     }
@@ -1242,7 +1242,7 @@ object WebSocketClient {
                 put("blob", blob)
             }).toString())
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: sendViaMailbox error — ${e.message}")
+            DesktopLog.e("WebSocketClient", "sendViaMailbox error — ${e.message}")
         }
     }
 
@@ -1330,7 +1330,7 @@ object WebSocketClient {
         // Auto-lifted only via a fresh addContact() (invite redemption),
         // never implicitly.
         if (ChatStorage.isBlocked(from)) {
-            System.err.println("WebSocketClient: session_init from $from ignored — contact is blocked")
+            DesktopLog.d("WebSocketClient") { "session_init from ${DesktopLog.fp(from)} ignored — contact is blocked" }
             return
         }
         val senderIk = json.getString("sender_ik")
@@ -1367,7 +1367,7 @@ object WebSocketClient {
         val actualFingerprint = java.security.MessageDigest.getInstance("SHA-256")
             .digest(senderIkBytes).take(8).joinToString("") { "%02X".format(it) }
         if (actualFingerprint != from) {
-            System.err.println("WebSocketClient: session_init: sender_ik does not match claimed from=$from (actual=$actualFingerprint)")
+            DesktopLog.d("WebSocketClient") { "session_init: sender_ik does not match claimed from=${DesktopLog.fp(from)} (actual=${DesktopLog.fp(actualFingerprint)})" }
             throw SecurityException("session_init: identity key does not match claimed from=$from")
         }
 
@@ -1377,12 +1377,12 @@ object WebSocketClient {
         // rejected packet (same "throw not return" pattern as
         // reaction/disappear_timer).
         if (signature == null || !CryptoManager.verify(ctB64, signature, fixedSenderIk)) {
-            System.err.println("WebSocketClient: session_init: invalid or missing signature from $from")
+            DesktopLog.e("WebSocketClient", "session_init: invalid or missing signature from ${DesktopLog.fp(from)}")
             throw SecurityException("session_init: bad or missing signature from $from")
         }
         try {
             if (KeyHistoryManager.checkKeyChange(from, fixedSenderIk)) {
-                System.err.println("WebSocketClient: TOFU: contact $from's key changed in session_init!")
+                DesktopLog.e("WebSocketClient", "TOFU: contact ${DesktopLog.fp(from)}'s key changed in session_init!")
                 onKeyChanged?.invoke(from)
             }
             SessionKeyManager.receiveSession(from, fixedSenderIk, x3dhHdr)
@@ -1411,13 +1411,13 @@ object WebSocketClient {
             // over a session_init we'd already consumed. Mark processed so
             // a retried copy short-circuits on the peek check above, still
             // ack via a "delivered" receipt, and do NOT rethrow.
-            System.err.println("WebSocketClient: duplicate/stale session_init from $from ignored: ${e.message}")
+            DesktopLog.d("WebSocketClient") { "duplicate/stale session_init from ${DesktopLog.fp(from)} ignored: ${e.message}" }
             if (msgId.isNotEmpty()) markProcessed(msgId)
             sendAnonOrDirect(from, JSONObject().apply {
                 put("type", "delivered"); put("from", myFingerprint); put("to", from); put("id", msgId)
             })
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: session_init failed from $from — ${e.message}")
+            DesktopLog.e("WebSocketClient", "session_init failed from ${DesktopLog.fp(from)} — ${e.message}")
             sendSessionResetDebounced(from)
             // Rethrown — was silently swallowed before this fix. A bare
             // return here let the anon_delivery handler's ack fire as if
@@ -1461,11 +1461,11 @@ object WebSocketClient {
                     val senderKey = peerPublicKeys[from] ?: ChatStorage.getContactPublicKey(from)
                     val mailboxSig = innerJson.optString("signature", null)
                     if (senderKey == null) {
-                        System.err.println("WebSocketClient: mailbox: deposit from $from rejected — no trusted key to verify signature")
+                        DesktopLog.e("WebSocketClient", "mailbox: deposit from ${DesktopLog.fp(from)} rejected — no trusted key to verify signature")
                         continue
                     }
                     if (mailboxSig == null || !CryptoManager.verify(mailboxTranscript(innerJson), mailboxSig, senderKey)) {
-                        System.err.println("WebSocketClient: mailbox: deposit from $from rejected — invalid or missing signature")
+                        DesktopLog.e("WebSocketClient", "mailbox: deposit from ${DesktopLog.fp(from)} rejected — invalid or missing signature")
                         continue
                     }
 
@@ -1479,7 +1479,7 @@ object WebSocketClient {
                     // the signal that this recipient independently redeemed the
                     // sender's invite code too — not just the other way around.
                     if (AnonTokenManager.getContactMailboxTag(from) == null) {
-                        System.err.println("WebSocketClient: mailbox: deposit from $from ignored — contact not mutually added")
+                        DesktopLog.d("WebSocketClient") { "mailbox: deposit from ${DesktopLog.fp(from)} ignored — contact not mutually added" }
                         continue
                     }
 
@@ -1541,7 +1541,7 @@ object WebSocketClient {
                         persistAndNotifyIncoming(from, text)
                     }
                 } catch (e: Exception) {
-                    System.err.println("WebSocketClient: mailbox blob decrypt failed — ${e.message}")
+                    DesktopLog.e("WebSocketClient", "mailbox blob decrypt failed — ${e.message}")
                 }
             }
         }
@@ -1595,7 +1595,7 @@ object WebSocketClient {
                 override fun createSocket(host: String, port: Int, localAddr: java.net.InetAddress, localPort: Int) = torSocket(host, port)
                 override fun createSocket(host: java.net.InetAddress, port: Int, localAddr: java.net.InetAddress, localPort: Int) = torSocket(host.hostName, port)
             })
-            System.err.println("WebSocketClient: routing via Tor SOCKS5 (${DesktopTorManager.SOCKS_HOST}:$socksPort)")
+            DesktopLog.d("WebSocketClient") { "routing via Tor SOCKS5 (${DesktopTorManager.SOCKS_HOST}:$socksPort)" }
         }
         if (NetworkConfig.CERT_PIN.isNotEmpty() && NetworkConfig.SERVER_HOSTNAME.isNotEmpty()) {
             builder.certificatePinner(
@@ -1721,7 +1721,7 @@ object WebSocketClient {
         try {
             InviteCodeManager.generateInviteLink()
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: ensureMyMailboxTagRegistered — ${e.message}")
+            DesktopLog.d("WebSocketClient") { "ensureMyMailboxTagRegistered — ${e.message}" }
         }
     }
 
@@ -1883,7 +1883,7 @@ object WebSocketClient {
         val mailboxTag = AnonTokenManager.getContactMailboxTag(contact)
         val publicKey  = peerPublicKeys[contact] ?: ChatStorage.getContactPublicKey(contact)
         if (mailboxTag == null || publicKey == null) {
-            System.err.println("WebSocketClient: forceRestoreConnection: no mailbox tag/key for $contact — cannot restore")
+            DesktopLog.e("WebSocketClient", "forceRestoreConnection: no mailbox tag/key for ${DesktopLog.fp(contact)} — cannot restore")
         } else {
             pendingChannelJobs[contact]?.cancel()
             pendingChannelJobs[contact] = scope.launch {
@@ -2130,15 +2130,15 @@ object WebSocketClient {
         // Edit messages use legacy ephemeral ECDH (the edit protocol frame
         // doesn't carry a session_header, so Double-Ratchet is not applicable here).
         val peerKey = peerPublicKeys[to] ?: run {
-            System.err.println("WebSocketClient: no peer key for $to, dropping edit")
+            DesktopLog.e("WebSocketClient", "no peer key for ${DesktopLog.fp(to)}, dropping edit")
             return
         }
         val peerPqKey = peerPqPublicKeys[to] ?: run {
-            System.err.println("WebSocketClient: no PQ peer key for $to, dropping edit")
+            DesktopLog.e("WebSocketClient", "no PQ peer key for ${DesktopLog.fp(to)}, dropping edit")
             return
         }
         val encrypted = runCatching { CryptoManager.encrypt(newText, peerKey, peerPqKey) }.getOrElse {
-            System.err.println("WebSocketClient: edit encrypt failed — ${it.message}")
+            DesktopLog.e("WebSocketClient", "edit encrypt failed — ${it.message}")
             return
         }
         sendAnonOrDirect(to, JSONObject().apply {
@@ -2183,15 +2183,15 @@ object WebSocketClient {
     fun sendReaction(to: String, msgId: String, emoji: String) {
         if (!handshakeDone) return
         val peerKey = peerPublicKeys[to] ?: run {
-            System.err.println("WebSocketClient: no peer key for $to, dropping reaction")
+            DesktopLog.e("WebSocketClient", "no peer key for ${DesktopLog.fp(to)}, dropping reaction")
             return
         }
         val peerPqKey = peerPqPublicKeys[to] ?: run {
-            System.err.println("WebSocketClient: no PQ peer key for $to, dropping reaction")
+            DesktopLog.e("WebSocketClient", "no PQ peer key for ${DesktopLog.fp(to)}, dropping reaction")
             return
         }
         val encrypted = runCatching { CryptoManager.encrypt(emoji, peerKey, peerPqKey) }.getOrElse {
-            System.err.println("WebSocketClient: reaction encrypt failed — ${it.message}")
+            DesktopLog.e("WebSocketClient", "reaction encrypt failed — ${it.message}")
             return
         }
         sendAnonOrDirect(to, JSONObject().apply {
@@ -2232,13 +2232,13 @@ object WebSocketClient {
             ?: DesktopCryptoManager.getPeerPublicKey(to)
             ?: run {
                 pendingImages.add(PendingImage(to, rawBytes, geo))
-                System.err.println("WebSocketClient: no peer key for $to — requesting, image queued")
+                DesktopLog.d("WebSocketClient") { "no peer key for ${DesktopLog.fp(to)} — requesting, image queued" }
                 requestBundleFor(to)
                 return
             }
         val peerPqKey = peerPqPublicKeys[to] ?: run {
             pendingImages.add(PendingImage(to, rawBytes, geo))
-            System.err.println("WebSocketClient: no PQ peer key for $to — requesting, image queued")
+            DesktopLog.d("WebSocketClient") { "no PQ peer key for ${DesktopLog.fp(to)} — requesting, image queued" }
             requestBundleFor(to)
             return
         }
@@ -2266,7 +2266,7 @@ object WebSocketClient {
                     if (index % 5 == 4) kotlinx.coroutines.delay(30)
                 }
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: sendImage failed — ${e.message}")
+                DesktopLog.e("WebSocketClient", "sendImage failed — ${e.message}")
             }
         }
     }
@@ -2283,13 +2283,13 @@ object WebSocketClient {
             ?: DesktopCryptoManager.getPeerPublicKey(to)
             ?: run {
                 pendingFileSends.add(PendingFileSend(to, fileName, rawBytes))
-                System.err.println("WebSocketClient: no peer key for $to — requesting, file queued")
+                DesktopLog.d("WebSocketClient") { "no peer key for ${DesktopLog.fp(to)} — requesting, file queued" }
                 requestBundleFor(to)
                 return
             }
         val peerPqKey = peerPqPublicKeys[to] ?: run {
             pendingFileSends.add(PendingFileSend(to, fileName, rawBytes))
-            System.err.println("WebSocketClient: no PQ peer key for $to — requesting, file queued")
+            DesktopLog.d("WebSocketClient") { "no PQ peer key for ${DesktopLog.fp(to)} — requesting, file queued" }
             requestBundleFor(to)
             return
         }
@@ -2320,7 +2320,7 @@ object WebSocketClient {
                     if (index % 5 == 4) kotlinx.coroutines.delay(30)
                 }
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: sendFile failed — ${e.message}")
+                DesktopLog.e("WebSocketClient", "sendFile failed — ${e.message}")
             }
         }
     }
@@ -2373,7 +2373,7 @@ object WebSocketClient {
         val peerPqKey = peerPqPublicKeys[to]
         if (peerPubKey == null || peerPqKey == null) {
             pendingVoiceSends.add(PendingVoiceSend(to, voiceBase64, voiceId, duration))
-            System.err.println("WebSocketClient: no key(s) for $to — requesting, voice queued")
+            DesktopLog.d("WebSocketClient") { "no key(s) for ${DesktopLog.fp(to)} — requesting, voice queued" }
             requestBundleFor(to)
             return
         }
@@ -2391,7 +2391,7 @@ object WebSocketClient {
                     put("duration", duration)
                 })
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: sendVoice failed — ${e.message}")
+                DesktopLog.e("WebSocketClient", "sendVoice failed — ${e.message}")
             }
         }
     }
@@ -2413,7 +2413,7 @@ object WebSocketClient {
         val peerPqKey = peerPqPublicKeys[to]
         if (peerPubKey == null || peerPqKey == null) {
             pendingVideoSends.add(PendingVideoSend(to, videoId, videoBytes, duration))
-            System.err.println("WebSocketClient: no key(s) for $to — requesting, video circle queued")
+            DesktopLog.d("WebSocketClient") { "no key(s) for ${DesktopLog.fp(to)} — requesting, video circle queued" }
             requestBundleFor(to)
             return
         }
@@ -2421,7 +2421,7 @@ object WebSocketClient {
             try {
                 val packed = DesktopCryptoManager.encryptImageBytes(peerPubKey, videoBytes, peerPqKey)
                 if (packed == null) {
-                    System.err.println("WebSocketClient: sendVideoCircle: encrypt failed for $videoId")
+                    DesktopLog.e("WebSocketClient", "sendVideoCircle: encrypt failed for ${DesktopLog.fp(videoId)}")
                     return@launch
                 }
                 val base64 = java.util.Base64.getEncoder().encodeToString(packed)
@@ -2452,7 +2452,7 @@ object WebSocketClient {
                     kotlinx.coroutines.delay(30L)
                 }
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: sendVideoCircle failed — ${e.message}")
+                DesktopLog.e("WebSocketClient", "sendVideoCircle failed — ${e.message}")
             }
         }
     }
@@ -2579,7 +2579,7 @@ object WebSocketClient {
      *  EC/PQ key arrives, and kicks off the fetch. Mirrors Android's
      *  identical helper. */
     private fun queueGroupInviteRetry(groupId: String, memberId: String) {
-        System.err.println("WebSocketClient: no key for $memberId — group invite deferred, requesting prekey bundle")
+        DesktopLog.d("WebSocketClient") { "no key for ${DesktopLog.fp(memberId)} — group invite deferred, requesting prekey bundle" }
         pendingGroupInvites.getOrPut(memberId) { mutableSetOf() }.add(groupId)
         requestBundleFor(memberId)
     }
@@ -2700,7 +2700,7 @@ object WebSocketClient {
                     kotlinx.coroutines.delay(30)
                 }
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: sendGroupImage failed — ${e.message}")
+                DesktopLog.e("WebSocketClient", "sendGroupImage failed — ${e.message}")
             }
         }
     }
@@ -2736,7 +2736,7 @@ object WebSocketClient {
                     })
                 }
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: sendGroupAvatarUpdate failed — ${e.message}")
+                DesktopLog.e("WebSocketClient", "sendGroupAvatarUpdate failed — ${e.message}")
             }
         }
     }
@@ -2785,7 +2785,7 @@ object WebSocketClient {
                     kotlinx.coroutines.delay(30)
                 }
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: sendGroupFile failed — ${e.message}")
+                DesktopLog.e("WebSocketClient", "sendGroupFile failed — ${e.message}")
             }
         }
     }
@@ -2884,7 +2884,7 @@ object WebSocketClient {
         val myFp = myFingerprint
         val group = GroupManager.getGroup(groupId) ?: return
         if (!GroupManager.isAdmin(groupId, myFp)) {
-            System.err.println("WebSocketClient: addGroupMember: not admin of $groupId")
+            DesktopLog.d("WebSocketClient") { "addGroupMember: not admin of ${DesktopLog.fp(groupId)}" }
             return
         }
         if (group.groupKey == null) return
@@ -3073,7 +3073,7 @@ object WebSocketClient {
             val sentViaBootstrap = bootstrapToken != null && sendViaToken(bootstrapToken, sessionInitPacket)
             if (!sentViaBootstrap) {
                 if (bootstrapToken != null) {
-                    System.err.println("WebSocketClient: bootstrap-token session_init send failed for $to — falling back to regular routing")
+                    DesktopLog.e("WebSocketClient", "bootstrap-token session_init send failed for ${DesktopLog.fp(to)} — falling back to regular routing")
                 }
                 when {
                     // No anon/bootstrap token available for this brand-new
@@ -3104,7 +3104,7 @@ object WebSocketClient {
                 }
             }
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: X3DH initiate failed for $to — ${e.message}")
+            DesktopLog.e("WebSocketClient", "X3DH initiate failed for ${DesktopLog.fp(to)} — ${e.message}")
             // Fall back to legacy if we already know the peer's public key
             peerPublicKeys[to]?.let { sendLegacy(to, text, msgId) }
         }
@@ -3140,24 +3140,24 @@ object WebSocketClient {
                 put("blob", blob)
             }).toString())
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: depositSessionInitViaMailbox error — ${e.message}")
+            DesktopLog.e("WebSocketClient", "depositSessionInitViaMailbox error — ${e.message}")
         }
     }
 
     /** Encrypt with legacy ephemeral-ECDH and send as a plain "message". */
     private fun sendLegacy(to: String, text: String, msgId: String) {
         val peerKey = peerPublicKeys[to] ?: run {
-            System.err.println("WebSocketClient: no peer key for $to, queuing")
+            DesktopLog.d("WebSocketClient") { "no peer key for ${DesktopLog.fp(to)}, queuing" }
             enqueueAndRequestBundle(to, text, msgId)
             return
         }
         val peerPqKey = peerPqPublicKeys[to] ?: run {
-            System.err.println("WebSocketClient: no PQ peer key for $to, queuing")
+            DesktopLog.d("WebSocketClient") { "no PQ peer key for ${DesktopLog.fp(to)}, queuing" }
             enqueueAndRequestBundle(to, text, msgId)
             return
         }
         val encrypted = runCatching { CryptoManager.encrypt(text, peerKey, peerPqKey) }.getOrElse {
-            System.err.println("WebSocketClient: legacy encrypt failed for $to — ${it.message}")
+            DesktopLog.e("WebSocketClient", "legacy encrypt failed for ${DesktopLog.fp(to)} — ${it.message}")
             return
         }
         sendAnonOrDirect(to, JSONObject().apply {
@@ -3269,9 +3269,9 @@ object WebSocketClient {
                 put("type",   "publish_prekey_bundle")
                 put("bundle", bundleJson)
             }.toString())
-            println("WebSocketClient: prekey bundle published")
+            DesktopLog.d("WebSocketClient") { "prekey bundle published" }
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: failed to publish prekey bundle — ${e.message}")
+            DesktopLog.e("WebSocketClient", "failed to publish prekey bundle — ${e.message}")
         }
     }
 
@@ -3294,8 +3294,8 @@ object WebSocketClient {
                     // starting Tor).
                     val reason = if (serverUrl.contains(".onion")) "server is a .onion address"
                                  else "\"Route via Tor\" is enabled"
-                    System.err.println(
-                        "WebSocketClient: $reason but no local Tor SOCKS proxy " +
+                    DesktopLog.e("WebSocketClient",
+                        "$reason but no local Tor SOCKS proxy " +
                         "was found on ${DesktopTorManager.SOCKS_HOST}:${DesktopTorManager.SOCKS_PORT} " +
                         "(or ${DesktopTorManager.SOCKS_PORT_TOR_BROWSER}) — start Tor/Tor Browser first"
                     )
@@ -3310,7 +3310,7 @@ object WebSocketClient {
                 webSocket = client.newWebSocket(request, Listener())
             }
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: connect failed — ${e.message}")
+            DesktopLog.e("WebSocketClient", "connect failed — ${e.message}")
             isConnecting = false
             scheduleReconnect()
         }
@@ -3383,7 +3383,7 @@ object WebSocketClient {
                         "anon_channel_ok" -> {
                             anonChannelReady = true
                             anonChannelConnecting = false
-                            println("WebSocketClient: anon_channel ready")
+                            DesktopLog.d("WebSocketClient") { "anon_channel ready" }
                             // Flush anything that queued up while this
                             // connection wasn't ready.
                             var queued = anonChannelPendingQueue.poll()
@@ -3394,12 +3394,12 @@ object WebSocketClient {
                         }
                     }
                 } catch (e: Exception) {
-                    System.err.println("WebSocketClient: anon_channel onMessage error — ${e.message}")
+                    DesktopLog.e("WebSocketClient", "anon_channel onMessage error — ${e.message}")
                 }
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                System.err.println("WebSocketClient: anon_channel error — ${t.message}")
+                DesktopLog.e("WebSocketClient", "anon_channel error — ${t.message}")
                 anonChannelReady = false
                 anonChannelConnecting = false
                 if (anonWebSocket === ws) anonWebSocket = null
@@ -3436,7 +3436,7 @@ object WebSocketClient {
         val mode = UserStorage.getCoverTrafficMode()
         if (mode == UserStorage.CoverTrafficMode.AGGRESSIVE && _connected.value) {
             if (!anonOutboundQueue.offer(json)) {
-                System.err.println("WebSocketClient: anonOutboundQueue full — sending directly")
+                DesktopLog.d("WebSocketClient") { "anonOutboundQueue full — sending directly" }
                 return sendOnAnonChannelNow(json)
             }
             return true
@@ -3463,7 +3463,7 @@ object WebSocketClient {
             connectAnonChannel()
         }
         if (!anonChannelPendingQueue.offer(json)) {
-            System.err.println("WebSocketClient: anonChannelPendingQueue full — packet dropped")
+            DesktopLog.e("WebSocketClient", "anonChannelPendingQueue full — packet dropped")
             return false
         }
         return true
@@ -3493,7 +3493,7 @@ object WebSocketClient {
                 try {
                     handleMessage(text, ws)
                 } catch (e: Exception) {
-                    System.err.println("WebSocketClient: handleMessage error — ${e.message}")
+                    DesktopLog.e("WebSocketClient", "handleMessage error — ${e.message}")
                 }
             }
         }
@@ -3507,7 +3507,7 @@ object WebSocketClient {
             // connection's state. Found in the 2026-09-13 registration
             // state-machine audit.
             if (ws !== webSocket) return
-            System.err.println("WebSocketClient: onFailure — ${t.message}")
+            DesktopLog.e("WebSocketClient", "onFailure — ${t.message}")
             isConnecting  = false
             handshakeDone = false
             _connected.value = false
@@ -3797,7 +3797,7 @@ object WebSocketClient {
                 val basePacket = lastRegisterPacket
                 val difficultyBits = json.optInt("difficulty_bits", 18)
                 if (challengeBytes == null || basePacket == null) {
-                    System.err.println("WebSocketClient: pow_required — no saved challenge/register packet to retry")
+                    DesktopLog.d("WebSocketClient") { "pow_required — no saved challenge/register packet to retry" }
                     registrationReady?.complete(false)
                 } else {
                     // Registration stays pending while retrying — does NOT
@@ -3819,7 +3819,7 @@ object WebSocketClient {
             // transient like pow_required.
             "registration_full" -> {
                 if (ws !== webSocket) return
-                System.err.println("WebSocketClient: register rejected by server: server full (account limit reached)")
+                DesktopLog.e("WebSocketClient", "register rejected by server: server full (account limit reached)")
                 onChannelError?.invoke("Сервер заполнен (достигнут лимит аккаунтов)")
                 registrationReady?.complete(false)
             }
@@ -3831,14 +3831,14 @@ object WebSocketClient {
             // Android's MessengerService.kt handler.
             "device_auth_failed" -> {
                 if (ws !== webSocket) return
-                System.err.println("WebSocketClient: register rejected by server: device_auth_failed")
+                DesktopLog.e("WebSocketClient", "register rejected by server: device_auth_failed")
                 onChannelError?.invoke("Не удалось подтвердить устройство (device_auth_failed)")
                 registrationReady?.complete(false)
             }
 
             "error" -> {
                 val reason = json.optString("reason", json.optString("message", "unknown"))
-                System.err.println("WebSocketClient: error — $reason")
+                DesktopLog.e("WebSocketClient", "error — $reason")
                 onChannelError?.invoke(reason)
                 // A generic server-level "error" (e.g. totp_setup's per-account
                 // rate_limit_check() rejection — the ONLY totp_setup failure path
@@ -3856,7 +3856,7 @@ object WebSocketClient {
 
             "session_conflict" -> {
                 if (ws !== webSocket) return
-                System.err.println("WebSocketClient: session_conflict — disconnecting")
+                DesktopLog.d("WebSocketClient") { "session_conflict — disconnecting" }
                 disconnect()
             }
 
@@ -3899,7 +3899,7 @@ object WebSocketClient {
                         // 2026-09-13 contact-deletion/token-exhaustion audit
                         // (mirrors Android's matching fix in
                         // handleFetchedPrekeyBundle()).
-                        println("WebSocketClient: no prekey bundle for $from — contact hasn't published one yet, messages stay queued")
+                        DesktopLog.d("WebSocketClient") { "no prekey bundle for ${DesktopLog.fp(from)} — contact hasn't published one yet, messages stay queued" }
                     } else {
                         // Clears the prekey_fetch cooldown the instant a REAL
                         // bundle comes back — mirrors Android's identical fix.
@@ -3914,12 +3914,12 @@ object WebSocketClient {
                         // live 2026-09-18.
                         lastPrekeyFetchAttempt.remove(from)
                         if (bundleObj.optBoolean("revoked", false)) {
-                            System.err.println("WebSocketClient: prekey bundle from $from marked revoked by server")
+                            DesktopLog.d("WebSocketClient") { "prekey bundle from ${DesktopLog.fp(from)} marked revoked by server" }
                             onContactRevoked?.invoke(from)
                         }
                         val bundle = SessionKeyManager.parsePrekeyBundle(bundleObj)
                         if (KeyHistoryManager.checkKeyChange(from, bundle.identityKey)) {
-                            System.err.println("WebSocketClient: TOFU: contact $from's key changed on bundle fetch!")
+                            DesktopLog.e("WebSocketClient", "TOFU: contact ${DesktopLog.fp(from)}'s key changed on bundle fetch!")
                             onKeyChanged?.invoke(from)
                         }
                         peerPublicKeys[from] = bundle.identityKey
@@ -3936,7 +3936,7 @@ object WebSocketClient {
                         flushPendingGroupInvites(from)
                     }
                 } catch (e: Exception) {
-                    System.err.println("WebSocketClient: bad bundle from $from — ${e.message}")
+                    DesktopLog.e("WebSocketClient", "bad bundle from ${DesktopLog.fp(from)} — ${e.message}")
                 } finally {
                     bundleRequested.remove(from)
                 }
@@ -3959,7 +3959,7 @@ object WebSocketClient {
                     // currently in-flight batched request must be treated
                     // as terminally failed here rather than left stuck
                     // forever (the per-target loop below never even runs).
-                    System.err.println("WebSocketClient: prekey_bundles_batch_response missing 'bundles' — clearing in-flight batch requests")
+                    DesktopLog.e("WebSocketClient", "prekey_bundles_batch_response missing 'bundles' — clearing in-flight batch requests")
                     bundleRequested.clear()
                 } else {
                     for (target in bundleRequested.toList()) {
@@ -3984,7 +3984,7 @@ object WebSocketClient {
                             // to fail its own PQ-key check and immediately
                             // re-fire requestBundleFor(target), an infinite
                             // loop. Leave messageQueue queued instead.
-                            println("WebSocketClient: no prekey bundle for $target (batch) — contact hasn't published one yet, messages stay queued")
+                            DesktopLog.d("WebSocketClient") { "no prekey bundle for ${DesktopLog.fp(target)} (batch) — contact hasn't published one yet, messages stay queued" }
                             bundleRequested.remove(target)
                             continue
                         }
@@ -4003,12 +4003,12 @@ object WebSocketClient {
                             // above — see its own comment.
                             lastPrekeyFetchAttempt.remove(target)
                             if (bundleObj.optBoolean("revoked", false)) {
-                                System.err.println("WebSocketClient: prekey bundle from $target marked revoked by server")
+                                DesktopLog.d("WebSocketClient") { "prekey bundle from ${DesktopLog.fp(target)} marked revoked by server" }
                                 onContactRevoked?.invoke(target)
                             }
                             val bundle = SessionKeyManager.parsePrekeyBundle(bundleObj)
                             if (KeyHistoryManager.checkKeyChange(target, bundle.identityKey)) {
-                                System.err.println("WebSocketClient: TOFU: contact $target's key changed on bundle fetch!")
+                                DesktopLog.e("WebSocketClient", "TOFU: contact ${DesktopLog.fp(target)}'s key changed on bundle fetch!")
                                 onKeyChanged?.invoke(target)
                             }
                             peerPublicKeys[target] = bundle.identityKey
@@ -4024,7 +4024,7 @@ object WebSocketClient {
                             flushPendingVideoSends(target)
                             flushPendingGroupInvites(target)
                         } catch (e: Exception) {
-                            System.err.println("WebSocketClient: bad batched bundle for $target — ${e.message}")
+                            DesktopLog.e("WebSocketClient", "bad batched bundle for ${DesktopLog.fp(target)} — ${e.message}")
                         } finally {
                             bundleRequested.remove(target)
                         }
@@ -4046,10 +4046,10 @@ object WebSocketClient {
                     // server's pinned public key matters on the RECEIVING
                     // side (a peer checking someone else's cert), not here.
                     SenderCertManager.store(cert, signature)
-                    println("WebSocketClient: sender_cert received and cached")
+                    DesktopLog.d("WebSocketClient") { "sender_cert received and cached" }
                     flushAllPendingAnon()
                 } catch (e: Exception) {
-                    System.err.println("WebSocketClient: sender_cert error — ${e.message}")
+                    DesktopLog.e("WebSocketClient", "sender_cert error — ${e.message}")
                 }
             }
 
@@ -4087,12 +4087,12 @@ object WebSocketClient {
                 val senderPublicKey = peerPublicKeys[from]
                     ?: ChatStorage.getContactPublicKey(from)?.also { peerPublicKeys[from] = it }
                 if (signature == null || senderPublicKey == null) {
-                    System.err.println("WebSocketClient: message: no key for $from — requesting")
+                    DesktopLog.d("WebSocketClient") { "message: no key for ${DesktopLog.fp(from)} — requesting" }
                     requestBundleFor(from)
                     throw SecurityException("message: no key from $from")
                 }
                 if (!CryptoManager.verify(ctB64, signature, senderPublicKey)) {
-                    System.err.println("WebSocketClient: message: invalid signature from $from")
+                    DesktopLog.e("WebSocketClient", "message: invalid signature from ${DesktopLog.fp(from)}")
                     throw SecurityException("message: bad signature from $from")
                 }
                 val text = if (sessHdr != null && !SessionKeyManager.hasSession(from)) {
@@ -4107,7 +4107,7 @@ object WebSocketClient {
                     // way forever. Ask for a fresh session_init and drop
                     // just this one message instead — found in the
                     // 2026-09-12 full-logic audit.
-                    System.err.println("WebSocketClient: message with session_header from $from but no session — requesting their session_init")
+                    DesktopLog.d("WebSocketClient") { "message with session_header from ${DesktopLog.fp(from)} but no session — requesting their session_init" }
                     sendSessionResetDebounced(from)
                     return
                 } else if (sessHdr != null) {
@@ -4131,14 +4131,14 @@ object WebSocketClient {
                         // the clear (mirrors anon_delivery_ack's role for
                         // the token-routed path) — then return without
                         // touching session state or showing the message again.
-                        System.err.println("WebSocketClient: duplicate/stale message from $from ignored: ${e.message}")
+                        DesktopLog.d("WebSocketClient") { "duplicate/stale message from ${DesktopLog.fp(from)} ignored: ${e.message}" }
                         if (msgId.isNotEmpty()) markProcessed(msgId)
                         sendAnonOrDirect(from, JSONObject().apply {
                             put("type", "delivered"); put("from", myFingerprint); put("to", from); put("id", msgId)
                         })
                         return
                     } catch (e: Exception) {
-                        System.err.println("WebSocketClient: DR decrypt failed from $from — ${e.message}")
+                        DesktopLog.e("WebSocketClient", "DR decrypt failed from ${DesktopLog.fp(from)} — ${e.message}")
                         sendSessionResetDebounced(from)
                         // Thrown, not a plain return — mirrors the Android
                         // fix (docs/ISSUE_backup_identity_hijack.md,
@@ -4150,7 +4150,7 @@ object WebSocketClient {
                 } else {
                     // Legacy ephemeral-ECDH path
                     runCatching { CryptoManager.decrypt(ctB64) }.getOrElse {
-                        System.err.println("WebSocketClient: legacy decrypt failed from $from — ${it.message}")
+                        DesktopLog.e("WebSocketClient", "legacy decrypt failed from ${DesktopLog.fp(from)} — ${it.message}")
                         throw it
                     }
                 }
@@ -4197,14 +4197,14 @@ object WebSocketClient {
                     // "blob").
                     val blob = rawPayload.optString("blob", null)
                     if (blob != null && blob.length > ANON_DELIVERY_BLOB_MAX_LEN) {
-                        System.err.println("WebSocketClient: anon_delivery: blob exceeds ANON_DELIVERY_BLOB_MAX_LEN (${blob.length}) — dropped before decrypt()")
+                        DesktopLog.e("WebSocketClient", "anon_delivery: blob exceeds ANON_DELIVERY_BLOB_MAX_LEN (${blob.length}) — dropped before decrypt()")
                         return
                     }
                     val payload = if (blob != null) {
                         try {
                             JSONObject(CryptoManager.decrypt(blob))
                         } catch (e: Exception) {
-                            System.err.println("WebSocketClient: anon_delivery: failed to unseal blob — ${e.message}")
+                            DesktopLog.e("WebSocketClient", "anon_delivery: failed to unseal blob — ${e.message}")
                             return
                         }
                     } else rawPayload
@@ -4222,12 +4222,12 @@ object WebSocketClient {
                     if (senderCert != null && senderCertSig != null) {
                         val certFingerprint = senderCert.optString("fingerprint", null)
                         if (certFingerprint != claimedFrom) {
-                            System.err.println("WebSocketClient: anon_delivery: sender_cert issued for $certFingerprint, but from=$claimedFrom — mismatch")
+                            DesktopLog.e("WebSocketClient", "anon_delivery: sender_cert issued for ${DesktopLog.fp(certFingerprint)}, but from=${DesktopLog.fp(claimedFrom)} — mismatch")
                         } else if (!SenderCertManager.verify(senderCert, senderCertSig)) {
-                            System.err.println("WebSocketClient: anon_delivery: sender_cert for $claimedFrom failed signature verification")
+                            DesktopLog.e("WebSocketClient", "anon_delivery: sender_cert for ${DesktopLog.fp(claimedFrom)} failed signature verification")
                         } else {
                             certVerified = true
-                            println("WebSocketClient: anon_delivery: sender_cert for $claimedFrom verified")
+                            DesktopLog.d("WebSocketClient") { "anon_delivery: sender_cert for ${DesktopLog.fp(claimedFrom)} verified" }
                         }
                     }
 
@@ -4243,7 +4243,7 @@ object WebSocketClient {
                         } else null
                         if (controlSig == null || senderKey == null ||
                             !CryptoManager.verify(controlEnvelopeTranscript(payload), controlSig, senderKey)) {
-                            System.err.println("WebSocketClient: anon_delivery: $innerType — invalid or missing sender signature (from=$claimedFrom), rejected")
+                            DesktopLog.e("WebSocketClient", "anon_delivery: $innerType — invalid or missing sender signature (from=${DesktopLog.fp(claimedFrom)}), rejected")
                             return
                         }
                     }
@@ -4280,7 +4280,7 @@ object WebSocketClient {
                         }.toString())
                     }
                 } catch (e: Exception) {
-                    System.err.println("WebSocketClient: anon_delivery error — ${e.message}")
+                    DesktopLog.e("WebSocketClient", "anon_delivery error — ${e.message}")
                 }
             }
 
@@ -4359,7 +4359,7 @@ object WebSocketClient {
                         )
                     }
                 } catch (e: Exception) {
-                    System.err.println("WebSocketClient: video_chunk_batch error — ${e.message}")
+                    DesktopLog.e("WebSocketClient", "video_chunk_batch error — ${e.message}")
                     throw e
                 }
             }
@@ -4393,25 +4393,25 @@ object WebSocketClient {
                     // malformed/oversized frame as if it had actually been
                     // received, same class of fix as the checks below.
                     if (voiceId.isEmpty() || voiceId.length > VOICE_ID_MAX_LEN) {
-                        System.err.println("WebSocketClient: voice voiceId outside allowed length from $from")
+                        DesktopLog.d("WebSocketClient") { "voice voiceId outside allowed length from ${DesktopLog.fp(from)}" }
                         throw SecurityException("voice: voiceId out of bounds from $from")
                     }
                     if (encryptedData.isEmpty() || encryptedData.length > VOICE_WIRE_MAX_LEN) {
-                        System.err.println("WebSocketClient: voice voice_data outside allowed length from $from")
+                        DesktopLog.d("WebSocketClient") { "voice voice_data outside allowed length from ${DesktopLog.fp(from)}" }
                         throw SecurityException("voice: voice_data out of bounds from $from")
                     }
                     if (signature != null && signature.length > VOICE_SIGNATURE_MAX_LEN) {
-                        System.err.println("WebSocketClient: voice signature outside allowed length from $from")
+                        DesktopLog.d("WebSocketClient") { "voice signature outside allowed length from ${DesktopLog.fp(from)}" }
                         throw SecurityException("voice: signature out of bounds from $from")
                     }
                     if (duration < 0 || duration > MAX_VOICE_DURATION_SECONDS) {
-                        System.err.println("WebSocketClient: voice duration outside allowed range from $from")
+                        DesktopLog.d("WebSocketClient") { "voice duration outside allowed range from ${DesktopLog.fp(from)}" }
                         throw SecurityException("voice: duration out of range from $from")
                     }
 
                     val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
                     if (signature == null || senderKey == null) {
-                        System.err.println("WebSocketClient: voice with no key from $from — requesting")
+                        DesktopLog.d("WebSocketClient") { "voice with no key from ${DesktopLog.fp(from)} — requesting" }
                         requestBundleFor(from)
                         throw SecurityException("voice: нет ключа от $from")
                     }
@@ -4426,7 +4426,7 @@ object WebSocketClient {
                     // and be dropped, same as any other signature failure --
                     // an accepted, explicit tradeoff.
                     if (!CryptoManager.verify(voiceSignatureTranscript(voiceId, duration, encryptedData), signature, senderKey)) {
-                        System.err.println("WebSocketClient: invalid voice signature from $from")
+                        DesktopLog.e("WebSocketClient", "invalid voice signature from ${DesktopLog.fp(from)}")
                         throw SecurityException("voice: неверная подпись от $from")
                     }
                     // Replay dedup (S6-58, STEP 9) -- deliberately checked
@@ -4453,29 +4453,29 @@ object WebSocketClient {
                     // very end, once every step below has actually
                     // succeeded.
                     if (isDuplicateId(voiceId)) {
-                        System.err.println("WebSocketClient: duplicate/repeat voice $voiceId from $from ignored")
+                        DesktopLog.d("WebSocketClient") { "duplicate/repeat voice ${DesktopLog.fp(voiceId)} from ${DesktopLog.fp(from)} ignored" }
                         return
                     }
                     val voiceDataB64 = CryptoManager.decrypt(encryptedData)
                     // Post-decrypt bound (S6-57, STEP 8) -- checked BEFORE
                     // Base64.decode()/AudioTranscoder.toWav() ever run.
                     if (voiceDataB64.length > VOICE_MAX_DECRYPTED_B64_LEN) {
-                        System.err.println("WebSocketClient: voice decrypted data exceeds allowed size from $from")
+                        DesktopLog.d("WebSocketClient") { "voice decrypted data exceeds allowed size from ${DesktopLog.fp(from)}" }
                         throw SecurityException("voice: decrypted payload too large from $from")
                     }
                     val decodedBytes = try {
                         Base64.getDecoder().decode(voiceDataB64)
                     } catch (e: Exception) {
-                        System.err.println("WebSocketClient: voice invalid base64 from $from")
+                        DesktopLog.e("WebSocketClient", "voice invalid base64 from ${DesktopLog.fp(from)}")
                         throw e
                     }
                     if (decodedBytes.size > VOICE_MAX_DECODED_AUDIO_BYTES) {
-                        System.err.println("WebSocketClient: voice decoded audio exceeds allowed size from $from")
+                        DesktopLog.d("WebSocketClient") { "voice decoded audio exceeds allowed size from ${DesktopLog.fp(from)}" }
                         throw SecurityException("voice: decoded audio too large from $from")
                     }
                     val wavBytes = AudioTranscoder.toWav(decodedBytes)
                     if (wavBytes == null) {
-                        System.err.println("WebSocketClient: voice from $from — failed to normalize to WAV")
+                        DesktopLog.e("WebSocketClient", "voice from ${DesktopLog.fp(from)} — failed to normalize to WAV")
                         throw IllegalStateException("voice: WAV normalization failed from $from")
                     }
                     // Marked processed ONLY now — after signature
@@ -4496,7 +4496,7 @@ object WebSocketClient {
                     )
                     onFileReceived?.invoke(from, voiceId, VoiceRecorder.FILE_NAME, wavBytes, duration, voiceId)
                 } catch (e: Exception) {
-                    System.err.println("WebSocketClient: voice error — ${e.message}")
+                    DesktopLog.e("WebSocketClient", "voice error — ${e.message}")
                     // Re-thrown — was silently swallowed before this fix, so
                     // anon_delivery's ack fired as if this voice message had
                     // actually been received even on a genuine decrypt/
@@ -4541,12 +4541,12 @@ object WebSocketClient {
                 val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
                 if (signature == null || senderKey == null ||
                     !CryptoManager.verify(ChatControlTranscripts.groupMessageDelete(groupId, messageId), signature, senderKey)) {
-                    System.err.println("WebSocketClient: group_message_delete: invalid or missing signature from $from")
+                    DesktopLog.e("WebSocketClient", "group_message_delete: invalid or missing signature from ${DesktopLog.fp(from)}")
                     return
                 }
                 val existing = GroupManager.loadGroupMessages(myFingerprint, groupId).find { it.id == messageId }
                 if (existing != null && existing.senderId != from) {
-                    System.err.println("WebSocketClient: group_message_delete: $from tried to delete someone else's message $messageId — rejected")
+                    DesktopLog.e("WebSocketClient", "group_message_delete: ${DesktopLog.fp(from)} tried to delete someone else's message ${DesktopLog.fp(messageId)} — rejected")
                     return
                 }
                 GroupManager.deleteGroupMessage(myFingerprint, groupId, messageId)
@@ -4565,11 +4565,11 @@ object WebSocketClient {
                 val signature = json.optString("signature", null)
                 val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
                 if (signature == null || senderKey == null) {
-                    System.err.println("WebSocketClient: group_reaction with no key from $from")
+                    DesktopLog.d("WebSocketClient") { "group_reaction with no key from ${DesktopLog.fp(from)}" }
                     throw SecurityException("group_reaction: no key from $from")
                 }
                 if (!CryptoManager.verify(emoji, signature, senderKey)) {
-                    System.err.println("WebSocketClient: group_reaction: invalid signature from $from")
+                    DesktopLog.e("WebSocketClient", "group_reaction: invalid signature from ${DesktopLog.fp(from)}")
                     throw SecurityException("group_reaction: bad signature from $from")
                 }
                 // Persist onto the stored group message (mirrors Android's
@@ -4647,7 +4647,7 @@ object WebSocketClient {
             // session — no retry loop here, same treatment as session_conflict.
             "access_code_required" -> {
                 if (ws !== webSocket) return
-                System.err.println("WebSocketClient: access_code_required — server requires a one-time access code to register, none/wrong one was sent")
+                DesktopLog.d("WebSocketClient") { "access_code_required — server requires a one-time access code to register, none/wrong one was sent" }
                 onChannelError?.invoke("Сервер требует код доступа для регистрации")
                 registrationReady?.complete(false)
                 disconnect()
@@ -4665,7 +4665,7 @@ object WebSocketClient {
                 // true before register_ok — see its own comment); reset here
                 // anyway as an explicit, defensive statement of the required
                 // invariant rather than relying on "never got set".
-                System.err.println("WebSocketClient: totp_required — this device_id needs a valid TOTP code to register")
+                DesktopLog.d("WebSocketClient") { "totp_required — this device_id needs a valid TOTP code to register" }
                 handshakeDone = false
                 _connected.value = false
                 onStatusChanged?.invoke(false)
@@ -4703,12 +4703,12 @@ object WebSocketClient {
                 val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
                 if (signature == null || senderKey == null ||
                     !CryptoManager.verify(ctB64, signature, senderKey)) {
-                    System.err.println("WebSocketClient: edit: invalid or missing signature from $from — rejected")
+                    DesktopLog.e("WebSocketClient", "edit: invalid or missing signature from ${DesktopLog.fp(from)} — rejected")
                     return
                 }
                 // Edits are always encrypted with legacy ephemeral-ECDH
                 val newText = runCatching { CryptoManager.decrypt(ctB64) }.getOrElse {
-                    System.err.println("WebSocketClient: edit decrypt failed from $from — ${it.message}")
+                    DesktopLog.e("WebSocketClient", "edit decrypt failed from ${DesktopLog.fp(from)} — ${it.message}")
                     return
                 }
                 onEditReceived?.invoke(msgId, newText)
@@ -4736,12 +4736,12 @@ object WebSocketClient {
                 val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
                 if (signature == null || senderKey == null ||
                     !CryptoManager.verify(ChatControlTranscripts.messageDelete(msgId), signature, senderKey)) {
-                    System.err.println("WebSocketClient: message_delete: invalid or missing signature from $from")
+                    DesktopLog.e("WebSocketClient", "message_delete: invalid or missing signature from ${DesktopLog.fp(from)}")
                     return
                 }
                 val existing = ChatStorage.loadMessages(myFingerprint, from).find { it.id == msgId }
                 if (existing != null && existing.isOwn) {
-                    System.err.println("WebSocketClient: message_delete: $from tried to delete someone else's (our) message $msgId — rejected")
+                    DesktopLog.e("WebSocketClient", "message_delete: ${DesktopLog.fp(from)} tried to delete someone else's (our) message ${DesktopLog.fp(msgId)} — rejected")
                     return
                 }
                 onMessageDeleted?.invoke(from, msgId)
@@ -4767,7 +4767,7 @@ object WebSocketClient {
                 val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
                 if (signature == null || senderKey == null ||
                     !CryptoManager.verify(encryptedEmoji, signature, senderKey)) {
-                    System.err.println("WebSocketClient: reaction: invalid or missing signature from $from")
+                    DesktopLog.e("WebSocketClient", "reaction: invalid or missing signature from ${DesktopLog.fp(from)}")
                     throw SecurityException("reaction: bad or missing signature from $from")
                 }
                 val emoji = CryptoManager.decrypt(encryptedEmoji)
@@ -4788,14 +4788,14 @@ object WebSocketClient {
                 val from = json.getString("from")
                 val seconds = json.getLong("seconds")
                 if (seconds !in CHAT_CONTROL_DISAPPEAR_TIMER_ALLOWED) {
-                    System.err.println("WebSocketClient: disappear_timer: invalid value seconds=$seconds from $from")
+                    DesktopLog.e("WebSocketClient", "disappear_timer: invalid value seconds=$seconds from ${DesktopLog.fp(from)}")
                     throw SecurityException("disappear_timer: invalid seconds=$seconds from $from")
                 }
                 val signature = json.optString("signature", null)
                 val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
                 if (signature == null || senderKey == null ||
                     !CryptoManager.verify(ChatControlTranscripts.disappearTimer(seconds), signature, senderKey)) {
-                    System.err.println("WebSocketClient: disappear_timer: invalid or missing signature from $from")
+                    DesktopLog.e("WebSocketClient", "disappear_timer: invalid or missing signature from ${DesktopLog.fp(from)}")
                     throw SecurityException("disappear_timer: bad or missing signature from $from")
                 }
                 ChatStorage.setDisappearTimer(myFingerprint, from, seconds)
@@ -4826,7 +4826,7 @@ object WebSocketClient {
             "session_reset" -> {
                 val from = json.optString("from", "")
                 if (from.isNotEmpty()) {
-                    System.err.println("WebSocketClient: session_reset from $from — clearing session")
+                    DesktopLog.d("WebSocketClient") { "session_reset from ${DesktopLog.fp(from)} — clearing session" }
                     SessionKeyManager.deleteSession(from)
                     // Was missing entirely — session_reset only ever cleared
                     // the Double Ratchet session, never the separately-
@@ -4862,7 +4862,7 @@ object WebSocketClient {
             "pq_bundle_refresh" -> {
                 val from = json.optString("from", "")
                 if (from.isNotEmpty()) {
-                    System.err.println("WebSocketClient: pq_bundle_refresh from $from — our cached PQ bundle is stale, re-requesting")
+                    DesktopLog.d("WebSocketClient") { "pq_bundle_refresh from ${DesktopLog.fp(from)} — our cached PQ bundle is stale, re-requesting" }
                     peerPqPublicKeys.remove(from)
                     ChatStorage.clearContactPqPublicKey(from)
                     bundleRequested.remove(from)
@@ -4921,7 +4921,7 @@ object WebSocketClient {
                         )
                     }
                 } catch (e: Exception) {
-                    System.err.println("WebSocketClient: call_ice_batch error — ${e.message}")
+                    DesktopLog.e("WebSocketClient", "call_ice_batch error — ${e.message}")
                 }
             }
             "call_ice_restart" -> DesktopCallManager.handleIceRestart(json.getString("from"), json.getString("sdp"))
@@ -4970,7 +4970,7 @@ object WebSocketClient {
 
             "ping" -> webSocket?.send(JSONObject().apply { put("type", "pong") }.toString())
 
-            else -> System.err.println("WebSocketClient: unhandled type=$type")
+            else -> DesktopLog.d("WebSocketClient") { "unhandled type=$type" }
         }
     }
 
@@ -4992,7 +4992,7 @@ object WebSocketClient {
         val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
         if (signature == null || senderKey == null ||
             !CryptoManager.verifyChunk(chunkData, signature, senderKey, imageId, chunkIndex)) {
-            System.err.println("WebSocketClient: bad image_chunk signature from $from")
+            DesktopLog.e("WebSocketClient", "bad image_chunk signature from ${DesktopLog.fp(from)}")
             return
         }
 
@@ -5000,22 +5000,22 @@ object WebSocketClient {
         // simultaneous-transfer cap BEFORE ever touching imageChunks/
         // imageTotals.
         if (totalChunks !in 1..MEDIA_CHUNK_MAX_TOTAL_CHUNKS || chunkIndex !in 0 until totalChunks) {
-            System.err.println("WebSocketClient: invalid chunk_index/total_chunks in image_chunk from $from ($chunkIndex/$totalChunks)")
+            DesktopLog.e("WebSocketClient", "invalid chunk_index/total_chunks in image_chunk from ${DesktopLog.fp(from)} ($chunkIndex/$totalChunks)")
             return
         }
         if (!pruneAndAdmitTransfer(imageChunks, imageTouchedAt, imageId, imageReceivedBytes)) {
-            System.err.println("WebSocketClient: too many concurrent image transfers — $imageId rejected")
+            DesktopLog.e("WebSocketClient", "too many concurrent image transfers — ${DesktopLog.fp(imageId)} rejected")
             return
         }
         if (chunkData.length > MEDIA_CHUNK_DATA_MAX_LEN) {
-            System.err.println("WebSocketClient: oversized image_chunk data from $from — cancelling $imageId")
+            DesktopLog.d("WebSocketClient") { "oversized image_chunk data from ${DesktopLog.fp(from)} — cancelling ${DesktopLog.fp(imageId)}" }
             imageChunks.remove(imageId); imageTotals.remove(imageId); imageTouchedAt.remove(imageId)
             imageGeos.remove(imageId); imageReceivedBytes.remove(imageId)
             return
         }
         val imageBucket = imageChunks.getOrPut(imageId) { mutableMapOf() }
         if (!accountChunkBytes(imageBucket, imageReceivedBytes, imageId, chunkIndex, chunkData)) {
-            System.err.println("WebSocketClient: image transfer $imageId exceeded byte ceiling — cancelling")
+            DesktopLog.d("WebSocketClient") { "image transfer ${DesktopLog.fp(imageId)} exceeded byte ceiling — cancelling" }
             imageChunks.remove(imageId); imageTotals.remove(imageId); imageTouchedAt.remove(imageId)
             imageGeos.remove(imageId); imageReceivedBytes.remove(imageId)
             return
@@ -5035,7 +5035,7 @@ object WebSocketClient {
             val geoCoords = imageGeos.remove(imageId)
 
             val encBytes = runCatching { Base64.getDecoder().decode(combined) }.getOrElse {
-                System.err.println("WebSocketClient: image base64 decode failed — ${it.message}")
+                DesktopLog.e("WebSocketClient", "image base64 decode failed — ${it.message}")
                 return
             }
             val rawBytes = DesktopCryptoManager.decryptImageBytes(from, encBytes) ?: return
@@ -5053,7 +5053,7 @@ object WebSocketClient {
                 )
                 onImageReceived?.invoke(from, rawBytes, geoCoords, id)
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: failed to store image — ${e.message}")
+                DesktopLog.e("WebSocketClient", "failed to store image — ${e.message}")
             }
         }
     }
@@ -5087,7 +5087,7 @@ object WebSocketClient {
         val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
         if (signature == null || senderKey == null ||
             !CryptoManager.verifyChunk(chunkData, signature, senderKey, fileId, chunkIndex)) {
-            System.err.println("WebSocketClient: bad file_chunk signature from $from")
+            DesktopLog.e("WebSocketClient", "bad file_chunk signature from ${DesktopLog.fp(from)}")
             return
         }
 
@@ -5095,22 +5095,22 @@ object WebSocketClient {
         // simultaneous-transfer cap BEFORE ever touching fileChunks/
         // fileTotals/fileNames.
         if (totalChunks !in 1..MEDIA_CHUNK_MAX_TOTAL_CHUNKS || chunkIndex !in 0 until totalChunks) {
-            System.err.println("WebSocketClient: invalid chunk_index/total_chunks in file_chunk from $from ($chunkIndex/$totalChunks)")
+            DesktopLog.e("WebSocketClient", "invalid chunk_index/total_chunks in file_chunk from ${DesktopLog.fp(from)} ($chunkIndex/$totalChunks)")
             return
         }
         if (!pruneAndAdmitTransfer(fileChunks, fileTouchedAt, fileId, fileReceivedBytes)) {
-            System.err.println("WebSocketClient: too many concurrent file transfers — $fileId rejected")
+            DesktopLog.e("WebSocketClient", "too many concurrent file transfers — ${DesktopLog.fp(fileId)} rejected")
             return
         }
         if (chunkData.length > MEDIA_CHUNK_DATA_MAX_LEN) {
-            System.err.println("WebSocketClient: oversized file_chunk data from $from — cancelling $fileId")
+            DesktopLog.d("WebSocketClient") { "oversized file_chunk data from ${DesktopLog.fp(from)} — cancelling ${DesktopLog.fp(fileId)}" }
             fileChunks.remove(fileId); fileTotals.remove(fileId); fileTouchedAt.remove(fileId)
             fileNames.remove(fileId); fileReceivedBytes.remove(fileId)
             return
         }
         val fileBucket = fileChunks.getOrPut(fileId) { mutableMapOf() }
         if (!accountChunkBytes(fileBucket, fileReceivedBytes, fileId, chunkIndex, chunkData)) {
-            System.err.println("WebSocketClient: file transfer $fileId exceeded byte ceiling — cancelling")
+            DesktopLog.d("WebSocketClient") { "file transfer ${DesktopLog.fp(fileId)} exceeded byte ceiling — cancelling" }
             fileChunks.remove(fileId); fileTotals.remove(fileId); fileTouchedAt.remove(fileId)
             fileNames.remove(fileId); fileReceivedBytes.remove(fileId)
             return
@@ -5127,7 +5127,7 @@ object WebSocketClient {
                     else -> "file"
                 }
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: file_name decrypt failed — ${e.message}")
+                DesktopLog.e("WebSocketClient", "file_name decrypt failed — ${e.message}")
                 legacyFileName ?: "file"
             }
             fileNames[fileId] = sanitizePathComponent(decryptedName)
@@ -5145,7 +5145,7 @@ object WebSocketClient {
             val name = fileNames.remove(fileId) ?: "file"
 
             val encBytes = runCatching { Base64.getDecoder().decode(combined) }.getOrElse {
-                System.err.println("WebSocketClient: file base64 decode failed — ${it.message}")
+                DesktopLog.e("WebSocketClient", "file base64 decode failed — ${it.message}")
                 return
             }
             val rawBytes = DesktopCryptoManager.decryptImageBytes(from, encBytes) ?: return
@@ -5166,7 +5166,7 @@ object WebSocketClient {
                 )
                 onFileReceived?.invoke(from, fileId, name, rawBytes, 0, id)
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: failed to store file — ${e.message}")
+                DesktopLog.e("WebSocketClient", "failed to store file — ${e.message}")
             }
         }
     }
@@ -5187,27 +5187,27 @@ object WebSocketClient {
         val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
         if (signature == null || senderKey == null ||
             !CryptoManager.verifyChunk(chunkData, signature, senderKey, videoId, chunkIndex)) {
-            System.err.println("WebSocketClient: bad video_chunk signature from $from")
+            DesktopLog.e("WebSocketClient", "bad video_chunk signature from ${DesktopLog.fp(from)}")
             return
         }
         if (totalChunks !in 1..MEDIA_CHUNK_MAX_TOTAL_CHUNKS || chunkIndex !in 0 until totalChunks) {
-            System.err.println("WebSocketClient: invalid chunk_index/total_chunks in video_chunk from $from ($chunkIndex/$totalChunks)")
+            DesktopLog.e("WebSocketClient", "invalid chunk_index/total_chunks in video_chunk from ${DesktopLog.fp(from)} ($chunkIndex/$totalChunks)")
             return
         }
         val transferKey = "$from:$videoIdSafe"
         if (!pruneAndAdmitTransfer(videoChunks, videoTouchedAt, transferKey, videoReceivedBytes)) {
-            System.err.println("WebSocketClient: too many concurrent video transfers — $transferKey rejected")
+            DesktopLog.e("WebSocketClient", "too many concurrent video transfers — ${DesktopLog.fp(transferKey)} rejected")
             return
         }
         if (chunkData.length > MEDIA_CHUNK_DATA_MAX_LEN) {
-            System.err.println("WebSocketClient: oversized video_chunk data from $from — cancelling $transferKey")
+            DesktopLog.d("WebSocketClient") { "oversized video_chunk data from ${DesktopLog.fp(from)} — cancelling ${DesktopLog.fp(transferKey)}" }
             videoChunks.remove(transferKey); videoTotals.remove(transferKey); videoTouchedAt.remove(transferKey)
             videoReceivedBytes.remove(transferKey); videoDurations.remove(transferKey)
             return
         }
         val bucket = videoChunks.getOrPut(transferKey) { mutableMapOf() }
         if (!accountChunkBytes(bucket, videoReceivedBytes, transferKey, chunkIndex, chunkData)) {
-            System.err.println("WebSocketClient: video transfer $transferKey exceeded byte ceiling — cancelling")
+            DesktopLog.d("WebSocketClient") { "video transfer ${DesktopLog.fp(transferKey)} exceeded byte ceiling — cancelling" }
             videoChunks.remove(transferKey); videoTotals.remove(transferKey); videoTouchedAt.remove(transferKey)
             videoReceivedBytes.remove(transferKey); videoDurations.remove(transferKey)
             return
@@ -5225,7 +5225,7 @@ object WebSocketClient {
             val dur = videoDurations.remove(transferKey) ?: duration
 
             val encBytes = runCatching { Base64.getDecoder().decode(combined) }.getOrElse {
-                System.err.println("WebSocketClient: video base64 decode failed — ${it.message}")
+                DesktopLog.e("WebSocketClient", "video base64 decode failed — ${it.message}")
                 return
             }
             val rawBytes = DesktopCryptoManager.decryptImageBytes(from, encBytes) ?: return
@@ -5241,10 +5241,10 @@ object WebSocketClient {
                         isRead = false, expiresAt = computeExpiresAt(from)
                     )
                 )
-                println("WebSocketClient: video circle $videoIdSafe received from $from")
+                DesktopLog.d("WebSocketClient") { "video circle ${DesktopLog.fp(videoIdSafe)} received from ${DesktopLog.fp(from)}" }
                 onVideoReceived?.invoke(from, videoIdSafe, outFile, dur)
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: failed to store video circle $videoIdSafe — ${e.message}")
+                DesktopLog.e("WebSocketClient", "failed to store video circle ${DesktopLog.fp(videoIdSafe)} — ${e.message}")
             }
         }
     }
@@ -5262,13 +5262,13 @@ object WebSocketClient {
         try {
             val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
             if (signature == null || senderKey == null) {
-                System.err.println("WebSocketClient: group_create without key from $from")
+                DesktopLog.d("WebSocketClient") { "group_create without key from ${DesktopLog.fp(from)}" }
                 return
             }
             // Binds group_id + group_name + group_avatar + the key blob
             // itself (S6-64) — see groupCreatePayload()'s own comment.
             if (!CryptoManager.verify(groupCreatePayload(groupId, groupName, groupAvatar, encryptedGroupKey), signature, senderKey)) {
-                System.err.println("WebSocketClient: bad group_create signature from $from")
+                DesktopLog.e("WebSocketClient", "bad group_create signature from ${DesktopLog.fp(from)}")
                 return
             }
             if (GroupManager.getGroup(groupId) != null) return // already a member
@@ -5290,17 +5290,17 @@ object WebSocketClient {
             if (membersFromPacket != null && adminsFromPacket != null) {
                 val payload = rosterPayload(groupId, membersFromPacket, adminsFromPacket)
                 if (rosterSignature == null || !CryptoManager.verify(payload, rosterSignature, senderKey)) {
-                    System.err.println("WebSocketClient: bad group roster signature from $from")
+                    DesktopLog.e("WebSocketClient", "bad group roster signature from ${DesktopLog.fp(from)}")
                     return
                 }
                 if (myFingerprint !in membersFromPacket) {
-                    System.err.println("WebSocketClient: group_create roster doesn't include us — rejected")
+                    DesktopLog.e("WebSocketClient", "group_create roster doesn't include us — rejected")
                     return
                 }
                 members = membersFromPacket
                 admins = adminsFromPacket
             } else {
-                System.err.println("WebSocketClient: group_create without roster from $from — rejected")
+                DesktopLog.e("WebSocketClient", "group_create without roster from ${DesktopLog.fp(from)} — rejected")
                 return
             }
 
@@ -5334,12 +5334,12 @@ object WebSocketClient {
                                 val actualFp = java.security.MessageDigest.getInstance("SHA-256")
                                     .digest(pkBytes).take(8).joinToString("") { "%02X".format(it) }
                                 if (actualFp != fp) {
-                                    System.err.println("WebSocketClient: member_keys: key for $fp doesn't match fingerprint (got $actualFp) — skipped")
+                                    DesktopLog.d("WebSocketClient") { "member_keys: key for ${DesktopLog.fp(fp)} doesn't match fingerprint (got ${DesktopLog.fp(actualFp)}) — skipped" }
                                     return@forEach
                                 }
 
                                 if (KeyHistoryManager.checkKeyChange(fp, pk)) {
-                                    System.err.println("WebSocketClient: TOFU: $fp's key changed via group $groupId member_keys!")
+                                    DesktopLog.e("WebSocketClient", "TOFU: ${DesktopLog.fp(fp)}'s key changed via group ${DesktopLog.fp(groupId)} member_keys!")
                                     onKeyChanged?.invoke(fp)
                                 }
                                 val pqBytes = Base64.getDecoder().decode(pqB64)
@@ -5354,14 +5354,14 @@ object WebSocketClient {
                                     ChatStorage.saveContactName(fp, name)
                                 }
                             } catch (e: Exception) {
-                                System.err.println("WebSocketClient: member_keys entry error — ${e.message}")
+                                DesktopLog.e("WebSocketClient", "member_keys entry error — ${e.message}")
                             }
                         }
                     } else {
-                        System.err.println("WebSocketClient: group_create: bad member_keys signature from $from — member keys not learned")
+                        DesktopLog.e("WebSocketClient", "group_create: bad member_keys signature from ${DesktopLog.fp(from)} — member keys not learned")
                     }
                 } catch (e: Exception) {
-                    System.err.println("WebSocketClient: group_create: member_keys processing error — ${e.message}")
+                    DesktopLog.e("WebSocketClient", "group_create: member_keys processing error — ${e.message}")
                 }
             }
 
@@ -5390,7 +5390,7 @@ object WebSocketClient {
 
             onGroupInviteReceived?.invoke(group, encryptedGroupKey)
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: group_create error — ${e.message}")
+            DesktopLog.e("WebSocketClient", "group_create error — ${e.message}")
         }
     }
 
@@ -5416,7 +5416,7 @@ object WebSocketClient {
             // actually succeeded.
             if (isDuplicateId(messageId)) return
             val group = GroupManager.getGroup(groupId) ?: run {
-                System.err.println("WebSocketClient: group_message for unknown group $groupId")
+                DesktopLog.d("WebSocketClient") { "group_message for unknown group ${DesktopLog.fp(groupId)}" }
                 // Thrown, not returned: an unknown group can mean
                 // group_create just hasn't arrived yet (reordered delivery)
                 // — not ACKing lets the server's token_pending keep this
@@ -5426,11 +5426,11 @@ object WebSocketClient {
             }
             val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
             if (signature == null || senderKey == null) {
-                System.err.println("WebSocketClient: group_message without key from $from")
+                DesktopLog.d("WebSocketClient") { "group_message without key from ${DesktopLog.fp(from)}" }
                 throw SecurityException("group_message: нет ключа от $from")
             }
             if (!CryptoManager.verify(encryptedText, signature, senderKey)) {
-                System.err.println("WebSocketClient: bad group_message signature from $from")
+                DesktopLog.e("WebSocketClient", "bad group_message signature from ${DesktopLog.fp(from)}")
                 throw SecurityException("group_message: неверная подпись от $from")
             }
             val decryptedText = GroupManager.decryptGroupMessage(encryptedText, group.groupKey!!)
@@ -5446,7 +5446,7 @@ object WebSocketClient {
             if (!message.isOwn) DesktopNotificationService.notifyGroupMessage(groupId, senderName, decryptedText)
             onGroupMessageReceived?.invoke(groupId, message)
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: group_message error — ${e.message}")
+            DesktopLog.e("WebSocketClient", "group_message error — ${e.message}")
             // Re-thrown — was silently swallowed before this fix, so
             // anon_delivery's ack fired as if this group message had
             // actually been received even on a genuine failure. Mirrors
@@ -5477,16 +5477,16 @@ object WebSocketClient {
         val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
         val groupKey = GroupManager.getGroup(groupId)?.groupKey
         if (senderKey == null || groupKey == null) {
-            System.err.println("WebSocketClient: group_image_batch: no sender key or group $groupId")
+            DesktopLog.d("WebSocketClient") { "group_image_batch: no sender key or group ${DesktopLog.fp(groupId)}" }
             return
         }
         if (totalChunks !in 1..MEDIA_CHUNK_MAX_TOTAL_CHUNKS) {
-            System.err.println("WebSocketClient: group_image_batch: invalid total_chunks from $from ($totalChunks)")
+            DesktopLog.e("WebSocketClient", "group_image_batch: invalid total_chunks from ${DesktopLog.fp(from)} ($totalChunks)")
             return
         }
         val transferKey = "$groupId:$from:$imageId"
         if (!pruneAndAdmitTransfer(imageChunks, imageTouchedAt, transferKey, imageReceivedBytes)) {
-            System.err.println("WebSocketClient: too many concurrent group image transfers — $transferKey rejected")
+            DesktopLog.e("WebSocketClient", "too many concurrent group image transfers — ${DesktopLog.fp(transferKey)} rejected")
             return
         }
         val chunks = imageChunks.getOrPut(transferKey) { mutableMapOf() }
@@ -5496,16 +5496,16 @@ object WebSocketClient {
             val chunkData = c.getString("data")
             val signature = c.optString("signature", null)
             if (signature == null || !CryptoManager.verifyChunk(chunkData, signature, senderKey, imageId, chunkIndex)) {
-                System.err.println("WebSocketClient: bad group_image chunk signature from $from")
+                DesktopLog.e("WebSocketClient", "bad group_image chunk signature from ${DesktopLog.fp(from)}")
                 continue
             }
             if (chunkIndex !in 0 until totalChunks || chunkData.length > MEDIA_CHUNK_DATA_MAX_LEN) {
-                System.err.println("WebSocketClient: group_image_batch: invalid chunk_index/data from $from — cancelling $transferKey")
+                DesktopLog.e("WebSocketClient", "group_image_batch: invalid chunk_index/data from ${DesktopLog.fp(from)} — cancelling ${DesktopLog.fp(transferKey)}")
                 imageChunks.remove(transferKey); imageTouchedAt.remove(transferKey); imageReceivedBytes.remove(transferKey)
                 return
             }
             if (!accountChunkBytes(chunks, imageReceivedBytes, transferKey, chunkIndex, chunkData)) {
-                System.err.println("WebSocketClient: group image transfer $transferKey exceeded byte ceiling — cancelling")
+                DesktopLog.d("WebSocketClient") { "group image transfer ${DesktopLog.fp(transferKey)} exceeded byte ceiling — cancelling" }
                 imageChunks.remove(transferKey); imageTouchedAt.remove(transferKey); imageReceivedBytes.remove(transferKey)
                 return
             }
@@ -5533,7 +5533,7 @@ object WebSocketClient {
                 GroupManager.saveGroupMessage(myFingerprint, message)
                 onGroupImageReceived?.invoke(groupId, from, id, imgFile)
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: group_image_batch decrypt/store failed — ${e.message}")
+                DesktopLog.e("WebSocketClient", "group_image_batch decrypt/store failed — ${e.message}")
             }
         }
     }
@@ -5555,15 +5555,15 @@ object WebSocketClient {
         val groupKey = group?.groupKey
 
         if (senderKey == null || groupKey == null) {
-            System.err.println("WebSocketClient: group_avatar_update: no sender key or group $groupId")
+            DesktopLog.d("WebSocketClient") { "group_avatar_update: no sender key or group ${DesktopLog.fp(groupId)}" }
             return
         }
         if (!GroupManager.isAdmin(groupId, from)) {
-            System.err.println("WebSocketClient: group_avatar_update: $from is not admin of $groupId — rejected")
+            DesktopLog.e("WebSocketClient", "group_avatar_update: ${DesktopLog.fp(from)} is not admin of ${DesktopLog.fp(groupId)} — rejected")
             return
         }
         if (signature == null || !CryptoManager.verify(encryptedAvatar, signature, senderKey)) {
-            System.err.println("WebSocketClient: group_avatar_update: bad signature from $from")
+            DesktopLog.e("WebSocketClient", "group_avatar_update: bad signature from ${DesktopLog.fp(from)}")
             return
         }
 
@@ -5584,7 +5584,7 @@ object WebSocketClient {
             GroupManager.saveGroup(updated)
             onGroupAvatarUpdated?.invoke(groupId)
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: group_avatar_update decrypt/store failed — ${e.message}")
+            DesktopLog.e("WebSocketClient", "group_avatar_update decrypt/store failed — ${e.message}")
         }
     }
 
@@ -5602,23 +5602,23 @@ object WebSocketClient {
         val senderKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
         val groupKey = GroupManager.getGroup(groupId)?.groupKey
         if (senderKey == null || groupKey == null) {
-            System.err.println("WebSocketClient: group_file_batch: no sender key or group $groupId")
+            DesktopLog.d("WebSocketClient") { "group_file_batch: no sender key or group ${DesktopLog.fp(groupId)}" }
             return
         }
         if (totalChunks !in 1..MEDIA_CHUNK_MAX_TOTAL_CHUNKS) {
-            System.err.println("WebSocketClient: group_file_batch: invalid total_chunks from $from ($totalChunks)")
+            DesktopLog.e("WebSocketClient", "group_file_batch: invalid total_chunks from ${DesktopLog.fp(from)} ($totalChunks)")
             return
         }
         val transferKey = "$groupId:$from:$fileId"
         if (!pruneAndAdmitTransfer(fileChunks, fileTouchedAt, transferKey, fileReceivedBytes)) {
-            System.err.println("WebSocketClient: too many concurrent group file transfers — $transferKey rejected")
+            DesktopLog.e("WebSocketClient", "too many concurrent group file transfers — ${DesktopLog.fp(transferKey)} rejected")
             return
         }
         if (!fileNames.containsKey(transferKey)) {
             val decryptedName = try {
                 if (encryptedFileName != null) GroupManager.decryptGroupMessage(encryptedFileName, groupKey) else "file"
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: group file_name decrypt failed — ${e.message}")
+                DesktopLog.e("WebSocketClient", "group file_name decrypt failed — ${e.message}")
                 "file"
             }
             fileNames[transferKey] = sanitizePathComponent(decryptedName)
@@ -5630,16 +5630,16 @@ object WebSocketClient {
             val chunkData = c.getString("data")
             val signature = c.optString("signature", null)
             if (signature == null || !CryptoManager.verifyChunk(chunkData, signature, senderKey, fileId, chunkIndex)) {
-                System.err.println("WebSocketClient: bad group_file chunk signature from $from")
+                DesktopLog.e("WebSocketClient", "bad group_file chunk signature from ${DesktopLog.fp(from)}")
                 continue
             }
             if (chunkIndex !in 0 until totalChunks || chunkData.length > MEDIA_CHUNK_DATA_MAX_LEN) {
-                System.err.println("WebSocketClient: group_file_batch: invalid chunk_index/data from $from — cancelling $transferKey")
+                DesktopLog.e("WebSocketClient", "group_file_batch: invalid chunk_index/data from ${DesktopLog.fp(from)} — cancelling ${DesktopLog.fp(transferKey)}")
                 fileChunks.remove(transferKey); fileTouchedAt.remove(transferKey); fileReceivedBytes.remove(transferKey); fileNames.remove(transferKey)
                 return
             }
             if (!accountChunkBytes(chunks, fileReceivedBytes, transferKey, chunkIndex, chunkData)) {
-                System.err.println("WebSocketClient: group file transfer $transferKey exceeded byte ceiling — cancelling")
+                DesktopLog.d("WebSocketClient") { "group file transfer ${DesktopLog.fp(transferKey)} exceeded byte ceiling — cancelling" }
                 fileChunks.remove(transferKey); fileTouchedAt.remove(transferKey); fileReceivedBytes.remove(transferKey); fileNames.remove(transferKey)
                 return
             }
@@ -5668,7 +5668,7 @@ object WebSocketClient {
                 GroupManager.saveGroupMessage(myFingerprint, message)
                 onGroupFileReceived?.invoke(groupId, from, id, outFile, name)
             } catch (e: Exception) {
-                System.err.println("WebSocketClient: group_file_batch decrypt/store failed — ${e.message}")
+                DesktopLog.e("WebSocketClient", "group_file_batch decrypt/store failed — ${e.message}")
             }
         }
     }
@@ -5681,13 +5681,13 @@ object WebSocketClient {
         try {
             val group = GroupManager.getGroup(groupId) ?: return
             if (from == null || !GroupManager.isAdmin(groupId, from)) {
-                System.err.println("WebSocketClient: group_member_removed from non-admin $from — rejected")
+                DesktopLog.e("WebSocketClient", "group_member_removed from non-admin ${DesktopLog.fp(from)} — rejected")
                 return
             }
             val adminKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
             if (signature == null || adminKey == null ||
                 !CryptoManager.verify("$groupId:$removedMember", signature, adminKey)) {
-                System.err.println("WebSocketClient: bad group_member_removed signature from $from")
+                DesktopLog.e("WebSocketClient", "bad group_member_removed signature from ${DesktopLog.fp(from)}")
                 return
             }
             GroupManager.removeMember(groupId, from, removedMember)
@@ -5707,7 +5707,7 @@ object WebSocketClient {
                 onGroupMessageReceived?.invoke(groupId, sysMessage)
             }
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: group_member_removed error — ${e.message}")
+            DesktopLog.e("WebSocketClient", "group_member_removed error — ${e.message}")
         }
     }
 
@@ -5730,11 +5730,11 @@ object WebSocketClient {
             // recipient would then silently overwrite group Y's real key
             // with what was actually group X's.
             if (!CryptoManager.verify("$groupId:$encryptedNewKey", signature, senderKey)) {
-                System.err.println("WebSocketClient: bad group_key_rotation signature from $from")
+                DesktopLog.e("WebSocketClient", "bad group_key_rotation signature from ${DesktopLog.fp(from)}")
                 return
             }
             if (!GroupManager.isAdmin(groupId, from)) {
-                System.err.println("WebSocketClient: group_key_rotation from non-admin $from — rejected")
+                DesktopLog.e("WebSocketClient", "group_key_rotation from non-admin ${DesktopLog.fp(from)} — rejected")
                 return
             }
             val newGroupKey = GroupManager.decryptGroupKey(encryptedNewKey)
@@ -5748,7 +5748,7 @@ object WebSocketClient {
             GroupManager.saveGroupMessage(myFingerprint, sysMessage)
             onGroupMessageReceived?.invoke(groupId, sysMessage)
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: group_key_rotation error — ${e.message}")
+            DesktopLog.e("WebSocketClient", "group_key_rotation error — ${e.message}")
         }
     }
 
@@ -5761,7 +5761,7 @@ object WebSocketClient {
             val memberKey = peerPublicKeys[newMember] ?: DesktopCryptoManager.getPeerPublicKey(newMember)
             if (signature == null || memberKey == null ||
                 !CryptoManager.verify("$groupId:$newMember", signature, memberKey)) {
-                System.err.println("WebSocketClient: bad group_invite_accepted signature from $newMember")
+                DesktopLog.e("WebSocketClient", "bad group_invite_accepted signature from ${DesktopLog.fp(newMember)}")
                 return
             }
             // Was applied unconditionally on ANY receiving device — this
@@ -5787,7 +5787,7 @@ object WebSocketClient {
             GroupManager.saveGroupMessage(myFingerprint, sysMessage)
             onGroupMessageReceived?.invoke(groupId, sysMessage)
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: group_invite_accepted error — ${e.message}")
+            DesktopLog.e("WebSocketClient", "group_invite_accepted error — ${e.message}")
         }
     }
 
@@ -5808,13 +5808,13 @@ object WebSocketClient {
         try {
             val group = GroupManager.getGroup(groupId) ?: return
             if (from == null || !GroupManager.isAdmin(groupId, from)) {
-                System.err.println("WebSocketClient: group_member_added from non-admin $from — rejected")
+                DesktopLog.e("WebSocketClient", "group_member_added from non-admin ${DesktopLog.fp(from)} — rejected")
                 return
             }
             val adminKey = peerPublicKeys[from] ?: DesktopCryptoManager.getPeerPublicKey(from)
             if (signature == null || adminKey == null ||
                 !CryptoManager.verify("$groupId:add:$newMember", signature, adminKey)) {
-                System.err.println("WebSocketClient: bad group_member_added signature from $from")
+                DesktopLog.e("WebSocketClient", "bad group_member_added signature from ${DesktopLog.fp(from)}")
                 return
             }
             GroupManager.addMember(groupId, from, newMember)
@@ -5840,12 +5840,12 @@ object WebSocketClient {
                                 val actualFp = java.security.MessageDigest.getInstance("SHA-256")
                                     .digest(pkBytes).take(8).joinToString("") { "%02X".format(it) }
                                 if (actualFp != fp) {
-                                    System.err.println("WebSocketClient: member_keys: key for $fp doesn't match fingerprint (got $actualFp) — skipped")
+                                    DesktopLog.d("WebSocketClient") { "member_keys: key for ${DesktopLog.fp(fp)} doesn't match fingerprint (got ${DesktopLog.fp(actualFp)}) — skipped" }
                                     return@forEach
                                 }
 
                                 if (KeyHistoryManager.checkKeyChange(fp, pk)) {
-                                    System.err.println("WebSocketClient: TOFU: $fp's key changed via group $groupId member_keys!")
+                                    DesktopLog.e("WebSocketClient", "TOFU: ${DesktopLog.fp(fp)}'s key changed via group ${DesktopLog.fp(groupId)} member_keys!")
                                     onKeyChanged?.invoke(fp)
                                 }
                                 val pqBytes = Base64.getDecoder().decode(pqB64)
@@ -5857,14 +5857,14 @@ object WebSocketClient {
                                     ChatStorage.saveContactName(fp, name)
                                 }
                             } catch (e: Exception) {
-                                System.err.println("WebSocketClient: member_keys entry error — ${e.message}")
+                                DesktopLog.e("WebSocketClient", "member_keys entry error — ${e.message}")
                             }
                         }
                     } else {
-                        System.err.println("WebSocketClient: group_member_added: bad member_keys signature from $from — key not learned")
+                        DesktopLog.e("WebSocketClient", "group_member_added: bad member_keys signature from ${DesktopLog.fp(from)} — key not learned")
                     }
                 } catch (e: Exception) {
-                    System.err.println("WebSocketClient: group_member_added: member_keys processing error — ${e.message}")
+                    DesktopLog.e("WebSocketClient", "group_member_added: member_keys processing error — ${e.message}")
                 }
             }
 
@@ -5876,7 +5876,7 @@ object WebSocketClient {
             GroupManager.saveGroupMessage(myFingerprint, sysMessage)
             onGroupMessageReceived?.invoke(groupId, sysMessage)
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: group_member_added error — ${e.message}")
+            DesktopLog.e("WebSocketClient", "group_member_added error — ${e.message}")
         }
     }
 
@@ -5895,7 +5895,7 @@ object WebSocketClient {
             ChannelManager.saveChannel(channel)
             onChannelCreated?.invoke(channel)
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: channel_created error — ${e.message}")
+            DesktopLog.e("WebSocketClient", "channel_created error — ${e.message}")
         }
     }
 
@@ -5917,7 +5917,7 @@ object WebSocketClient {
             ChannelManager.addPost(post)
             onChannelPostReceived?.invoke(channelId, post)
         } catch (e: Exception) {
-            System.err.println("WebSocketClient: channel_update error — ${e.message}")
+            DesktopLog.e("WebSocketClient", "channel_update error — ${e.message}")
         }
     }
 
