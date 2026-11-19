@@ -33,11 +33,12 @@ WHAT `revoke` DOES — exactly the mechanism a client already triggers with
     SQLite and cannot talk to the server process, so the server finds the row on
     its next sweep.
 WHAT IT DOES NOT DO:
-  * it does NOT free the seat: the `registered_fingerprints` row stays, and
-    MAX_REGISTERED_USERS counts every fingerprint "ever registered" (open
-    decision, see docs/DEPLOY.md "Seats");
-  * it does NOT delete messages already queued for that fingerprint, nor
-    remove their device keys / TOTP rows (they become unreachable, not erased);
+  * (the seat IS freed: since the "revoking gives the seat back" change the server counts
+    only non-revoked identities against MAX_REGISTERED_USERS; the registered_fingerprints
+    row itself is kept so the fingerprint stays revoked);
+  * it does NOT delete their stored data (queued messages, prekey bundle, device keys, TOTP
+    secret/recovery codes, avatar) unless you ask with `--purge` — see below. Without it the
+    data becomes unreachable, not erased;
   * it does NOT invalidate server access codes that were handed out and are
     still unused: someone holding one could register a brand-new identity.
     Use `codes` to see and delete unused codes. The server stores only the
@@ -46,6 +47,17 @@ WHAT IT DOES NOT DO:
     to which person — that would be new data about people on the server. Keep
     that bookkeeping on your side (e.g. when you run admin_gen_codes.py, note
     who receives which link).
+
+`revoke --purge` (separate flag, off by default; dry run without `--yes`) additionally deletes,
+in the SAME transaction as the revocation, the rows keyed to that fingerprint in exactly these
+tables and nothing else: pending_messages (recipient = fingerprint), prekey_bundles_db,
+authorized_devices, user_totp, totp_recovery_codes, user_avatars. The aggregate tables the server
+keeps for capacity limits (pending_messages_meta, user_avatars_meta) are recomputed from the tables
+in the same transaction — the same recount server.py does at startup, so the S6-50 startup check
+still agrees. NEVER deleted: the registered_fingerprints and revoked_fingerprints rows (the
+fingerprint must stay revoked), access codes, anon token state, channel posts. Messages that this
+person SENT sit in other people's queues and cannot be found: the server does not know senders.
+A running server keeps copies of bundles/avatars/TOTP secrets in RAM; restart it to drop them.
 
 WHAT THIS TOOL CANNOT KNOW, ON PURPOSE. The server never learns who sent an
 `anon_message` and does not store who talks to whom: delivery runs on one-time
@@ -229,6 +241,35 @@ def resolve(conn, token: str):
     raise SystemExit(f"error: prefix is ambiguous ({len(matches)} matches); give more characters")
 
 
+PURGE_TABLES = [   # (table, key column) — the ONLY tables --purge may touch
+    ("pending_messages", "recipient"),
+    ("prekey_bundles_db", "username"),
+    ("authorized_devices", "username"),
+    ("user_totp", "username"),
+    ("totp_recovery_codes", "username"),
+    ("user_avatars", "username"),
+]
+
+
+def purge_plan(conn, fp):
+    """[(table, rows)] for the tables that exist."""
+    plan = []
+    for table, col in PURGE_TABLES:
+        if has_table(conn, table):
+            plan.append((table, conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {col} = ?", (fp,)).fetchone()[0]))
+    return plan
+
+
+def recompute_meta(conn):
+    """Same recount server.py does at startup (S6-50): the *_meta rows must match their tables."""
+    if has_table(conn, "pending_messages_meta") and has_table(conn, "pending_messages"):
+        r, b = conn.execute("SELECT COUNT(*), COALESCE(SUM(payload_bytes), 0) FROM pending_messages").fetchone()
+        conn.execute("INSERT OR REPLACE INTO pending_messages_meta (id, total_rows, total_bytes) VALUES (1, ?, ?)", (r, b))
+    if has_table(conn, "user_avatars_meta") and has_table(conn, "user_avatars"):
+        r, b = conn.execute("SELECT COUNT(*), COALESCE(SUM(avatar_bytes), 0) FROM user_avatars").fetchone()
+        conn.execute("INSERT OR REPLACE INTO user_avatars_meta (id, total_rows, total_bytes) VALUES (1, ?, ?)", (r, b))
+
+
 def cmd_revoke(args) -> int:
     conn = open_db(db_path(), writable=args.yes)
     fp = resolve(conn, args.fingerprint)
@@ -236,25 +277,53 @@ def cmd_revoke(args) -> int:
         raise SystemExit("error: revoked_fingerprints table missing — start server.py once so it can create its schema")
     already = conn.execute("SELECT revoked_at FROM revoked_fingerprints WHERE fingerprint = ?", (fp,)).fetchone()
     print(f"Identity: {fp}")
-    if already:
+    if already and not args.purge:
         print(f"Already revoked on {fmt_ts(already[0])} — nothing to do.")
         return 0
-    print("This will:")
-    print("  - add the fingerprint to revoked_fingerprints (same as the client's 'I have been compromised')")
-    print("  - make every future connection attempt by this identity fail with identity_revoked")
-    print("  - cut their live session within the server's sweep interval (default 30 s)")
+    if already:
+        print(f"Already revoked on {fmt_ts(already[0])}; the revocation stays as it is.")
+    else:
+        print("This will:")
+        print("  - add the fingerprint to revoked_fingerprints (same as the client's 'I have been compromised')")
+        print("  - make every future connection attempt by this identity fail with identity_revoked")
+        print("  - cut their live session within the server's sweep interval (default 30 s)")
+        print("  - free their seat (the server counts only non-revoked identities against MAX_REGISTERED_USERS)")
+    if args.purge:
+        plan = purge_plan(conn, fp)
+        print("--purge: delete the stored data of this identity, in the same transaction:")
+        for table, n in plan:
+            print(f"  - {table}: {n} row(s)")
+        print("  - then recompute pending_messages_meta and user_avatars_meta from their tables")
+        print("  never touched: registered_fingerprints / revoked_fingerprints rows, access codes, anon token state, channel posts")
+        print("  not findable: messages this person SENT (the server does not know senders). A running server keeps")
+        print("  bundle/avatar/TOTP copies in RAM — restart it to drop them.")
     print("This will NOT:")
-    print("  - free their seat (MAX_REGISTERED_USERS counts every fingerprint ever registered)")
-    print("  - delete queued messages, device keys or TOTP rows")
+    if not args.purge:
+        print("  - delete queued messages, device keys or TOTP rows (add --purge to delete them)")
     print("  - cancel unused access codes they may hold (they could register a NEW identity with one: see `codes`)")
     if not args.yes:
         print()
         print("DRY RUN — nothing was changed. Re-run with --yes to do it.")
         return 0
-    conn.execute("INSERT OR IGNORE INTO revoked_fingerprints (fingerprint, revoked_at) VALUES (?, ?)", (fp, time.time()))
-    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if not already:
+            conn.execute("INSERT OR IGNORE INTO revoked_fingerprints (fingerprint, revoked_at) VALUES (?, ?)", (fp, time.time()))
+        deleted = []
+        if args.purge:
+            for table, col in PURGE_TABLES:
+                if has_table(conn, table):
+                    cur = conn.execute(f"DELETE FROM {table} WHERE {col} = ?", (fp,))
+                    deleted.append((table, cur.rowcount))
+            recompute_meta(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     print()
-    print("Done: revoked.")
+    print("Done: revoked." if not already else "Done.")
+    if args.purge:
+        print("Purged: " + ", ".join(f"{t} {n}" for t, n in deleted))
     return 0
 
 
@@ -266,6 +335,7 @@ def main(argv=None) -> int:
     pl.add_argument("--full-fingerprints", action="store_true", help="print complete fingerprints")
     pr = sub.add_parser("revoke", help="revoke an identity (dry run unless --yes)")
     pr.add_argument("fingerprint")
+    pr.add_argument("--purge", action="store_true", help="also delete this identity's stored data (queued messages, bundle, device keys, TOTP, avatar); dry run without --yes")
     pr.add_argument("--yes", action="store_true", help="actually perform the revocation")
     pc = sub.add_parser("codes", help="list / delete UNUSED access codes (by SHA-256 prefix)")
     pc.add_argument("--list", action="store_true", help="list unused codes (default)")
