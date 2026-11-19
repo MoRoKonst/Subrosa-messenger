@@ -1,7 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    This service exists for exactly one thing: filtering the volume-down key
+    sequence that triggers the emergency wipe. That needs
+    canRequestFilterKeyEvents and nothing else. EmergencyService's
+    onAccessibilityEvent() is an empty method, so no screen content from any
+    app is ever read.
+
+    accessibilityEventTypes was "typeAllMask" until 2026-11-19, which asked the
+    system for every UI event in every app and then discarded all of them: the
+    exact over-privilege a reviewer should object to in a messenger, and one of
+    the findings in the F-Droid submission report. One narrow event type is
+    kept rather than none, because a service declaring no event types is not
+    reliably bound on every OEM build. Key filtering is governed by
+    flagRequestFilterKeyEvents below, not by this mask.
+
+    See docs/PERMISSIONS.md.
+-->
 <accessibility-service
     xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagRequestFilterKeyEvents"
     android:canRequestFilterKeyEvents="true"

@@ -2,6 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Explicit package visibility for the one package this app looks up by
+         name: Orbot, to tell whether Tor is available. Declared separately
+         so the Tor check keeps working on its own terms, and so dropping
+         QUERY_ALL_PACKAGES with the stalkerware check would not silently
+         break it (TorManager.isOrbotInstalled). -->
+    <queries>
+        <package android:name="org.torproject.android" />
+    </queries>
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -11,8 +20,14 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
-<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
+    <!-- QUERY_ALL_PACKAGES is for ONE feature: the stalkerware check in
+         MainActivity, which looks for other apps holding an accessibility
+         service, device-admin rights, or a granted overlay permission. That
+         check is meaningless against a filtered package list, which is what
+         Android 11+ gives an app without this permission. It is never used
+         to profile what is installed: nothing is sent anywhere, the result
+         is a warning on screen. See docs/PERMISSIONS.md. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
@@ -20,7 +35,6 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />

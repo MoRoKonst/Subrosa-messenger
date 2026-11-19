@@ -58,6 +58,34 @@ MaintainerNotes: |-
   dependency repositories (a JetBrains development channel and jitpack.io) have
   been removed. No scanignore or scandelete is used anywhere.
 
+  On the permissions and the intent filter in the report, each of which is
+  deliberate and is now documented upstream in docs/PERMISSIONS.md:
+
+  The accessibility service is the emergency wipe trigger -- it catches a
+  volume-down key sequence, and that is the only reason an accessibility
+  service is used. Its onAccessibilityEvent() is an empty method, so it reads
+  no screen content from any app. Upstream narrowed the service config from
+  accessibilityEventTypes="typeAllMask" to a single event type in the commit
+  pinned here, after this report; canRequestFilterKeyEvents and
+  packageNames="com.subrosa.messenger" were already set, and the wipe is off
+  until the user enables it.
+
+  QUERY_ALL_PACKAGES serves one feature: a check that warns the user about
+  other installed apps holding an accessibility service, device-admin rights
+  or a granted overlay permission. Without it Android 11+ returns a filtered
+  list and the check becomes quietly useless. Nothing derived from it leaves
+  the device. Orbot, the only package looked up by name, now has its own
+  <queries> element so it does not rely on this permission.
+
+  Location is requested at the moment the user taps "share location" in a
+  chat; there is no background location permission. WRITE_EXTERNAL_STORAGE is
+  capped at maxSdkVersion=32 and is only for saving a received photo on older
+  Android. CAMERA, RECORD_AUDIO, FOREGROUND_SERVICE_CAMERA and INTERNET are
+  calls, media and the message connection.
+
+  Two permissions that were declared and used by nothing, DISABLE_KEYGUARD and
+  MANAGE_OWN_CALLS, were removed in the same pass rather than explained.
+
   Upstream is explicit that the project has had no external security audit and
   that its cryptographic composition is its own work; see the limits section of
   the full description and docs/KNOWN_SECURITY_ISSUES.md.
